@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 diskOS contributors */
 #include "sdio.h"
 #include "musicdb.h"
+#include "folderscope.h"
 #include "sqlite3.h"
 #define JSMN_HEADER      /* declarations only; the implementation lives in ipc.c */
 #include "jsmn.h"
@@ -907,6 +908,20 @@ int mdb_subtrack_plan(const char *const *paths, int npaths, mdb_plan_t *plan){
     sqlite3_finalize(st);
     if(n <= 0){ free(ids); return 0; }
     plan->list_type = 5; plan->ids = ids; plan->count = n;
+    return 1;
+}
+/* The exact queue for a Browse Files folder (folderscope_ids: its songs, or its whole subtree when recursive): a type-5
+ * plan, since the stock folder queue (type 4) orders rows by its own collation, which a start index can't be computed
+ * against. *start_id = tapped's first row, 0 when tapped is not in the library. 1 built (caller frees), 0 the folder
+ * has no songs, -1 retry (no partial plan). */
+int mdb_folder_plan(const char *dir, int recursive, const char *tapped, mdb_plan_t *plan, int *start_id){
+    if(!plan || !start_id) return -1;
+    memset(plan, 0, sizeof *plan);
+    *start_id = 0;
+    sqlite3 *d = db(); if(!d) return -1;
+    int n = folderscope_ids(d, dir, recursive, tapped, &plan->ids, start_id);
+    if(n <= 0) return n;
+    plan->list_type = 5; plan->count = n;
     return 1;
 }
 

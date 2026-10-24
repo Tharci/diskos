@@ -6,6 +6,7 @@
 #include "config.h"
 #include "anim.h"
 #include "musicdb.h"
+#include "folderbrowser.h"
 #include "fwcaps.h"
 #include "device_names_ui.h"
 #include "version.h"
@@ -686,6 +687,7 @@ static const char *const OPT_NPSTYLE[] = { "Cover", "Vinyl" };
 static const char *const OPT_APPEARANCE[] = { "Dark", "Light" };
 static const char *const OPT_FONTSIZE[] = { "Small", "Medium", "Large" };
 static const char *const OPT_ALBUMVIEW[] = { "List", "Cover Flow" };
+static const char *const OPT_FOLDERQUEUE[] = { [FQ_FOLDER] = "This Folder", [FQ_SUBFOLDERS] = "With Subfolders", [FQ_ALL] = "All Songs" };
 static const char *const OPT_SAVERSTYLE[] = { "Cover", "Analog", "Minimal", "Digital", "Vinyl", "Custom" };
 static const char *const OPT_OLDTAGS[] = { "Auto", "Western", "Cyrillic" };
 static const char *const OPT_BOOTDEF[] = { "diskOS", "Stock" };
@@ -754,6 +756,8 @@ static const setting_t TABLE[] = {
     { "Library", "Browsing", "Artists",     ST_CYCLER, "artist_class", 0,0,0, OPT_ARTISTCLASS, 2, NULL, apply_artist_class, 0 },
     { "Library", "Browsing", "Track Numbers", ST_TOGGLE, "track_numbers", 0,1,1, NULL, 0, NULL, apply_track_numbers, 0 },
     { "Library", "Browsing", "Album View",  ST_CYCLER, "album_view", 0,0,0, OPT_ALBUMVIEW, 2, NULL, NULL, 0 },
+    { "Library", "Browsing", "Folder Playback", ST_CYCLER, "folder_queue", 0,0,0, OPT_FOLDERQUEUE, 3, NULL, NULL, FQ_FOLDER,
+      "What a tapped file queues" },
     { "Library", "Artwork and lyrics", "Online Album Art", ST_TOGGLE, "online_art", 0,1,1, NULL, 0, NULL, apply_online_art, 0 },
     { "Library", "Artwork and lyrics", "Album Art Cache", ST_CYCLER, "artcache", 0,0,0, OPT_ARTCACHE, 3, NULL, apply_artcache, 0,
       "Loads covers in advance" },

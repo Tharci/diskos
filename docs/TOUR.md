@@ -243,7 +243,7 @@ Library > Books lists indexed .m4b audiobooks separately from music, with author
 
 ### Browse Files
 
-Library > Folders opens the microSD card as folders and files. Tap a folder to descend, the header Back control to ascend, or a supported file to request playback. Tapping a .cue sheet or an indexed SACD .iso starts its indexed tracks in track order. A file must already be in the library database: an unindexed selection reports "Not in library", and ordinary file playback uses the all-songs queue rather than a folder-only queue.
+Library > Folders opens the microSD card as folders and files. Tap a folder to descend, the header Back control to ascend, or a supported file to request playback. Tapping a .cue sheet or an indexed SACD .iso starts its indexed tracks in track order. Tapping an audio file plays it with the rest of its folder as the queue, in file-name order (capital letters sort before lower case); Settings > Library > Folder Playback can include the folder's subfolders or use the whole library instead. The queue holds only files already in the library database: an unindexed selection reports "Not in library", and other unindexed files in the folder are skipped.
 
 ## Make it yours
 
@@ -359,6 +359,7 @@ Display controls appearance and idle behavior. Changing theme or text size redra
 | Artists | By Artist by default; By Album Artist uses album-artist tags. Unsupported firmware says "Not on this firmware". |
 | Track Numbers | Off by default; show numbers in album song lists. |
 | Album View | List by default; choose List or Cover Flow for Albums. |
+| Folder Playback | This Folder by default; what plays after a file tapped in Library > Folders: This Folder, With Subfolders, or All Songs. |
 
 #### Artwork and lyrics
 

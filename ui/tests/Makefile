@@ -15,11 +15,24 @@ config_test: ../config.c config_test.c ../config.h
 playstate_test: ../playstate.c playstate_test.c ../playstate.h
 	$(CC) $(CFLAGS) -I.. ../playstate.c playstate_test.c -o $@
 
+# The bundled SQLite amalgamation, with the device build's behaviour flags (ui/Makefile SQLITE_FLAGS). Built once and
+# without sanitizers: it is third-party and very slow to instrument. Host object name, so it never meets the device's
+# ../sqlite3.o.
+SQLITE_DEFS := -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION -DSQLITE_DEFAULT_MEMSTATUS=0 -DSQLITE_DQS=0 \
+               -DSQLITE_OMIT_DEPRECATED
+sqlite3_host.o: ../sqlite3.c
+	$(CC) -O1 -w $(SQLITE_DEFS) -c ../sqlite3.c -o $@
+
+folderscope_test: ../folderscope.c folderscope_test.c ../folderscope.h sqlite3_host.o
+	$(CC) $(CFLAGS) -I.. ../folderscope.c folderscope_test.c sqlite3_host.o -lpthread -lm -o $@
+
 .PHONY: run clean
-run: config_test playstate_test
+run: config_test playstate_test folderscope_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
+	@echo "--- folderscope ---"
+	./folderscope_test
 
 clean:
-	rm -f config_test playstate_test
+	rm -f config_test playstate_test folderscope_test sqlite3_host.o
