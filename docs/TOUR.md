@@ -243,7 +243,7 @@ Library > Books lists indexed .m4b audiobooks separately from music, with author
 
 ### Browse Files
 
-Library > Folders opens the microSD card as folders and files. Tap a folder to descend, the header Back control to ascend, or a supported file to request playback. Tapping a .cue sheet or an indexed SACD .iso starts its indexed tracks in track order. Tapping an audio file plays it with the rest of its folder as the queue, in file-name order (capital letters sort before lower case); Settings > Library > Folder Playback can include the folder's subfolders or use the whole library instead. The queue holds only files already in the library database: an unindexed selection reports "Not in library", and other unindexed files in the folder are skipped.
+Library > Folders opens the microSD card as folders and files. Tap a folder to descend, the header Back control to ascend, or a supported file to request playback. Tapping a .cue sheet or an indexed SACD .iso starts its indexed tracks in track order. Tapping an audio file plays it with the rest of its folder as the queue, in file-name order (capital letters sort before lower case). Settings > Library > Folder Playback can include the folder's subfolders or use the whole library instead. Hold a folder to play all of it, subfolders included, from its first song in Sequential mode, the way Library rows play when held; this does not depend on Folder Playback. The queue holds only files already in the library database: an unindexed selection reports "Not in library", and other unindexed files in the folder are skipped.
 
 ## Make it yours
 

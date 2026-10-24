@@ -32,6 +32,8 @@
  *     row by absolute path (the scanner stores PATH as the full /tmp/sdcard/... path). Settings > Library > Folder
  *     Playback widens the queue to the folder's subfolders, or back to the whole library (ui_play_song_by_path, the
  *     path a Songs-view / Search tap uses). A file that is not in the library DB reports "Not in library".
+ *   - Hold a folder to play all of it, subfolders included, from its first song in Sequential mode (as Library's
+ *     hold-to-play), whatever Folder Playback says: that setting is about tapped files.
  *   - SACD .iso images the library has IS_ISO rows for, and .cue sheets, are listed too. Tapping one plays that
  *     file's tracks (SONG rows by PATH, TRACK order) as the exact type-5 queue the album drill uses (ui_play_plan).
  *     A sheet names its audio file(s) in FILE lines; the tracks live under that audio PATH.
@@ -317,6 +319,7 @@ static void fb_empty_label(const char *msg){
 }
 
 static void fb_row_cb(lv_event_t *e);
+static void fb_folder_hold_cb(lv_event_t *e);
 
 static void fb_add_row(int i){
         fb_entry_t *en = &g_ent[i];
@@ -328,7 +331,10 @@ static void fb_add_row(int i){
         lv_obj_set_style_bg_opa(r, LV_OPA_70, LV_STATE_PRESSED);
         lv_obj_clear_flag(r, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_ext_click_area(r, 2);
-        ui_on(r, fb_row_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i, "folderbrowser.fb_row", UI_CORE);
+        if(en->is_dir){   /* tap opens, hold plays (as Library's rows) */
+            ui_on(r, fb_row_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i, "folderbrowser.fb_row", UI_CORE);
+            ui_on(r, fb_folder_hold_cb, LV_EVENT_LONG_PRESSED, (void *)(intptr_t)i, "folderbrowser.fb_folder_play.long", UI_CORE);
+        } else ui_on(r, fb_row_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i, "folderbrowser.fb_row", UI_CORE);
         kit_row_layout(r, KIT_ROW_ICON);
 
         lv_obj_t *ic = lv_label_create(r);
@@ -418,11 +424,12 @@ static void fb_ascend(void){
 }
 
 /* Play a type-5 plan from start_id and free it. found is the plan builder's result (1 built, 0 absent, -1 retry);
- * start_id 0 means the tapped file has no library row. Shared by the folder and CUE/ISO taps. */
-static void fb_play_plan(int found, mdb_plan_t *plan, int start_id){
+ * start_id 0 means the tapped file has no library row. `missing` is the toast for nothing to play. Shared by the
+ * file and CUE/ISO taps and the folder hold. */
+static void fb_play_plan(int found, mdb_plan_t *plan, int start_id, const char *missing){
     if(found <= 0 || start_id <= 0){
         if(found > 0) mdb_plan_free(plan);
-        ui_toast(found < 0 ? "Library busy - try again" : "Not in library");
+        ui_toast(found < 0 ? "Library busy - try again" : missing);
         return;
     }
     int ok = ui_play_plan(plan, start_id);   /* toasts its own failures */
@@ -430,9 +437,19 @@ static void fb_play_plan(int found, mdb_plan_t *plan, int start_id){
     if(ok) screen_show(SCR_NOWPLAYING);
 }
 
-/* An audio file: queue its folder (Folder Playback, Settings > Library), or the whole library for "All Songs". Any
- * other stored value means This Folder. The read snapshot ends before ui_play_plan, whose slot write opens its own
- * transaction; a scan that commits in between fails that write's per-row check, so the play is refused, never wrong. */
+/* mdb_folder_plan inside the UI read snapshot; a busy snapshot is a retry (-1). The snapshot ends before playing:
+ * ui_play_plan's slot write opens its own transaction, and a scan that commits in between fails that write's per-row
+ * check, so the play is refused, never wrong. */
+static int fb_folder_plan(const char *dir, int recursive, const char *tapped, mdb_plan_t *plan, int *start_id){
+    *start_id = 0;
+    if(!mdb_ui_read_begin()) return -1;
+    int found = mdb_folder_plan(dir, recursive, tapped, plan, start_id);
+    mdb_ui_read_end();
+    return found;
+}
+
+/* An audio file: play it with the queue Folder Playback (Settings > Library) names - its folder, the folder and its
+ * subfolders, or the whole library. Any other stored value means This Folder. */
 static void fb_play(const char *name){
     char full[FB_MAXPATH];
     int n = snprintf(full, sizeof full, "%s/%s", g_dir, name);
@@ -444,10 +461,17 @@ static void fb_play(const char *name){
         return;
     }
     mdb_plan_t plan; int start;
-    if(!mdb_ui_read_begin()){ ui_toast("Library busy - try again"); return; }
-    int found = mdb_folder_plan(g_dir, mode == FQ_SUBFOLDERS, full, &plan, &start);
-    mdb_ui_read_end();
-    fb_play_plan(found, &plan, start);
+    int found = fb_folder_plan(g_dir, mode == FQ_SUBFOLDERS, full, &plan, &start);
+    fb_play_plan(found, &plan, start, "Not in library");
+}
+
+/* A held folder: "play this folder" - all of it, subfolders included, from its first song in Sequential mode, as
+ * Library's hold-to-play does. Folder Playback is not consulted: it chooses what a tapped FILE queues. */
+static void fb_play_folder(const char *dir){
+    mdb_plan_t plan; int start;
+    int found = fb_folder_plan(dir, 1, NULL, &plan, &start);
+    if(found > 0){ start = plan.ids[0]; ui_set_workmode(0); }   /* the mode changes only when something will play */
+    fb_play_plan(found, &plan, start, "No songs found");
 }
 
 /* Play the CUE/ISO tracks of `paths` (their SONG rows, TRACK order) through the exact queue the album drill uses. */
@@ -456,7 +480,7 @@ static void fb_play_tracks(const char *const *paths, int n){
     if(!mdb_ui_read_begin()){ ui_toast("Library busy - try again"); return; }
     int found=mdb_subtrack_plan(paths,n,&plan);
     mdb_ui_read_end();
-    fb_play_plan(found, &plan, found > 0 ? plan.ids[0] : 0);
+    fb_play_plan(found, &plan, found > 0 ? plan.ids[0] : 0, "Not in library");
 }
 /* A .cue sheet: the scanner's own bounded FILE resolver (256 KiB, 64 files, path normalisation, no ".."/absolute) names the
  * library files whose CUE rows are the sheet's tracks. */
@@ -488,8 +512,10 @@ static void fb_play_iso(const char *name){
     fb_play_tracks(paths, 1);
 }
 
+/* A tap: CLICKED on file rows, SHORT_CLICKED on folder rows (so a hold never also opens the folder). */
 static void fb_row_cb(lv_event_t *e){
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    lv_event_code_t c = lv_event_get_code(e);
+    if(c != LV_EVENT_CLICKED && c != LV_EVENT_SHORT_CLICKED) return;
     int i = (int)(intptr_t)lv_event_get_user_data(e);
     if(i < 0 || i >= g_nent) return;
     fb_entry_t *en = &g_ent[i];
@@ -497,6 +523,17 @@ static void fb_row_cb(lv_event_t *e){
     else if(en->kind == FB_K_ISO) fb_play_iso(en->name);
     else if(en->kind == FB_K_CUE) fb_play_sheet(en->name);
     else           fb_play(en->name);
+}
+
+/* Hold a folder row: play the whole folder from its first song (fb_play_folder). */
+static void fb_folder_hold_cb(lv_event_t *e){
+    if(lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if(i < 0 || i >= g_nent || !g_ent[i].is_dir) return;
+    char dir[FB_MAXPATH];
+    int n = snprintf(dir, sizeof dir, "%s/%s", g_dir, g_ent[i].name);
+    if(n <= 0 || n >= (int)sizeof dir){ ui_toast("Path too long"); return; }
+    fb_play_folder(dir);
 }
 
 static void fb_header_back_cb(lv_event_t *e){
