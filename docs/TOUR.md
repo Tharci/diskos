@@ -516,7 +516,9 @@ The physical play/pause button controls playback through the stock player. The V
 
 The scanner indexes common music formats and also recognizes AAC, OGG, OPUS, APE, AIFF/AIF, WMA, DSF,
 DFF, DTS, external CUE sheets, and SACD ISO tracks; indexing a format does not ensure the stock
-player can play it. V2.09 playlist and book playback may fail.
+player can play it. WAV tags come from an embedded ID3 tag, with the file's LIST/INFO text filling any
+title, artist, album, genre or track number it lacks; use Rescan Library to read them for WAV files indexed before.
+DFF and DTS files are listed by file name. V2.09 playlist and book playback may fail.
 
 Some mono FLAC, MP3, and Opus files can play slowed down, taking about twice as long
 in the stock player. diskOS checks briefly for a missed track advance while the screen

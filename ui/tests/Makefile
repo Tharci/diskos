@@ -26,13 +26,20 @@ sqlite3_host.o: ../sqlite3.c
 folderscope_test: ../folderscope.c folderscope_test.c ../folderscope.h sqlite3_host.o
 	$(CC) $(CFLAGS) -I.. ../folderscope.c folderscope_test.c sqlite3_host.o -lpthread -lm -o $@
 
+# The scanner's tag readers: wavtags_test.c includes ../scanner.c so its static readers are reachable, and the link
+# drops everything they don't use (no SQLite, no UI).
+wavtags_test: ../scanner.c ../scanner.h ../audiodur.h wavtags_test.c
+	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections -I.. wavtags_test.c -Wl,--gc-sections -o $@
+
 .PHONY: run clean
-run: config_test playstate_test folderscope_test
+run: config_test playstate_test folderscope_test wavtags_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
 	@echo "--- folderscope ---"
 	./folderscope_test
+	@echo "--- wavtags ---"
+	./wavtags_test
 
 clean:
-	rm -f config_test playstate_test folderscope_test sqlite3_host.o
+	rm -f config_test playstate_test folderscope_test wavtags_test sqlite3_host.o
