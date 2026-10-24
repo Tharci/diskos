@@ -15,11 +15,18 @@ config_test: ../config.c config_test.c ../config.h
 playstate_test: ../playstate.c playstate_test.c ../playstate.h
 	$(CC) $(CFLAGS) -I.. ../playstate.c playstate_test.c -o $@
 
+# The scanner's tag readers: wavtags_test.c includes ../scanner.c so its static readers are reachable, and the link
+# drops everything they don't use (no SQLite, no UI).
+wavtags_test: ../scanner.c ../scanner.h ../audiodur.h wavtags_test.c
+	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections -I.. wavtags_test.c -Wl,--gc-sections -o $@
+
 .PHONY: run clean
-run: config_test playstate_test
+run: config_test playstate_test wavtags_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
+	@echo "--- wavtags ---"
+	./wavtags_test
 
 clean:
-	rm -f config_test playstate_test
+	rm -f config_test playstate_test wavtags_test

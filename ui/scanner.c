@@ -12,7 +12,8 @@
  * by PATH and left intact, so a rescan doesn't lose them.
  *
  * Tag support: see is_audio() - MP3 (ID3v2 + ID3v1), FLAC/OGG (Vorbis comments), M4A/M4B (MP4 atoms), APE (APEv2),
- * AIFF (ID3 chunk, NAME/AUTH), DSF (ID3 block), WMA (ASF), AAC (leading ID3v2); WAV/DFF/DTS by filename. Anything
+ * AIFF (ID3 chunk, NAME/AUTH), WAV (ID3 chunk, LIST/INFO), DSF (ID3 block), WMA (ASF), AAC (leading ID3v2); DFF/DTS
+ * by filename. Anything
  * without usable tags falls back to the filename (minus extension) as the title.
  * External .cue sheets and SACD .iso images are expanded into one row per track, the way stock V2.57 writes them (see
  * cue_finish, iso_finish).
@@ -123,9 +124,9 @@ static int has_ext(const char *name, const char *ext){
     return nl>el && !strcasecmp(name+nl-el, ext);
 }
 /* Audio files diskOS indexes: stock V2.57's list plus Ogg Opus. Real tags from MP3 (ID3), FLAC and OGG (Vorbis comments),
- * M4A/M4B (MP4 atoms), APE (APEv2, ID3v1 fallback), AIFF (ID3 chunk, NAME/AUTH), DSF (ID3 block), WMA (ASF) and a
- * leading ID3v2 on AAC; WAV/DFF/DTS fall back to the filename. External .cue sheets become per-track rows after the
- * walk (cue_finish); SACD .iso images likewise become per-track rows (iso_finish). */
+ * M4A/M4B (MP4 atoms), APE (APEv2, ID3v1 fallback), AIFF (ID3 chunk, NAME/AUTH), WAV (ID3 chunk, LIST/INFO), DSF (ID3
+ * block), WMA (ASF) and a leading ID3v2 on AAC; DFF/DTS fall back to the filename. External .cue sheets become
+ * per-track rows after the walk (cue_finish); SACD .iso images likewise become per-track rows (iso_finish). */
 static int is_audio(const char *name){
     if(has_ext(name,".m4b")) return DISKOS_AUDIOBOOKS;   /* books indexed only when the audiobook feature is enabled */
     return has_ext(name,".mp3") || has_ext(name,".flac") || has_ext(name,".wav")
@@ -937,6 +938,77 @@ static void aiff_read(FILE *f, char *title,char *artist,char *album,char *genre,
     if(!artist[0] && auth[0]) snprintf(artist,TAGLEN,"%s",auth);
 }
 
+/* ---- WAV (RIFF/WAVE) ----
+ * "RIFF" <size LE> "WAVE", then chunks (id, size LE, data, padded to even). Tags come from an "id3 " / "ID3 " chunk
+ * (an embedded ID3v2, read by id3v2_read; taggers usually put it after "data") and, filling only what that leaves
+ * empty, the "LIST" "INFO" items rippers write: INAM title, IART artist, IPRD album, IGNR genre, ITRK (else IPRT)
+ * track. INFO text declares no charset: UTF-8 when valid, else the legacy decode Tag Encoding picks (Western:
+ * Latin-1). A RIFF size of 0 or past the end of the file is taken as "to the end of the file" (streaming writers
+ * leave it unset), and a "data" chunk that runs past the end is a cut-short recording, not an error: nothing
+ * follows it. Bounded: at most 256 chunks and 64 INFO items; text copied up to TAGLEN. */
+static void wav_info_read(FILE *f, off_t len, tag_fields *info, int *rerr){
+    if(len < 4) return;                                       /* an empty LIST holds nothing */
+    off_t at = ftello(f);
+    unsigned char type[4];
+    if(at < 0 || fread(type,1,4,f)!=4){ if(rerr)*rerr=1; return; }
+    if(memcmp(type,"INFO",4)!=0) return;                     /* another LIST (adtl cue labels, ...): no tags */
+    off_t end = at + len, here = at + 4;
+    for(int n = 0; n < 64 && end - here >= 8; n++){
+        unsigned char c[8];
+        if(fseeko(f,here,SEEK_SET)!=0 || fread(c,1,8,f)!=8){ if(rerr)*rerr=1; return; }
+        here += 8;
+        off_t sl = (off_t)le32(c+4);
+        if(sl > end - here){ if(rerr)*rerr=1; return; }      /* an item past its LIST: malformed */
+        char *dst = !memcmp(c,"INAM",4) ? info->title : !memcmp(c,"IART",4) ? info->artist :
+                    !memcmp(c,"IPRD",4) ? info->album : !memcmp(c,"IGNR",4) ? info->genre : NULL;
+        int is_track = !memcmp(c,"ITRK",4) || (!memcmp(c,"IPRT",4) && !info->track);
+        if((dst || is_track) && sl > 0){
+            unsigned char t[TAGLEN];
+            size_t m = sl < TAGLEN - 1 ? (size_t)sl : TAGLEN - 1;
+            char val[TAGLEN];
+            if(fread(t,1,m,f)!=m){ if(rerr)*rerr=1; return; }
+            size_t tl = 0; while(tl < m && t[tl]) tl++;
+            id3_decode(utf8_ok(t, tl) ? 3 : 0, t, (int)m, val, sizeof val);   /* never stores invalid UTF-8 */
+            if(dst){ if(val[0]) snprintf(dst,TAGLEN,"%s",val); }
+            else { int v = tag_int(val); if(v) info->track = v; }   /* "5" or "5/12"; junk keeps any earlier value */
+        }
+        here += sl + (sl & 1);
+    }
+}
+static void wav_read(FILE *f, char *title,char *artist,char *album,char *genre,
+                     char *album_artist, int *track, int *disc, int *rerr){
+    unsigned char h[12];
+    if(fread(h,1,12,f)!=12 || memcmp(h,"RIFF",4)!=0 || memcmp(h+8,"WAVE",4)!=0){ if(rerr)*rerr=1; return; }
+    off_t fsz = file_size(f);
+    if(fsz < 12){ if(rerr)*rerr=1; return; }
+    uint64_t rsz = le32(h+4);
+    off_t end = (rsz < 4 || rsz > (uint64_t)(fsz - 8)) ? fsz : (off_t)rsz + 8;
+    tag_fields info = {0};
+    off_t here = 12;
+    int guard;
+    for(guard = 0; guard < 256 && end - here >= 8; guard++){
+        unsigned char c[8];
+        if(fseeko(f,here,SEEK_SET)!=0 || fread(c,1,8,f)!=8){ if(rerr)*rerr=1; break; }
+        here += 8;
+        off_t len = (off_t)le32(c+4);
+        if(len > end - here){                                   /* checked BEFORE any arithmetic */
+            if(memcmp(c,"data",4)!=0 && rerr) *rerr=1;
+            break;
+        }
+        if(!memcmp(c,"id3 ",4) || !memcmp(c,"ID3 ",4))
+            id3v2_read_bounded(f,len,title,artist,album,genre,album_artist,track,disc,rerr);
+        else if(!memcmp(c,"LIST",4))
+            wav_info_read(f,len,&info,rerr);
+        here += len + (len & 1);                                /* no overflow: len <= end - here */
+    }
+    if(guard==256 && end - here >= 8 && rerr) *rerr=1;
+    if(!title[0])  snprintf(title,TAGLEN,"%s",info.title);
+    if(!artist[0]) snprintf(artist,TAGLEN,"%s",info.artist);
+    if(!album[0])  snprintf(album,TAGLEN,"%s",info.album);
+    if(!genre[0]){ snprintf(genre,TAGLEN,"%s",info.genre); genre_clean(genre); }
+    if(!*track)    *track = info.track;
+}
+
 /* ---- DSF (DSD stream file) ----
  * "DSD " chunk: size (8 LE, = 28), total file size (8 LE), pointer to the metadata chunk (8 LE, 0 = none). The
  * metadata chunk is an ID3v2 tag, read by id3v2_read at that offset (only when it lies inside the file). */
@@ -1023,7 +1095,7 @@ static void wma_read(FILE *f, char *title,char *artist,char *album,char *genre,
 }
 
 /* Read tags + fill a filename fallback. Return code drives how the caller writes the row:
- *   1  = tags read (or a no-tag container like WAV) -> safe to INSERT a new row OR UPDATE in place.
+ *   1  = tags read (or a no-tag container like DFF) -> safe to INSERT a new row OR UPDATE in place.
  *   0  = a tag-bearing file that could NOT be OPENED (transient I/O) -> preserve existing tags and
  *        do NOT insert a new one (title..genre are left empty; a file we can't open at all is skipped).
  *  -1  = OPENED but its tags could not be LOADED (a mid-read I/O error, or oversized/hostile atoms):
@@ -1039,7 +1111,7 @@ static int tags_with_provenance(const char *path, const char *fname,
     FILE *f=fopen(path,"rb");
     if(!f && (has_ext(fname,".flac") || has_ext(fname,".mp3") || has_ext(fname,".m4a") || has_ext(fname,".m4b")
               || has_ext(fname,".ogg") || has_ext(fname,".opus") || has_ext(fname,".oga") || has_ext(fname,".ape") || has_ext(fname,".aif") || has_ext(fname,".aiff")
-              || has_ext(fname,".wma") || has_ext(fname,".dsf") || has_ext(fname,".aac")))
+              || has_ext(fname,".wma") || has_ext(fname,".dsf") || has_ext(fname,".aac") || has_ext(fname,".wav")))
         return 0;   /* unopened: preserve the entire existing row (incl. length), no new row */
     if(f){
         if(has_ext(fname,".flac")) flac_read(f,title,artist,album,genre,album_artist,track,disc,&rerr);
@@ -1049,11 +1121,12 @@ static int tags_with_provenance(const char *path, const char *fname,
         else if(has_ext(fname,".ape")){ ape_read(f,title,artist,album,genre,album_artist,track,disc,&rerr);
                                         if(!title[0] && fseek(f,0,SEEK_SET)==0) id3v1_read(f,title,artist,album,&rerr); }
         else if(has_ext(fname,".aif") || has_ext(fname,".aiff")) aiff_read(f,title,artist,album,genre,album_artist,track,disc,&rerr);
+        else if(has_ext(fname,".wav")) wav_read(f,title,artist,album,genre,album_artist,track,disc,&rerr);
         else if(has_ext(fname,".dsf")) dsf_read(f,title,artist,album,genre,album_artist,track,disc,&rerr);
         else if(has_ext(fname,".wma")) wma_read(f,title,artist,album,genre,album_artist,track,disc,&rerr);
         else if(has_ext(fname,".aac")) id3v2_read(f,title,artist,album,genre,album_artist,track,disc,&rerr);  /* ADTS may lead with ID3v2 */
-        /* .wav/.dff/.dts (and any other accepted container) -> filename fallback below; no tag probing,
-         * so a WAV whose last 128 bytes happen to start with "TAG" isn't misread as ID3v1. */
+        /* .dff/.dts (and any other accepted container) -> filename fallback below; no tag probing. A WAV is
+         * read through its RIFF chunks only, so one whose last 128 bytes start with "TAG" isn't misread as ID3v1. */
         if(ferror(f)) rerr=1;   /* ANY stream IO error during tag reads (headers/seeks/body) -> a read failure,
                                  * not "no tags" (feof/clean EOF does NOT set this, so a short valid file still
                                  * falls back to filename). Catches the header/seek paths rerr doesn't. */
