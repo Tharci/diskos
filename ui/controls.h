@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
-/* Screen rotation and volume-key actions, on top of the stock V2.57 player's own backends.
+/* Screen rotation and the stock volume-key gestures, on top of the stock V2.57 player's own backends.
  *
  * Stock facts (V2.57):
  *   Screen rotation: SYSCONFIG.SCREEN_ROT (CFG[31]) is set by player tag 0646 (handler 0x4f1978: stores the first
@@ -11,7 +11,8 @@
  *     tags 0820 / 0821 / 0822 (handlers 0x4f1a9c / 0x4f1b30 / 0x4f1bc4, named player_handle_set_key_*_function_status).
  *     The player's own key dispatcher (0x4e72f0) reads them: value 1 = the volume key adjusts the volume, anything
  *     else = it switches track. Stock's menu labels: 0 "Switch track", 1 "Adjust volume".
- *     The player owns the keys (it holds /dev/input/event0), so diskOS only writes the setting. */
+ *     diskOS reads the keys itself (volkeys.c) and keeps all three at 1, so the player's own handling - used only
+ *     when diskOS doesn't own the keys - is volume-only too. */
 #ifndef DISKOS_CONTROLS_H
 #define DISKOS_CONTROLS_H
 #include <stddef.h>
@@ -20,7 +21,6 @@
 #define CTL_ROT_N 4                    /* stock values 0..3 */
 typedef enum { CTL_KEY_SINGLE, CTL_KEY_DOUBLE, CTL_KEY_LONG, CTL_KEY_N } ctl_key_t;
 enum { CTL_ACT_TRACK = 0, CTL_ACT_VOLUME = 1 };
-typedef enum { CTL_DO_TRACK, CTL_DO_VOLUME } ctl_effect_t;
 
 /* Firmware gate: the tags/handlers above are RE-verified on V2.57 only (other firmware: never send). */
 int  ctl_supported_ver(int os_ver);
@@ -50,25 +50,18 @@ void ctl_rot_set(int v);                /* out-of-range values are ignored */
 
 /* ---- keys (pure) ---- */
 const char *ctl_key_tag(int key);       /* "0820" / "0821" / "0822", NULL if out of range */
-const char *ctl_key_column(int key);    /* SYSCONFIG column */
-/* What a volume key does for a stored action (the player's dispatcher, 0x4e72f0: value 1 -> the volume routines, any
- * other value -> next/previous track). Which key is next and which is previous is not decoded here (UNVERIFIED). */
-ctl_effect_t ctl_key_effect(int action);
 
 /* ---- frames and writes ---- */
 int  ctl_frame_rot(char *buf, size_t n, int v);            /* "0646000C000<v>"; 0 ok, -1 bad value */
 int  ctl_frame_key(char *buf, size_t n, int key, int act); /* "082<k>000C000<a>"; 0 ok, -1 bad */
 /* Send through `send` (ipc_send_cmd in the product); 0 = sent, -1 = not sent (bad value, no sender, refused send). */
 int  ctl_apply_rot_via(int (*send)(const char *), int v);
-int  ctl_keys_cast_ok(const int act[CTL_KEY_N]);          /* 1 only if all three gestures are Adjust Volume (Cast admission) */
 int  ctl_apply_key_via(int (*send)(const char *), int key, int act);
 
 /* ---- the player's stored values (read-only SYSCONFIG) ---- */
 typedef struct { int rot, key[CTL_KEY_N]; } ctl_state_t;   /* -1 = unreadable */
 int  ctl_read_state(const char *db_path, ctl_state_t *st); /* 0 = row read, -1 = nothing readable */
-/* Copy into diskOS's setting mirror (cfg keys screen_rot, key_single, key_double, key_long): the rotation APPLIED (the
- * stored one, or the default when it could not be read), and each key value that is exactly 0 or 1. */
-void ctl_mirror_via(const ctl_state_t *st, void (*set_int)(const char *key, int v));
+int  ctl_read_volume(const char *db_path);                 /* SYSCONFIG.VOLUME (the level restored at boot); -1 = unreadable */
 /* Rotation rollback: a new orientation is kept only if confirmed within CTL_ROLLBACK_MS (pure state machine). */
 #define CTL_ROLLBACK_MS 10000
 typedef struct { int pending, prev, cur; uint32_t start; } ctl_rb_t;
@@ -82,12 +75,12 @@ int  ctl_rb_revert(ctl_rb_t *r, int *value);                          /* 1 if pe
 
 #ifndef CTL_CORE_ONLY
 void controls_boot_rotation(void);      /* fbpan_create: use the player's stored rotation from the first frame */
-void controls_startup_mirror(void);     /* read SYSCONFIG into cfg (settings_apply_startup) */
+void controls_startup_mirror(void);     /* the applied rotation into cfg (settings_apply_startup) */
+int  controls_keys_volume_only(void);   /* stock gestures all to Adjust Volume; -1 = a send failed, retry later */
 int  ui_set_screen_rot(int v);          /* turn the display now and ask "Keep this orientation?"; 0 ok, -1 not. 0646 is sent on Keep. */
 void controls_tick(void);               /* rollback timeout (also driven by the prompt's own timer) */
 int  ctl_rotation_pending(void);
 void ctl_prompt_keep(void);
 void ctl_prompt_revert(void);
-int  ui_set_volume_key(int key, int act);
 #endif
 #endif

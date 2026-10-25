@@ -109,7 +109,6 @@ static void return_play_cb(lv_event_t *e){
 static void return_keep_cb(lv_event_t *e){ (void)e; s_return_choice = 0; s_key = -1; tick_cb(NULL); }
 static void back_cb(lv_event_t *e){ (void)e; screen_back(); }
 static void wifi_cb(lv_event_t *e){ (void)e; wifi_open(); }
-static void keys_cb(lv_event_t *e){ (void)e; setlist_open("Controls"); }
 static void disc_cb(lv_event_t *e){ (void)e; if(ui_cast_return() < 0){ s_key = -1; tick_cb(NULL); } }
 static void end_cb(lv_event_t *e){
     if(ui_cast_phase() != 2){ ui_cast_end_request(); return; }
@@ -143,10 +142,9 @@ static void render(int ph){
         btn(s_body, ph ? "Keep beaming" : "Back", return_keep_cb, 0, 190, 1);
     } else if(!ph && !s_keys_ok){
         lbl(tr("Set volume keys to beam"), 1, 0);
-        lv_obj_t *note = lbl(tr("In Settings > Controls, set press, double press and long press to Adjust Volume."), 0, 1);
+        lv_obj_t *note = lbl(tr("Set all volume-key actions to Adjust Volume in the stock settings."), 0, 1);   /* only reachable when diskOS doesn't own the keys */
         lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
-        btn(s_body, "Controls", keys_cb, 1, 190, 1);
-        btn(s_body, "Back", back_cb, 0, 190, 1);
+        btn(s_body, "Back", back_cb, 1, 190, 1);
     } else if(ph != 2 && !error && *ui_beam_error()){
         lbl(tr("Couldn't start beaming"), 1, 0);
         lv_obj_t *note = lbl(tr(ui_beam_error()), 0, 1);

@@ -149,7 +149,7 @@ so an fb0 capture does not include other planes composited at scanout.
 | Device | node | notes |
 |---|---|---|
 | Touch | `/dev/input/event1` - **cst816t** | single-finger panel, but speaks **MT type-B** protocol (slot/tracking-id/ABS_MT_POSITION_X/Y/TOUCH_MAJOR/PRESSURE; no plain ABS_X/Y). Caps `EV=0xb`, `ABS=0x6618000` (high word). |
-| Keys | `/dev/input/event0` - **x2000_key** | **physical buttons** (GPIO keys) |
+| Keys | `/dev/input/event0` - **x2000_key** | **physical buttons** (GPIO keys). The driver reports classified gestures, not raw presses (codes in [RE_CATALOGUE.md](RE_CATALOGUE.md#volume-and-power-keys-v257)). Vol+ = GPB13, Vol- = GPB14, active low, readable in GPB PxPIN (`0x10010100`); the driver owns the pins, so sysfs export is refused. |
 
 We can synthesize input by writing the 32-bit-ABI `input_event` (16-byte) MT-B sequence to
 `/dev/input/event1`. The injector source is `tools/tinj.c`. diskOS can also read

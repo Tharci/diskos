@@ -26,6 +26,7 @@ tests/config_test
 tests/playstate_test
 tests/folderscope_test
 tests/wavtags_test
+tests/volkeys_hold_test
 
 # UI and FreeType build products
 mq_ui
