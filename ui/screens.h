@@ -102,7 +102,7 @@ void cast_ui_open(void);
 void cast_ui_enter(void);                       /* the screen manager: every entry starts one bounded search ... */
 void cast_ui_leave(void);                       /* ... and every exit cancels and joins it */
 void cast_ui_stop(void);                        /* theme reload: same as leave */
-int  ui_cast_keys_ok(void);                     /* 16b: all three volume-key gestures are Adjust Volume (controls.c; unreadable = no) */
+int  ui_cast_keys_ok(void);                     /* 16b: diskOS owns the volume keys, or all three stock gestures are Adjust Volume (controls.c) */
 int  ui_set_source_mode(int mode);         /* replay the stock V2.28 switch sequence; 0=ok -1=bad arg */
 int  ui_get_source_mode(void);
 int  ui_receiver_active(void); /* Default receiver view hides the entire local theme subtree. */

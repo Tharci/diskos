@@ -89,6 +89,9 @@ Screen Off	息屏	關閉螢幕	画面オフ	화면 끄기	Apagar pantalla		Spegn
 Animations	动画	動畫	アニメーション	애니메이션	Animaciones		Animazioni	Animationen	Animations	Анимации
 Weather on Home	主页天气	主頁天氣	ホームに天気	홈 날씨	Tiempo en inicio		Meteo in home	Wetter auf Start	Météo à l'accueil	Погода на главной
 Back-swipe	滑动返回	滑動返回	スワイプで戻る	스와이프 뒤로	Deslizar atrás		Scorri indietro	Zurückwischen	Balayer retour	Свайп назад
+Volume Step	音量步进	音量步進	音量ステップ	볼륨 단계	Paso de volumen	Passo de volume	Passo volume	Lautstärkeschritt	Pas du volume	Шаг громкости
+Volume Hold Delay	音量长按延迟	音量長按延遲	音量長押し待ち時間	볼륨 길게 누름 지연	Retardo al mantener volumen	Atraso ao segurar volume	Ritardo pressione volume	Lautstärke-Halteverzögerung	Délai d'appui du volume	Задержка удержания громкости
+Volume Repeat Delay	音量重复间隔	音量重複間隔	音量リピート間隔	볼륨 반복 간격	Intervalo de repetición de volumen	Intervalo de repetição do volume	Intervallo ripetizione volume	Lautstärke-Wiederholintervall	Intervalle de répétition du volume	Интервал повтора громкости
 Language	语言	語言	言語	언어	Idioma	Idioma	Lingua	Sprache	Langue	Язык
 When Sleep Ends	睡眠结束时	睡眠結束時	スリープ終了時	수면 종료 시	Al terminar	No fim do temporizador	Al termine	Nach Ablauf	À la fin	По окончании
 Idle Power-off	空闲关机	閒置關機	待機で電源オフ	유휴 시 전원 끄기	Apagado por inactividad		Spegnimento inattivo	Auto-Ausschalten	Arrêt si inactif	Автовыключение
@@ -234,6 +237,9 @@ Keep this orientation?						Manter esta orientação?
 Reverting in						A reverter em				
 For demanding headphones										
 Digital filter shape										
+Levels per press or repeat										
+Before a held volume key repeats										
+Between repeated volume steps										
 Evens out track volume										
 Dynamic Range Enhancement										
 Loads covers in advance										
@@ -301,6 +307,7 @@ This track can't be beamed	此曲目无法投射	此曲目無法傳送	この曲
 No playable tracks left	没有可播放的曲目了	沒有可播放的曲目了	再生できる曲がありません	재생할 곡이 없음	No quedan pistas reproducibles	Não restam faixas reproduzíveis	Nessun brano riproducibile rimasto	Keine abspielbaren Titel mehr	Plus aucun titre lisible	Воспроизводимых треков не осталось
 Queue changed	播放列表已更改	播放清單已變更	キューが変更されました	재생 목록이 변경됨	La cola ha cambiado	A fila foi alterada	La coda è cambiata	Warteschlange geändert	File d'attente modifiée	Очередь изменилась
 Volume keys must use Adjust Volume to beam	投射前请把 Vol Keys 都改成 Adjust Volume	傳送前，Vol Keys 須選 Adjust Volume	Beamするには音量キーを Adjust Volume にしてください	Beam하려면 볼륨 키를 Adjust Volume으로 설정하세요	Las teclas de volumen deben usar Adjust Volume para usar Beam	As teclas de volume devem usar Adjust Volume para usar o Beam	I tasti volume devono usare Adjust Volume per usare Beam	Lautstärketasten müssen für Beam auf Adjust Volume stehen	Les touches de volume doivent utiliser Adjust Volume pour Beam	Для Beam клавиши громкости должны быть в режиме Adjust Volume
+Set all volume-key actions to Adjust Volume in the stock settings.	请在原厂设置中把所有音量键操作设为 Adjust Volume。	請在原廠設定中將所有音量鍵動作設為 Adjust Volume。	純正の設定で音量キーの動作をすべて Adjust Volume にしてください。	기본 펌웨어 설정에서 모든 볼륨 키 동작을 Adjust Volume으로 설정하세요.	Pon todas las acciones de las teclas de volumen en Adjust Volume en los ajustes de fábrica.	Defina todas as ações das teclas de volume como Adjust Volume nas configurações originais.	Imposta tutte le azioni dei tasti volume su Adjust Volume nelle impostazioni originali.	Stelle in den Originaleinstellungen alle Lautstärketasten-Aktionen auf Adjust Volume.	Réglez toutes les actions des touches de volume sur Adjust Volume dans les réglages d'origine.	Установите для всех действий клавиш громкости Adjust Volume в штатных настройках.
 Stop beaming to change this	停止投射后才能更改	停止傳送後才能變更	変更するにはBeamを停止してください	변경하려면 Beam을 중지하세요	Detén Beam para cambiar esto	Pare o Beam para alterar isto	Interrompi Beam per cambiarlo	Beam beenden, um dies zu ändern	Arrêtez Beam pour modifier ceci	Остановите Beam, чтобы изменить это
 Stopping beam to switch output	正在停止投射以更改输出	正在停止傳送以更改輸出	出力を切り替えるためBeamを停止しています	출력을 변경하려고 Beam을 중지하는 중	Deteniendo Beam para cambiar la salida	Parando o Beam para mudar a saída	Interruzione di Beam per cambiare uscita	Beam wird beendet, um die Ausgabe zu wechseln	Arrêt de Beam pour changer la sortie	Остановка Beam для смены выхода
 Disc started playing - beam ended	Disc 已开始播放，投射已结束	Disc 已開始播放，傳送已結束	Discが再生を始めたためBeamを終了しました	Disc가 재생을 시작해 Beam이 종료됨	El Disc empezó a reproducir: Beam terminado	O Disc começou a tocar: Beam encerrado	Il Disc ha iniziato a riprodurre: Beam terminato	Disc spielt: Beam beendet	Le Disc a démarré la lecture : Beam terminé	Disc начал воспроизведение - Beam завершён

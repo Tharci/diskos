@@ -102,6 +102,28 @@ LOCAL_ANALOG (CS43131 headphone DAC) / BTSRC / USB_HOST / SPDIF / I2S3.
 - On-board MCU over SPI also carries gain/filter/mute opcodes
   (SET_EQ_PARAMETER 0x100B etc.).
 
+### Volume and power keys (V2.57)
+- The kernel driver `x2000_key` (built in, `/dev/input/event0`, EV_KEY + EV_REP) classifies
+  gestures itself and reports one code per gesture. A single press is reported only after the
+  double-press window has passed, which is the stock keys' delay.
+
+  | Key | Single | Double | Long |
+  |---|---|---|---|
+  | Vol+ | 251 | 266 | 263 |
+  | Vol- | 252 | 267 | 262 |
+  | Play | 250 | 269 (logged only) | 268 (logged only) |
+  | Power | 265 (also 259) | - | 264 (power-off) |
+
+- mq_player's key thread (0x4e28a0) reads event0 **without a grab** and calls the dispatcher
+  0x4e72f0 with `(code, value)`: jump tables 0x6db9b0 (value 2) and 0x6dba00 (other values),
+  codes 250..269. Every non-volume handler returns on value 0.
+- The dispatcher checks config bytes 82/83/84 (SYSCONFIG `KEY_SINGLE/DOUBLE_CLICK_SLE`,
+  `KEY_LONG_PRESS_SLE`, tags 0820/0821/0822). 1 = volume (up 0x4ebf1c, down 0x4ec02c, then an
+  `a714` report); anything else = track (0x42a198). The long-press path re-reads the pins
+  (`pb13`/`pb14` via 0x4083e4) and sleeps 100 ms per step.
+- diskOS grabs event0, reads the buttons from GPB13/GPB14 instead (see [HARDWARE.md](HARDWARE.md)),
+  and hands the other keys back to the player (`ui/volkeys.c`).
+
 ### Bluetooth
 - bluealsa-based; source + sink; codecs sbc / aac / ldac.
 - **Stock BT stack = BLUEZ, decoded from `mq_player` strings** (NOT BSA - `bsa_server`/`bt_enable_bsa*.sh`

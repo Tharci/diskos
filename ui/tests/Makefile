@@ -31,8 +31,12 @@ folderscope_test: ../folderscope.c folderscope_test.c ../folderscope.h sqlite3_h
 wavtags_test: ../scanner.c ../scanner.h ../audiodur.h wavtags_test.c
 	$(CC) $(CFLAGS) -ffunction-sections -fdata-sections -I.. wavtags_test.c -Wl,--gc-sections -o $@
 
+# The volume keys' press/hold state machine only (VK_CORE_ONLY: no thread, no device access).
+volkeys_test: ../volkeys.c ../volkeys.h volkeys_test.c
+	$(CC) $(CFLAGS) -DVK_CORE_ONLY -I.. ../volkeys.c volkeys_test.c -o $@
+
 .PHONY: run clean
-run: config_test playstate_test folderscope_test wavtags_test
+run: config_test playstate_test folderscope_test wavtags_test volkeys_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
@@ -40,6 +44,8 @@ run: config_test playstate_test folderscope_test wavtags_test
 	./folderscope_test
 	@echo "--- wavtags ---"
 	./wavtags_test
+	@echo "--- volkeys ---"
+	./volkeys_test
 
 clean:
-	rm -f config_test playstate_test folderscope_test wavtags_test sqlite3_host.o
+	rm -f config_test playstate_test folderscope_test wavtags_test volkeys_test sqlite3_host.o

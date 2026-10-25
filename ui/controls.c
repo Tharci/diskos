@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
-/* Screen rotation and volume-key actions (see controls.h for the stock facts this is built on). */
+/* Screen rotation and the stock volume-key gestures (see controls.h for the stock facts this is built on). */
 #include "controls.h"
 #include <stdio.h>
 #include <string.h>
@@ -96,10 +96,7 @@ int ctl_rb_revert(ctl_rb_t *r, int *value){ if(!r->pending) return 0; r->pending
 
 /* ---- keys -------------------------------------------------------------------------------------------------------- */
 static const char *const KEY_TAG[CTL_KEY_N] = { "0820", "0821", "0822" };
-static const char *const KEY_COL[CTL_KEY_N] = { "KEY_SINGLE_CLICK_SLE", "KEY_DOUBLE_CLICK_SLE", "KEY_LONG_PRESS_SLE" };
 const char *ctl_key_tag(int key){ return (key >= 0 && key < CTL_KEY_N) ? KEY_TAG[key] : NULL; }
-const char *ctl_key_column(int key){ return (key >= 0 && key < CTL_KEY_N) ? KEY_COL[key] : NULL; }
-ctl_effect_t ctl_key_effect(int action){ return action == CTL_ACT_VOLUME ? CTL_DO_VOLUME : CTL_DO_TRACK; }
 
 /* ---- frames and writes ------------------------------------------------------------------------------------------- */
 int ctl_frame_rot(char *buf, size_t n, int v){
@@ -123,46 +120,39 @@ int ctl_apply_key_via(int (*send)(const char *), int key, int act){
 }
 
 /* ---- the player's stored values ---------------------------------------------------------------------------------- */
-int ctl_read_state(const char *db_path, ctl_state_t *st){
-    if(!st) return -1;
-    st->rot = -1; for(int i = 0; i < CTL_KEY_N; i++) st->key[i] = -1;
+/* SYSCONFIG row 1's integer `cols` into dst (n of them); a NULL or negative column stays -1. 0 = something was read. */
+static int sysconfig_ints(const char *db_path, const char *cols, int *const dst[], int n){
+    for(int i = 0; i < n; i++) *dst[i] = -1;
     if(!db_path) return -1;
+    char sql[160]; snprintf(sql, sizeof sql, "SELECT %s FROM SYSCONFIG WHERE ID=1;", cols);
     sqlite3 *c = NULL; int got = -1;
     if(sqlite3_open_v2(db_path, &c, SQLITE_OPEN_READONLY, NULL) == SQLITE_OK){
         sqlite3_busy_timeout(c, 200);
         sqlite3_stmt *s = NULL;
-        if(sqlite3_prepare_v2(c, "SELECT SCREEN_ROT,KEY_SINGLE_CLICK_SLE,KEY_DOUBLE_CLICK_SLE,KEY_LONG_PRESS_SLE "
-                                 "FROM SYSCONFIG WHERE ID=1;", -1, &s, NULL) == SQLITE_OK){
-            if(sqlite3_step(s) == SQLITE_ROW){
-                int *dst[4] = { &st->rot, &st->key[0], &st->key[1], &st->key[2] };
-                for(int i = 0; i < 4; i++)
+        if(sqlite3_prepare_v2(c, sql, -1, &s, NULL) == SQLITE_OK){
+            if(sqlite3_step(s) == SQLITE_ROW)
+                for(int i = 0; i < n; i++)
                     if(sqlite3_column_type(s, i) == SQLITE_INTEGER){ int x = sqlite3_column_int(s, i); if(x >= 0){ *dst[i] = x; got = 0; } }
-            }
             sqlite3_finalize(s);
         }
     }
     if(c) sqlite3_close(c);
     return got;
 }
-
-void ctl_mirror_via(const ctl_state_t *st, void (*set_int)(const char *key, int v)){
-    static const char *const CFG[CTL_KEY_N] = { "key_single", "key_double", "key_long" };
-    if(!st || !set_int) return;
-    set_int(CTL_CFG_ROT, g_rot);   /* what is applied (the stored value, or the default when it could not be read) */
-    for(int i = 0; i < CTL_KEY_N; i++)   /* the player treats exactly 1 as volume: any other stored value is not shown as a choice */
-        if(st->key[i] == CTL_ACT_TRACK || st->key[i] == CTL_ACT_VOLUME) set_int(CFG[i], st->key[i]);
+int ctl_read_state(const char *db_path, ctl_state_t *st){
+    if(!st) return -1;
+    int *const dst[] = { &st->rot, &st->key[0], &st->key[1], &st->key[2] };
+    return sysconfig_ints(db_path, "SCREEN_ROT,KEY_SINGLE_CLICK_SLE,KEY_DOUBLE_CLICK_SLE,KEY_LONG_PRESS_SLE", dst, 4);
 }
-
-/* Cast admission (16b): the stock volume keys switch track unless ALL THREE gestures are Adjust Volume, and a track switch would start local audio behind the
- * receiver. 1 only when every gesture is exactly Adjust Volume (unknown = -1 = no). Never writes a setting. */
-int ctl_keys_cast_ok(const int act[CTL_KEY_N]){
-    for(int i = 0; i < CTL_KEY_N; i++) if(act[i] != CTL_ACT_VOLUME) return 0;
-    return 1;
+int ctl_read_volume(const char *db_path){
+    int v; int *const dst[] = { &v };
+    sysconfig_ints(db_path, "VOLUME", dst, 1);
+    return v;
 }
 
 #ifndef CTL_CORE_ONLY
 #include "config.h"
-int ui_cast_session_active(void);   /* main.c (also in screens.h) */
+#include "volkeys.h"
 #include "fwcaps.h"
 #include "ipc.h"
 #include "fb_pan.h"
@@ -172,12 +162,29 @@ void controls_boot_rotation(void){
     ctl_state_t st;
     if(ctl_supported() && ctl_read_state(CTL_SYSCONFIG, &st) == 0 && st.rot >= 0) ctl_rot_set(st.rot);
 }
-static void cfg_put(const char *key, int v){ if(cfg_get_int(key, -1) != v) cfg_set_int(key, v); }
 void controls_startup_mirror(void){
-    if(!ctl_supported()) return;
+    /* the rotation applied (the stored one, or the default when it could not be read) is the one Settings shows */
+    if(ctl_supported() && cfg_get_int(CTL_CFG_ROT, -1) != ctl_rot_get()) cfg_set_int(CTL_CFG_ROT, ctl_rot_get());
+}
+/* diskOS owns the volume keys (volkeys.c); the stock gestures only act when it doesn't, e.g. after a crash. All three
+ * set to Adjust Volume keeps that fallback volume-only too. Rewrites each mark that isn't 1 (unreadable ones too).
+ * 0 = all are 1 or were just sent, -1 = a send failed (the player may not be up yet: call again later). */
+int controls_keys_volume_only(void){
+    if(!ctl_supported()) return 0;
+    ctl_state_t st; int rc = 0;
+    ctl_read_state(CTL_SYSCONFIG, &st);
+    for(int i = 0; i < CTL_KEY_N; i++)
+        if(st.key[i] != CTL_ACT_VOLUME && ctl_apply_key_via(ipc_send_probe, i, CTL_ACT_VOLUME) != 0) rc = -1;   /* silent: a boot-time miss is retried */
+    return rc;
+}
+/* Beam admission (16b): a stock gesture set to Switch Track would start local audio behind the receiver. Keys diskOS
+ * owns never do; otherwise every stored gesture must be Adjust Volume (unreadable = no). */
+int ui_cast_keys_ok(void){
+    if(volkeys_owned()) return 1;
     ctl_state_t st;
-    ctl_read_state(CTL_SYSCONFIG, &st);   /* unreadable values stay -1: the rotation shown is the one applied */
-    ctl_mirror_via(&st, cfg_put);
+    ctl_read_state(CTL_SYSCONFIG, &st);
+    for(int i = 0; i < CTL_KEY_N; i++) if(st.key[i] != CTL_ACT_VOLUME) return 0;
+    return 1;
 }
 
 /* Screen Rotation: the picture and touch turn at once, but nothing is stored until the user taps Keep. A prompt drawn in
@@ -225,22 +232,6 @@ int ui_set_screen_rot(int v){
     fbpan_set_rotation(v);
     ctl_prompt_show();
     return 0;
-}
-int ui_set_volume_key(int key, int act){
-    if(!ctl_supported()){ fprintf(stderr, "volume keys: unverified firmware (MAIN_OS_VER=%d)\n", fw_os_ver()); return -1; }
-    if(act != CTL_ACT_VOLUME && ui_cast_session_active()){ fprintf(stderr, "volume keys: a track action is refused while casting\n"); return -1; }   /* 16b: settings.c says why */
-    return ctl_apply_key_via(ipc_send_cmd, key, act);
-}
-/* The player's stored gestures (SYSCONFIG) are the truth; the cfg mirror stands in for one that cannot be read right now. */
-int ui_cast_keys_ok(void){
-    static const char *const CFG[CTL_KEY_N] = { "key_single", "key_double", "key_long" };
-    ctl_state_t st; int act[CTL_KEY_N], rc = ctl_read_state(CTL_SYSCONFIG, &st);
-    for(int i = 0; i < CTL_KEY_N; i++){
-        int requested = cfg_get_int(CFG[i], -1);
-        if(requested != -1 && requested != CTL_ACT_VOLUME) return 0;
-        act[i] = (rc == 0 && st.key[i] >= 0) ? st.key[i] : requested;
-    }
-    return ctl_keys_cast_ok(act);
 }
 #endif
 
