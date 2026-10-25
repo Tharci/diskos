@@ -2,53 +2,14 @@
 /* Copyright (C) 2026 diskOS contributors */
 /* Volume keys read from the pins: one step per press, repeats on a hold (see volkeys.h for the stock facts). */
 #include "volkeys.h"
-#include <string.h>
-
-/* ---- the press/hold state machine ------------------------------------------------------------------------------ */
-void vk_init(vk_core *c, unsigned held){
-    memset(c, 0, sizeof *c);
-    c->hold_ms = VK_HOLD_DEFAULT; c->repeat_ms = VK_REPEAT_DEFAULT;
-    c->down = held & 3u;
-    c->chord = c->down != 0;   /* the chord rule already means "no steps until both are up" */
-}
-int vk_feed(vk_core *c, uint32_t now, unsigned held, int *escape){
-    unsigned pressed = 0;
-    *escape = 0;
-    for(int k = 0; k < 2; k++){
-        unsigned bit = 1u << k;
-        if((held & bit) == (c->down & bit)){ c->run[k] = 0; continue; }
-        if(++c->run[k] < VK_DEBOUNCE) continue;
-        c->run[k] = 0; c->down ^= bit;
-        if(held & bit) pressed |= bit;
-    }
-    if(c->down == 3u){
-        if(!c->both){ c->both = 1; c->since = now; }   /* the escape counts from when BOTH are down, every time */
-        c->chord = 1;
-    } else c->both = 0;
-    if(c->chord){
-        /* Letting go of one key first must not start a ramp on the other, so steps wait until both are up. */
-        if(!c->down){ c->chord = 0; c->escaped = 0; }
-        else if(c->both && !c->escaped && now - c->since >= VK_ESCAPE_MS){ c->escaped = 1; *escape = 1; }
-        return 0;
-    }
-    int steps = 0;
-    for(int k = 0; k < 2; k++){
-        unsigned bit = 1u << k;
-        int dir = k ? -1 : 1;
-        if(!(c->down & bit)) continue;
-        if(pressed & bit){ steps += dir; c->next[k] = now + c->hold_ms; }
-        else if((int32_t)(now - c->next[k]) >= 0){ steps += dir; c->next[k] = now + c->repeat_ms; }   /* no catch-up after a stall */
-    }
-    return steps;
-}
-
-#ifndef VK_CORE_ONLY
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 #include <linux/input.h>
@@ -56,11 +17,13 @@ int vk_feed(vk_core *c, uint32_t now, unsigned held, int *escape){
 #include <sys/mman.h>
 #include "controls.h"
 #include "fwcaps.h"
+#include "volkeys_hold.h"
 #include "ipc.h"
 #include "screens.h"
 
 #define VK_POLL_MS 10          /* sampling while the keys are owned or an app runs */
-#define VK_IDLE_MS 200         /* otherwise only the chord is watched, and only an app acts on it */
+#define VK_WATCH_MS 200        /* keys not owned and no app: the stock player has the volume, nothing acts on the
+                                * samples, so the button state is only kept current for when an app starts */
 #define VK_ECHO_MS 600         /* an a714 this soon after a key change may be the echo of our own 0715 */
 #define VK_SEND_MS 60          /* at most one 0715 per this while a key ramps; the last level is always sent */
 
@@ -159,7 +122,7 @@ static void vk_local(int steps, uint32_t now){
 
 static void *vk_thread(void *arg){
     (void)arg;
-    vk_core core; vk_init(&core, vk_held());
+    vkh_t core; vkh_init(&core, vk_held(), VK_HOLD_DEFAULT, VK_REPEAT_DEFAULT);
     for(;;){
         int owned = atomic_load(&g_owned);
         if(owned){
@@ -167,9 +130,9 @@ static void *vk_thread(void *arg){
             if(poll(&p, 1, VK_POLL_MS) > 0) vk_drain();
             if(g_fd >= 0 && atomic_exchange(&g_power, 0)) vk_forward(265);
             owned = atomic_load(&g_owned);
-        } else usleep(1000 * (atomic_load(&g_app) ? VK_POLL_MS : VK_IDLE_MS));
+        } else usleep(1000 * (atomic_load(&g_app) ? VK_POLL_MS : VK_WATCH_MS));
         core.hold_ms = (uint32_t)atomic_load(&g_hold); core.repeat_ms = (uint32_t)atomic_load(&g_repeat);
-        int escape, steps = vk_feed(&core, vk_now(), vk_held(), &escape);
+        int escape, steps = vkh_feed(&core, vk_now(), vk_held(), &escape);
         if(escape) atomic_store(&g_escape, 1);
         if(!owned) continue;
         if(atomic_load(&g_remote)){
@@ -229,4 +192,3 @@ int volkeys_press_power(void){
     atomic_store(&g_power, 1);
     return 1;
 }
-#endif

@@ -1,31 +1,31 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
-/* Off-device host test for volkeys.c's press/hold state machine (built with -DVK_CORE_ONLY: no thread, no device).
- * Samples arrive every 10 ms, as on the device. */
+/* Off-device host test for volkeys_hold.c, the volume keys' press/hold state machine. Samples arrive every 10 ms, as
+ * volkeys.c feeds them on the device; bit 0 is Vol+, bit 1 Vol-. */
 #include <stdio.h>
-#include "volkeys.h"
+#include "volkeys_hold.h"
 
 static int fails = 0;
 #define CHECK(c,m) do{ if(!(c)){ printf("  FAIL: %s\n", m); fails++; } }while(0)
 
 #define TICK 10
-static vk_core c;
+static vkh_t c;
 static uint32_t now;
 static int escapes;
 /* a fixed 400 ms hold / 80 ms repeat, so the step counts below stay easy to follow; the defaults have their own case */
-static void reset(uint32_t start){ vk_init(&c, 0); c.hold_ms = 400; c.repeat_ms = 80; now = start; escapes = 0; }
+static void reset(uint32_t start){ vkh_init(&c, 0, 400, 80); now = start; escapes = 0; }
 /* `held` for `ms`, one sample per TICK; returns the steps over that time */
 static int run(unsigned held, unsigned ms){
     int steps = 0, esc;
-    for(unsigned t = 0; t < ms; t += TICK){ steps += vk_feed(&c, now, held, &esc); escapes += esc; now += TICK; }
+    for(unsigned t = 0; t < ms; t += TICK){ steps += vkh_feed(&c, now, held, &esc); escapes += esc; now += TICK; }
     return steps;
 }
 
 int main(void){
     /* 1. a tap is one step, in its direction, at the second pressed sample */
     { reset(1000); int esc;
-      CHECK(vk_feed(&c, now, 1, &esc) == 0, "first pressed sample: not confirmed yet"); now += TICK;
-      CHECK(vk_feed(&c, now, 1, &esc) == 1, "second pressed sample: Vol+ steps at once"); now += TICK;
+      CHECK(vkh_feed(&c, now, 1, &esc) == 0, "first pressed sample: not confirmed yet"); now += TICK;
+      CHECK(vkh_feed(&c, now, 1, &esc) == 1, "second pressed sample: Vol+ steps at once"); now += TICK;
       CHECK(run(1, 60) == 0, "a short hold adds nothing");
       CHECK(run(0, 100) == 0, "release adds nothing");
       CHECK(run(2, 50) == -1, "a Vol- tap steps down"); run(0, 50); }
@@ -50,7 +50,7 @@ int main(void){
     { reset(0); int esc;
       run(1, 20);                                   /* confirmed: 1 step */
       now += 2000;                                  /* 2 s with no samples */
-      CHECK(vk_feed(&c, now, 1, &esc) == 1, "one repeat after a stall, not 20"); now += TICK;
+      CHECK(vkh_feed(&c, now, 1, &esc) == 1, "one repeat after a stall, not 20"); now += TICK;
       CHECK(run(1, 70) == 0, "then the normal repeat interval again"); }
 
     /* 6. both keys: no steps while both are down, one escape at 3 s, nothing more until both are up */
@@ -85,14 +85,13 @@ int main(void){
       CHECK(escapes == 1, "the escape across the wrap"); }
 
     /* 10. Vol+ still held from boot (picking the other interface) doesn't ramp; after a release it works */
-    { reset(0); vk_init(&c, 1);
+    { reset(0); vkh_init(&c, 1, 400, 80);
       CHECK(run(1, 2000) == 0, "a key held at start never steps");
       CHECK(run(0, 50) + run(1, 30) == 1, "after its release a tap steps"); run(0, 50); }
 
-    /* 11. the default timing: confirmed at 10 ms, repeats from 410 ms every 40 ms -> 1 + 15 steps by 1000 ms */
-    { vk_init(&c, 0); now = 0; escapes = 0;
-      CHECK(c.hold_ms == VK_HOLD_DEFAULT && c.repeat_ms == VK_REPEAT_DEFAULT, "vk_init sets the default timing");
-      CHECK(run(1, 1000) == 16, "1 s hold at the defaults = 16 steps"); run(0, 50); }
+    /* 11. the volume keys' default timing (400 / 40): confirmed at 10 ms, repeats from 410 ms every 40 ms -> 1 + 15 steps */
+    { vkh_init(&c, 0, 400, 40); now = 0; escapes = 0;
+      CHECK(run(1, 1000) == 16, "1 s hold at 400 / 40 = 16 steps"); run(0, 50); }
 
     /* 12. timing changed by the user mid-hold applies from the next scheduled step */
     { reset(0);
@@ -101,7 +100,7 @@ int main(void){
       CHECK(run(1, 80) == 1, "the step already scheduled keeps its time");
       CHECK(run(1, 100) == 5, "then the new 20 ms repeat"); run(0, 50); }
 
-    if(fails){ printf("volkeys: %d FAILED\n", fails); return 1; }
-    printf("volkeys: all passed\n");
+    if(fails){ printf("volkeys_hold: %d FAILED\n", fails); return 1; }
+    printf("volkeys_hold: all passed\n");
     return 0;
 }
