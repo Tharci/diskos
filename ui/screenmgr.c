@@ -63,6 +63,13 @@ int screen_figure_number(int which){
 static int custom_area(int s){ return s == SCR_CUSTOM_PAGE || s == SCR_CUSTOM_OVERLAYS || s == SCR_CUSTOM_FONT || s == SCR_CUSTOM_PICKER || s == SCR_CUSTOM_PREVIEW; }
 static int s_stack[16];
 static int s_sp = 0;
+/* Screens that show the one current thing (the player and its satellites), whatever route opened them. A second copy
+ * on the stack only lengthens the way Back (NP -> hub -> Chapters -> a chapter -> NP ...), so screen_show rewinds to
+ * the copy already there instead. */
+static const unsigned char s_single[SCR_COUNT] = {
+    [SCR_NOWPLAYING] = 1, [SCR_NPHUB] = 1, [SCR_NPMENU] = 1, [SCR_CHAPTERS] = 1, [SCR_UPNEXT] = 1,
+    [SCR_SONGINFO] = 1, [SCR_LYRICS] = 1, [SCR_TUNE] = 1, [SCR_EQ] = 1,
+};
 #define PUSH_MS 300   /* entrance (cubic ease-out: covers distance fast, settles gently) */
 #define POP_MS  240   /* exit faster than entrance - a premium-motion reflex */
 static int s_anim = 1;   /* slide transitions; disabled by /usr/data/anim_off */
@@ -261,9 +268,31 @@ static void transition(int from, int to, int dir)
     ui_np_title_scroll(ui_screen_backlight_on());
 }
 
+/* The topmost stack index holding which, or -1. */
+static int stack_find(int which)
+{
+    for (int i = s_sp - 1; i >= 0; i--) if (s_stack[i] == which) return i;
+    return -1;
+}
+
+/* Drop the stack to depth and reveal which the way Back does. The current screen runs its leave hooks in transition;
+ * the dropped ones ran theirs when they were covered, except BT Info, whose session closes only on leaving it. */
+static void unwind(int depth, int which)
+{
+    int bt_info = s_current == SCR_BT_INFO;
+    for (int i = depth; i < s_sp; i++) if (s_stack[i] == SCR_BT_INFO) bt_info = 1;
+    if (bt_info && which != SCR_BT_INFO) bt_info_close();
+    int from = s_current;
+    s_sp = depth;
+    s_current = which;
+    transition(from, which, -1);
+}
+
 void screen_show(int which)
 {
     if (which < 0 || which >= SCR_COUNT) return;
+    int at = s_single[which] && which != s_current ? stack_find(which) : -1;
+    if (at >= 0) { unwind(at, which); return; }
     int from = s_current;
     if (which != s_current) {
         int cap = (int)(sizeof(s_stack)/sizeof(s_stack[0]));
@@ -279,21 +308,15 @@ void screen_show(int which)
 }
 
 /* Explicit returns (e.g. a queue selection) finish a detour rather than pushing
- * another copy of its destination. Ordinary screen_show keeps its forward
- * semantics: repeated screen IDs may represent different browsing contexts. */
+ * another copy of its destination. screen_show does this only for single-instance
+ * screens: other screen IDs may repeat for different browsing contexts (Album Wall
+ * -> an album opens Library above the Library that opened the wall). */
 void screen_return_to(int which)
 {
     if (which < 0 || which >= SCR_COUNT) return;
-    if (which == s_current) { screen_show(which); return; }
-    for (int i = s_sp - 1; i >= 0; i--) {
-        if (s_stack[i] != which) continue;
-        int from = s_current;
-        s_sp = i;
-        s_current = which;
-        transition(from, which, -1);
-        return;
-    }
-    screen_show(which);
+    int at = which != s_current ? stack_find(which) : -1;
+    if (at >= 0) unwind(at, which);
+    else screen_show(which);
 }
 
 /* Pop the nav stack (swipe / back gesture). Home is the root: no-op. */
@@ -308,22 +331,15 @@ void screen_back(void)
     transition(from, prev, -1);
 }
 
-/* Home swipe: close every screen above Home in one step. The current screen goes the way a Back takes it (its
- * leave hooks run in transition) and Home is revealed directly, so no screen in between is drawn. Screens further
- * down already ran their leave hooks when they were covered. Library reopens at its top level. Refused like Back
- * while the image list applies a picture. Returns 1 when it went Home. */
+/* Home swipe: close every screen above Home in one step. Home is revealed directly, so no screen in between is
+ * drawn. Library reopens at its top level. Refused like Back while the image list applies a picture. Returns 1 when
+ * it went Home. */
 int screen_home(void)
 {
     if (s_current == SCR_HOME) return 0;
     if (s_current == SCR_CUSTOM_PICKER && custom_picker_busy()) return 0;
-    int bt_info = s_current == SCR_BT_INFO;
-    for (int i = 0; i < s_sp; i++) if (s_stack[i] == SCR_BT_INFO) bt_info = 1;
-    if (bt_info) bt_info_close();
     library_reset_top();
-    int from = s_current;
-    s_sp = 0;
-    s_current = SCR_HOME;
-    transition(from, SCR_HOME, -1);
+    unwind(0, SCR_HOME);
     return 1;
 }
 

@@ -7,7 +7,7 @@
 #include <stdbool.h>
 enum { SCR_HOME, SCR_LIBRARY, SCR_NOWPLAYING, SCR_SETTINGS, SCR_SETTING_DETAIL, SCR_SEARCH, SCR_SAVER, SCR_QUICK, SCR_SONGINFO, SCR_NPMENU, SCR_TUNE, SCR_EQ, SCR_APPS, SCR_NPHUB, SCR_PLPICK, SCR_PLVIEW, SCR_WIFI, SCR_WIFI_INFO, SCR_BT, SCR_BT_INFO, SCR_WEATHER, SCR_LYRICS, SCR_COLORPICK, SCR_LASTFM, SCR_WORKMODE, SCR_DEBUG, SCR_FOLDER, SCR_BOOKS, SCR_CHAPTERS, SCR_SETLIST, SCR_QSCONFIG, SCR_ALBUMWALL, SCR_UPNEXT, SCR_DATETIME, SCR_CASTPICK, SCR_CUSTOM_PICKER, SCR_CUSTOM_PAGE, SCR_CUSTOM_OVERLAYS, SCR_CUSTOM_FONT, SCR_CUSTOM_PREVIEW, SCR_DEVICE_NAMES, SCR_COUNT };
 void screens_init(void);
-void screen_show(int which);
+void screen_show(int which);   /* push; a single-instance screen (Now Playing and its satellites) already in history is returned to */
 /* Return to the nearest visit in history, or open normally if it is absent. */
 void screen_return_to(int which);
 void screen_back(void);
