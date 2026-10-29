@@ -35,8 +35,12 @@ wavtags_test: ../scanner.c ../scanner.h ../audiodur.h wavtags_test.c
 volkeys_hold_test: ../volkeys_hold.c ../volkeys_hold.h volkeys_hold_test.c
 	$(CC) $(CFLAGS) -I.. ../volkeys_hold.c volkeys_hold_test.c -o $@
 
+# BlueZ's paired-device store reader (btstore.c is pure; bt.c, the screen, is not built here).
+btstore_test: ../btstore.c ../btstore.h btstore_test.c
+	$(CC) $(CFLAGS) -I.. ../btstore.c btstore_test.c -o $@
+
 .PHONY: run clean
-run: config_test playstate_test folderscope_test wavtags_test volkeys_hold_test
+run: config_test playstate_test folderscope_test wavtags_test volkeys_hold_test btstore_test
 	./config_test
 	@echo "--- playstate ---"
 	./playstate_test
@@ -46,6 +50,8 @@ run: config_test playstate_test folderscope_test wavtags_test volkeys_hold_test
 	./wavtags_test
 	@echo "--- volkeys_hold ---"
 	./volkeys_hold_test
+	@echo "--- btstore ---"
+	./btstore_test
 
 clean:
-	rm -f config_test playstate_test folderscope_test wavtags_test volkeys_hold_test sqlite3_host.o
+	rm -f config_test playstate_test folderscope_test wavtags_test volkeys_hold_test btstore_test sqlite3_host.o

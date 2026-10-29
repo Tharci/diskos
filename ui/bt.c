@@ -12,6 +12,7 @@
 #include "bt_prepare.h"
 #include "musicdb.h"
 #include "modes.h"
+#include "btstore.h"
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -45,6 +46,10 @@ static lv_obj_t *g_sw, *g_list, *g_info_list;
 static lv_timer_t *g_scan_timer;
 static lv_timer_t *g_scanwait_timer;   /* bt_open's non-destructive "wait for adapter then scan" poll */
 static uint32_t    g_scanwait_start;
+static lv_timer_t *g_radio_timer;      /* bt_power_set's / bt_toggle's bring-up poll */
+static uint32_t    g_radio_start;
+static char g_connect_after_up[20];    /* a paired device tapped while the radio was off or starting: connect when up */
+static int  g_connect_after_flags;
 static lv_timer_t *g_bt_autoroute_timer;
 static char g_sel_mac[20];     /* device selected for the details screen */
 static char g_bt_autorouted[20];
@@ -66,6 +71,9 @@ static void start_scan(void);             /* fwd */
 static void scan_timer_cb(lv_timer_t *t);  /* fwd */
 static void scan_abort(void);             /* fwd */
 static void scan_kick(void);              /* fwd - off-thread re-enumerate (no discovery window) */
+static void scan_render(void);            /* fwd */
+static void list_set_status(const char *msg, int spin);   /* fwd */
+static void scanwait_poll_cb(lv_timer_t *t);              /* fwd */
 static void bt_autoroute_start(void);      /* fwd */
 static void bt_autoroute_stop(void);       /* fwd */
 static void bootrestore_cancel(void);      /* fwd - every explicit enable/disable supersedes boot observation */
@@ -133,23 +141,13 @@ static int bt_capture_wait(const char *cmd, char *out, int cap, int timeout_ms){
 int ui_run_cap_bounded(const char *cmd, char *out, int cap, int timeout_ms){ return bt_capture_wait(cmd, out, cap, timeout_ms); }
 static int run_cap(const char *cmd, char *out, int cap){ return bt_capture_wait(cmd, out, cap, 1000); }
 
-/* a single status message (Scanning / off / empty) - centered in the list area */
-static void list_msg(const char *m){
-    if(!g_list) return;
-    scan_stop();
-    lv_obj_clean(g_list);
-    lv_obj_set_flex_align(g_list, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_t *e = lv_label_create(g_list);
-    lv_label_set_text(e, m);
-    lv_obj_set_style_text_color(e, TC(TEXT_MUTED), 0);
-    lv_obj_set_style_text_font(e, TF(UI_14), 0);
-}
-/* "Scanning" + a spinning refresh glyph, centered in the list area */
-static void list_msg_scanning(void){
-    if(!g_list) return;
-    scan_stop();
-    lv_obj_clean(g_list);
-    lv_obj_set_flex_align(g_list, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+/* The device list: paired devices (from BlueZ's store, at once) and the enumeration worker's results, then one status
+ * line - an explicit state (off, turning on) or, while discovery runs, "Scanning". With no rows it sits centred. */
+static const char *g_list_msg;   /* explicit status, or NULL */
+static int g_list_spin;          /* the explicit status is a wait: it gets the spinning glyph */
+static int g_discovering;        /* a discovery window is open */
+/* One status line in g_list: the text, and for a wait a spinning refresh glyph */
+static void list_status_row(const char *m, int spin){
     lv_obj_t *row = lv_obj_create(g_list);
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -158,9 +156,10 @@ static void list_msg_scanning(void){
     lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(row, 8, 0);
     lv_obj_t *t = lv_label_create(row);
-    lv_label_set_text(t, "Scanning");
+    lv_label_set_text(t, m);
     lv_obj_set_style_text_color(t, TC(TEXT_MUTED), 0);
     lv_obj_set_style_text_font(t, TF(UI_14), 0);
+    if(!spin) return;
     lv_obj_t *ic = lv_label_create(row);
     lv_label_set_text(ic, LV_SYMBOL_REFRESH);
     lv_obj_set_size(ic, 24, 24);
@@ -480,6 +479,7 @@ static void bt_enable(void){
 static void bt_disable(void){
     bootrestore_cancel();   /* Off must also cancel the independent boot observer */
     g_bt_on_last = 0;
+    g_connect_after_up[0] = 0;   /* a tap waiting for the radio does not survive turning it off */
 #ifdef DISKOS_TEST_BT_PREPARE
     ui_bt_route_prepare_cancel();
 #endif
@@ -756,7 +756,7 @@ static void bt_attempt_step(void){
     static const struct { const char *verb, *prop; int ms; } S[] = {
         {0, 0, 0}, {"pair", "Paired:", BT_PAIR_MS}, {"trust", "Trusted:", BT_TRUST_MS}, {"connect", "Connected:", BT_CONNECT_MS} };
     if(g_at.stage == AT_IDLE) return;
-    if(g_at.stage == AT_PAIR && !g_at.h && bt_job_pending(g_at.mac)){
+    if(!g_at.h && bt_job_pending(g_at.mac)){   /* an earlier disconnect/forget of this device finishes first */
         g_at.begin = lv_tick_get();
         return;
     }
@@ -854,13 +854,18 @@ static void bt_ops_cb(lv_timer_t *t){
 static void bt_ops_ensure(void){ if(!g_ops_timer) g_ops_timer = lv_timer_create(bt_ops_cb, 200, NULL); }
 /* ---- end operations ---- */
 
-/* A new attempt (or a cancel) supersedes the old one; pairing can be slow, so each stage has its own budget. */
-static void bt_connect(const char *mac){
+/* A new attempt (or a cancel) supersedes the old one; pairing can be slow, so each stage has its own budget. flags are a
+ * list row's (BT_DEV_*): a paired device starts at trusting, a paired and trusted one at connecting. */
+#define BT_DEV_CONNECTED 1
+#define BT_DEV_PAIRED    2
+#define BT_DEV_TRUSTED   4
+static void bt_connect(const char *mac, int flags){
     if(!bt_mac_valid(mac)){ ui_toast("Bad device address"); return; }
     bt_attempt_cancel(strcmp(g_at.mac, mac) != 0);   /* a re-tap of the same device needs no disconnect */
     bt_route_own(NULL);                               /* before submission: nothing is authorized while this is pending */
     snprintf(g_at.mac, sizeof g_at.mac, "%s", mac);
-    g_at.stage = AT_PAIR; g_at.h = 0; g_at.begin = lv_tick_get();
+    g_at.stage = !(flags & BT_DEV_PAIRED) ? AT_PAIR : !(flags & BT_DEV_TRUSTED) ? AT_TRUST : AT_CONNECT;
+    g_at.h = 0; g_at.begin = lv_tick_get();
     ui_toast("Connecting...");
     bt_ops_ensure();
     bt_attempt_step();
@@ -890,7 +895,7 @@ static void bt_forget(const char *mac){
  * authorizes this MAC. */
 static void bt_route_select(const char *mac){
     if(bt_job_pending(mac)){
-        bt_connect(mac);
+        bt_connect(mac, 0);
         return;
     }
     bt_attempt_cancel(strcmp(g_at.mac, mac) != 0);
@@ -961,7 +966,7 @@ static void info_rename_cb(lv_event_t *e){
 static void info_disc_cb(lv_event_t *e){
     if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
     bt_info_cancel();
-    if(g_info_connected) bt_disconnect(g_sel_mac); else bt_connect(g_sel_mac);
+    if(g_info_connected) bt_disconnect(g_sel_mac); else bt_connect(g_sel_mac, 0);
     screen_back();
     /* re-list shortly so the now-disconnected device loses its checkmark / blue styling
      * (mirrors the connect path; disconnect is async via bluetoothctl). */
@@ -1058,22 +1063,43 @@ static void dev_cb(lv_event_t *e){
     if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
     lv_obj_t *row = lv_event_get_target(e);
     const char *mac = (const char*)lv_obj_get_user_data(row);
-    int connected = (intptr_t)lv_event_get_user_data(e);
+    int flags = (intptr_t)lv_event_get_user_data(e);
     if(!mac || !mac[0]) return;
-    if(connected){
+    if(flags & BT_DEV_CONNECTED){
         snprintf(g_sel_mac, sizeof g_sel_mac, "%s", mac);
         bt_info_open();
-    } else {
-        bt_connect(mac);
-        list_msg("Connecting " LV_SYMBOL_BLUETOOTH);
+        return;
+    }
+    int starting = g_radio_timer || g_scanwait_timer || bt_starting();
+    if(bt_control_on() && !starting){
+        bt_connect(mac, flags);
         /* re-list shortly so the new connection picks up its checkmark */
         if(g_scan_timer) lv_timer_del(g_scan_timer);
         g_scan_timer = lv_timer_create(scan_timer_cb, 4000, NULL);
         lv_timer_set_repeat_count(g_scan_timer, 1);
+        return;
+    }
+    /* Off or still coming up (only paired rows are listed then): connect once the adapter is powered. The radio
+     * and scan-wait polls pick the device up; an off radio is switched on, a starting one without a poll gets one. */
+    snprintf(g_connect_after_up, sizeof g_connect_after_up, "%s", mac);
+    g_connect_after_flags = flags;
+    ui_toast("Turning on Bluetooth...");
+    if(!bt_control_on()) bt_power_set(1);
+    else if(!g_radio_timer && !g_scanwait_timer){
+        g_scanwait_start = lv_tick_get();
+        g_scanwait_timer = bt_power_poll_start(g_scanwait_timer, scanwait_poll_cb);
     }
 }
+/* The radio is up (a bring-up poll saw "Powered"): connect a device tapped while it was off or starting. */
+static void connect_after_up(void){
+    if(!g_connect_after_up[0]) return;
+    char mac[20];
+    snprintf(mac, sizeof mac, "%s", g_connect_after_up);
+    g_connect_after_up[0] = 0;
+    bt_connect(mac, g_connect_after_flags);
+}
 
-static void add_dev_row(const char *mac, const char *name, int connected){
+static void add_dev_row(const char *mac, const char *name, int connected){   /* connected: BT_DEV_* flags */
     lv_obj_t *r = lv_button_create(g_list);
     lv_obj_remove_style_all(r);
     lv_obj_set_size(r, 268, 46);
@@ -1119,7 +1145,7 @@ static void add_dev_row(const char *mac, const char *name, int connected){
  * the LVGL loop for seconds (H5) and risked the fiio_init hardware watchdog. The worker
  * builds ONLY plain data; the main thread renders rows from it (LVGL is main-thread-only).
  * A generation counter drops a superseded worker's result if a newer scan started. */
-typedef struct { char mac[20]; char name[249]; int connected; } bt_scan_dev_t;
+typedef struct { char mac[20]; char name[249]; int connected; } bt_scan_dev_t;   /* connected: BT_DEV_* flags */
 static pthread_mutex_t g_scan_mu = PTHREAD_MUTEX_INITIALIZER;
 static bt_scan_dev_t   g_scan_res[40];
 static int             g_scan_n = 0;         /* [g_scan_mu] result count */
@@ -1152,7 +1178,8 @@ static void *scan_worker(void *arg){
                         (bt_info_prop(info,"Name:",alias,sizeof alias) && alias[0]) ? alias : name;
                     snprintf(res[n].name, sizeof res[n].name, "%s", display);
                     res[n].connected = (bt_info_prop(info,"Connected:",cv,sizeof cv) && !strcmp(cv,"yes"));
-                    if(bt_info_prop(info,"Paired:",cv,sizeof cv) && !strcmp(cv,"yes")) res[n].connected|=2;
+                    if(bt_info_prop(info,"Paired:",cv,sizeof cv) && !strcmp(cv,"yes")) res[n].connected|=BT_DEV_PAIRED;
+                    if(bt_info_prop(info,"Trusted:",cv,sizeof cv) && !strcmp(cv,"yes")) res[n].connected|=BT_DEV_TRUSTED;
                     n++;
                 }
             }
@@ -1172,20 +1199,50 @@ static void *scan_worker(void *arg){
     return NULL;
 }
 
-/* main thread only: render the worker's results into g_list (LVGL touched only here) */
+/* main thread only: render into g_list (LVGL touched only here). Rows: the worker's results plus every paired device
+ * from BlueZ's store it has not reported (yet - or at all, while the radio is off), connected first, then paired, then
+ * the rest. A render that would draw exactly what is shown is skipped: discovery re-renders every few seconds, and a
+ * rebuild would reset the scroll position and drop a tap in progress. */
+#define BT_ROWS 48
+static bt_scan_dev_t g_shown[BT_ROWS];
+static int g_shown_n = -1;            /* -1: nothing drawn yet (or g_list rebuilt) */
+static const char *g_shown_msg;
+static int g_shown_spin;
 static void scan_render(void){
     if(!g_list) return;
+    static bt_scan_dev_t found[BT_ROWS], rows[BT_ROWS];
+    memset(found, 0, sizeof found); memset(rows, 0, sizeof rows);   /* padding too: rows are compared bytewise */
+    int nf;
+    pthread_mutex_lock(&g_scan_mu);
+    nf = g_scan_n; if(nf > 40) nf = 40;
+    memcpy(found, g_scan_res, (size_t)nf * sizeof(bt_scan_dev_t));
+    pthread_mutex_unlock(&g_scan_mu);
+    btstore_dev_t paired[8];
+    int np = btstore_paired_audio(BTSTORE_ROOT, paired, 8);
+    for(int i = 0; i < np && nf < BT_ROWS; i++){
+        int j = 0;
+        while(j < nf && strcasecmp(found[j].mac, paired[i].mac)) j++;
+        if(j == nf){ snprintf(found[nf].mac, sizeof found[nf].mac, "%.17s", paired[i].mac);
+                     snprintf(found[nf].name, sizeof found[nf].name, "%s", paired[i].name); nf++; }
+        found[j].connected |= BT_DEV_PAIRED | (paired[i].trusted ? BT_DEV_TRUSTED : 0);
+    }
+    int n = 0;
+    for(int pass = 0; pass < 3; pass++)
+        for(int i = 0; i < nf; i++){
+            int c = found[i].connected;
+            if(pass == 0 ? (c & BT_DEV_CONNECTED) : pass == 1 ? !(c & BT_DEV_CONNECTED) && (c & BT_DEV_PAIRED)
+                         : !(c & (BT_DEV_CONNECTED | BT_DEV_PAIRED))) rows[n++] = found[i];
+        }
+    const char *msg = g_list_msg ? g_list_msg : g_discovering ? "Scanning" : n ? NULL : "No audio devices found";
+    int spin = g_list_msg ? g_list_spin : g_discovering;
+    if(n == g_shown_n && msg == g_shown_msg && spin == g_shown_spin && !memcmp(rows, g_shown, (size_t)n * sizeof *rows))
+        return;
+    memcpy(g_shown, rows, (size_t)n * sizeof *rows); g_shown_n = n; g_shown_msg = msg; g_shown_spin = spin;
     scan_stop();
     lv_obj_clean(g_list);
-    lv_obj_set_flex_align(g_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);  /* rows top-aligned */
-    static bt_scan_dev_t local[40]; int n;
-    pthread_mutex_lock(&g_scan_mu);
-    n = g_scan_n; if(n > 40) n = 40;
-    memcpy(local, g_scan_res, (size_t)n * sizeof(bt_scan_dev_t));
-    pthread_mutex_unlock(&g_scan_mu);
-    for(int i = 0; i < n; i++) if(local[i].connected & 1)  add_dev_row(local[i].mac, local[i].name, local[i].connected);  /* connected first */
-    for(int i = 0; i < n; i++) if(!(local[i].connected & 1)) add_dev_row(local[i].mac, local[i].name, local[i].connected);
-    if(n == 0) list_msg("No audio devices found");
+    lv_obj_set_flex_align(g_list, n ? LV_FLEX_ALIGN_START : LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    for(int i = 0; i < n; i++) add_dev_row(rows[i].mac, rows[i].name, rows[i].connected);
+    if(msg) list_status_row(msg, spin);
     /* NOTE: audio output routing to the BT sink is intentionally DISABLED.
      * bluez+bluealsa does SBC encoding in software, which is too heavy for this
      * MIPS CPU (laggy audio + watchdog reboots), and the 0666 output-mux command
@@ -1193,6 +1250,8 @@ static void scan_render(void){
      * devices, but the player always uses its native DAC output.  Smooth BT audio
      * would require the stock Broadcom BSA (hardware a2dp), a separate effort. */
 }
+/* An explicit status (msg is a string literal, or NULL for none) under the rows. */
+static void list_set_status(const char *msg, int spin){ g_list_msg = msg; g_list_spin = spin; scan_render(); }
 
 /* main thread: poll until the worker finishes, then render. Keeps waiting (does NOT
  * render stale results early); only a wedged worker (~30s) is abandoned - and then the
@@ -1240,9 +1299,18 @@ static void scan_kick(void){
     }
 }
 
+/* While discovery runs, re-enumerate every BT_REFRESH_MS so devices appear as they are found, not at the end. */
+#define BT_REFRESH_MS 3000
+static lv_timer_t *g_refresh_timer;
+static void refresh_cb(lv_timer_t *t){ (void)t; scan_kick(); }
+static void discovery_end(void){
+    g_discovering = 0;
+    if(g_refresh_timer){ lv_timer_del(g_refresh_timer); g_refresh_timer = NULL; }
+}
 static void scan_timer_cb(lv_timer_t *t){
     (void)t;
     if(g_scan_timer){ lv_timer_del(g_scan_timer); g_scan_timer = NULL; }
+    discovery_end();
     scan_kick();   /* enumerate off-thread; scanpoll_cb renders when done (no main-thread freeze) */
 }
 /* Cancel every pending scan artifact and abandon any in-flight worker (bump gen so its
@@ -1250,6 +1318,7 @@ static void scan_timer_cb(lv_timer_t *t){
  * render device rows over the "Bluetooth is off" message. */
 static void scan_abort(void){
     if(g_scan_timer){ lv_timer_del(g_scan_timer); g_scan_timer = NULL; }
+    discovery_end();
     if(g_scanpoll_timer){ lv_timer_del(g_scanpoll_timer); g_scanpoll_timer = NULL; }
     if(g_scanwait_timer){ lv_timer_del(g_scanwait_timer); g_scanwait_timer = NULL; }  /* cancel the bt_open observer too */
     pthread_mutex_lock(&g_scan_mu);
@@ -1257,13 +1326,16 @@ static void scan_abort(void){
     pthread_mutex_unlock(&g_scan_mu);
 }
 static void start_scan(void){   /* callers have established that the adapter is powered */
-    list_msg_scanning();
     /* Classic BR/EDR inquiry - what BT speakers/headphones use - needs ~10-12s to find and
      * resolve a device's name/class; the old 6s window quit before speakers ever appeared. */
     system("bluetoothctl --timeout 13 scan on >/dev/null 2>&1 &");
     if(g_scan_timer) lv_timer_del(g_scan_timer);
     g_scan_timer = lv_timer_create(scan_timer_cb, 13500, NULL);
     lv_timer_set_repeat_count(g_scan_timer, 1);
+    g_discovering = 1;
+    if(!g_refresh_timer) g_refresh_timer = lv_timer_create(refresh_cb, BT_REFRESH_MS, NULL);
+    list_set_status(NULL, 0);   /* the paired rows + "Scanning" at once */
+    scan_kick();                /* and the connected state without waiting for the first refresh */
 }
 
 /* ---- radio toggle ------------------------------------------------------- */
@@ -1271,8 +1343,6 @@ static void start_scan(void){   /* callers have established that the adapter is 
  * several seconds). A fixed settle timer would either fire too early ("No audio
  * devices found" before the radio is up) or never actively scan. Poll bt_on_poll()
  * until the adapter is Powered, then run a real scan. */
-static lv_timer_t *g_radio_timer;
-static uint32_t    g_radio_start;
 static void radio_on_poll_cb(lv_timer_t *t){
     if(t != g_radio_timer) return;
     if(cfg_get_int("bt_on", 0) != 1){ lv_timer_del(t); g_radio_timer = NULL; return; }
@@ -1281,6 +1351,7 @@ static void radio_on_poll_cb(lv_timer_t *t){
         bt_ensure_services();
         bt_autoroute_start();
         start_scan();
+        connect_after_up();
         return;
     }
     if(lv_tick_elaps(g_radio_start) > 28000){   /* 2s rfkill + ~20s up-loop + daemon/power settle */
@@ -1292,7 +1363,7 @@ static void radio_on_poll_cb(lv_timer_t *t){
         cfg_set_int("bt_on", 0);
         if(g_sw) lv_obj_clear_state(g_sw, LV_STATE_CHECKED);
         bt_disable();
-        list_msg("Couldn't turn on Bluetooth");
+        list_set_status("Couldn't turn on Bluetooth", 0);
     }
 }
 /* The one Bluetooth power path: the page's switch and the Settings > Network row both call it. An explicit enable
@@ -1302,7 +1373,7 @@ void bt_power_set(int on){
     if(on){
         cfg_set_int("bt_on", 1);   /* persist intent so boot restores it (mirror WiFi) */
         bt_enable();
-        list_msg("Turning on " LV_SYMBOL_BLUETOOTH);
+        list_set_status("Turning on Bluetooth", 1);
         g_radio_start = lv_tick_get();
         if(g_scanwait_timer){ lv_timer_del(g_scanwait_timer); g_scanwait_timer = NULL; }  /* radio poll owns bring-up now - keep the two mutually exclusive */
         g_radio_timer = bt_power_poll_start(g_radio_timer, radio_on_poll_cb);
@@ -1313,7 +1384,7 @@ void bt_power_set(int on){
         scan_abort();          /* cancel any pending/active scan so it can't render over "off" */
         ui_route_analog();     /* return audio to the DAC before killing the BT stack */
         bt_disable();
-        list_msg("Bluetooth is off");
+        list_set_status("Bluetooth is off", 0);
     }
     /* a choice made on the Settings row also shows on the page's switch */
     if(g_sw){ if(on) lv_obj_add_state(g_sw, LV_STATE_CHECKED); else lv_obj_clear_state(g_sw, LV_STATE_CHECKED); }
@@ -1390,7 +1461,8 @@ void bt_boot_restore(void){
 static void rescan_cb(lv_event_t *e){
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     if(g_radio_timer || g_scanwait_timer) return;   /* still coming up: the poll scans once the adapter is powered */
-    if(bt_radio_on() && bt_on()) start_scan(); else list_msg("Bluetooth is off");
+    if(g_discovering) return;                       /* already scanning: a restart would only push results back */
+    if(bt_radio_on() && bt_on()) start_scan(); else list_set_status("Bluetooth is off", 0);
 }
 static void back_cb(lv_event_t *e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) screen_back(); }
 
@@ -1456,6 +1528,7 @@ void bt_create(lv_obj_t *root){
     lv_obj_set_scroll_dir(g_list, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(g_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_flag(g_list, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+    g_shown_n = -1;   /* a new, empty list: the next render must draw */
 }
 
 /* Non-destructive "wait for the adapter, then scan" poll used when the BT screen is opened while the
@@ -1468,12 +1541,12 @@ static void scanwait_poll_cb(lv_timer_t *t){
     }
     if(bt_on_poll()){
         lv_timer_del(g_scanwait_timer); g_scanwait_timer = NULL;
-        bt_ensure_services(); bt_autoroute_start(); start_scan();
+        bt_ensure_services(); bt_autoroute_start(); start_scan(); connect_after_up();
         return;
     }
     if(lv_tick_elaps(g_scanwait_start) > 28000){    /* gave up waiting - do NOT tear the radio down */
         lv_timer_del(g_scanwait_timer); g_scanwait_timer = NULL;
-        list_msg(bt_radio_on() ? "Bluetooth is starting up" : "Bluetooth is off");
+        list_set_status(bt_radio_on() ? "Bluetooth is starting up" : "Bluetooth is off", 0);
     }
 }
 
@@ -1500,10 +1573,10 @@ void bt_open(void){
                                                      * unlike radio_on_poll_cb, this never powers BT off on a
                                                      * timeout, so observing an externally-enabled radio (or a
                                                      * flaky bt_on() probe) can't kill a working controller. */
-        list_msg_scanning();
+        list_set_status("Turning on Bluetooth", 1);
         g_scanwait_start = lv_tick_get();
         g_scanwait_timer = bt_power_poll_start(g_scanwait_timer, scanwait_poll_cb);
     } else {
-        list_msg("Bluetooth is off");
+        list_set_status("Bluetooth is off", 0);   /* paired devices stay listed: a tap turns Bluetooth on */
     }
 }
