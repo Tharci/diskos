@@ -2303,6 +2303,13 @@ void ui_book_user_seeked(long target_ms){
         } else {
             g_book_ckpt_ok = 1;                                 /* no concrete target to confirm -> allow checkpointing */
         }
+    } else if(!g_book_sess[0] && target_ms >= 0){
+        /* No session yet: after a boot or a UI restart the player holds the book paused, and book_tick adopts it only
+         * once it plays. Persist this seek as the bookmark now - adoption compares the playing position with the
+         * saved one and would otherwise "resume" to the older, deeper bookmark over the position just chosen. */
+        track_state_t st; ipc_get_state(&st);
+        if(st.have_track && st.player_confirmed && mdb_is_book_path(st.path) && !mdb_book_save(st.path, st.path, target_ms, 0))
+            ui_toast("Couldn't save book position - try again");
     }
 }
 
