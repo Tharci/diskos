@@ -1508,15 +1508,6 @@ void bt_create(lv_obj_t *root){
     lv_obj_set_style_text_color(rl, TC(TEXT_SECONDARY), 0);
     lv_obj_center(rl);
 
-    /* Honesty: audio routing to a BT speaker works now (auto-routes on connect), but SBC
-     * sw-encode on this MIPS CPU can be rough (occasional artifacts) - label it beta. */
-    lv_obj_t *note = lv_label_create(root);
-    lv_label_set_text(note, "Connect a speaker to play audio (beta)");
-    lv_obj_set_pos(note, 30, 120); lv_obj_set_width(note, 300);   /* clear of the card (and a theme's edge under it) */
-    lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_font(note, TF(UI_12), 0);
-    lv_obj_set_style_text_color(note, TC(TEXT_FOOTNOTE), 0);
-
     g_list = lv_obj_create(root);
     lv_obj_remove_style_all(g_list);
     lv_obj_set_pos(g_list, 40, 138); lv_obj_set_size(g_list, 280, 180);
