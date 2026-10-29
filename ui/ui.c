@@ -126,6 +126,8 @@ static long g_seek_lo, g_seek_hi;  /* the ms window the ring spans + seeks withi
  * the player's stream reaches it (or the window lapses). */
 static uint32_t g_seek_hold_until = 0;
 static long     g_seek_target_ms = -1;   /* ABSOLUTE ms we seeked to - window-independent, so a seek that lands on a chapter boundary (window flips) isn't mistaken for a stale echo */
+/* A seek is still unconfirmed: the player has not yet reported a position near g_seek_target_ms. Wrap-safe tick test. */
+static int seek_hold_active(void){ return g_seek_hold_until && (int32_t)(lv_tick_get() - g_seek_hold_until) < 0; }
 static long     g_scrub_lo, g_scrub_hi;  /* the ms window LATCHED when a ring press starts - playback advancing under the finger (a chapter boundary crossed mid-drag) must not reinterpret the arc */
 /* Playback identity belongs to the displayed context, including same-path replay. */
 typedef struct {
@@ -543,6 +545,7 @@ static void style_text(lv_obj_t *obj, const lv_font_t *font, lv_color_t color)
 /* Entry for play/pause/next/prev: the playback facade runs the local logic below unchanged while the source is LOCAL, and
  * routes to the Cast sink (never a /player frame) while it is CAST. */
 static int transport_local(const char *cmd);
+static void np_show_position(const track_state_t *st, long pos);
 int ui_transport_command(const char *cmd)
 {
     if(ui_receiver_active()) return transport_local(cmd);   /* the receiver's dispatch comes before Cast and local */
@@ -570,12 +573,17 @@ static int transport_local(const char *cmd)
     if(is_next || is_prev){
         track_state_t st; ipc_get_state(&st);
         if(mdb_is_book_path(st.path)){
-            long tgt = st.position_ms + (is_next ? 30000 : -15000);
+            /* The player reports position once a second and holds the next report back after a seek, so while the
+             * last seek is unconfirmed st.position_ms is stale: count from that seek's target, or rapid taps would
+             * all land on the same spot. */
+            long from = seek_hold_active() && g_seek_target_ms >= 0 ? g_seek_target_ms : st.position_ms;
+            long tgt = from + (is_next ? 30000 : -15000);
             if(tgt < 0) tgt = 0;
             if(st.duration_ms > 0 && tgt > st.duration_ms) tgt = st.duration_ms;
             if(ui_seek_to(tgt) < 0){ ui_toast("Couldn't seek - try again"); return -1; }
             g_seek_target_ms = tgt;
             g_seek_hold_until = lv_tick_get() + 2500;
+            np_show_position(&st, tgt);   /* show the target now; the hold keeps it until the player catches up */
             ui_book_user_seeked(tgt);
             return 0;
         }
@@ -1990,13 +1998,13 @@ static long book_cur_chapter_end(const track_state_t *st)
 
 /* The [start,end] ms window of the chapter currently under the position, for a book with chapters.
  * Returns 1 (window set) or 0 (not a chaptered book -> caller uses the whole track). Reuses g_chaps. */
-static int book_chapter_window(const track_state_t *st, long *lo, long *hi)
+static int book_chapter_window(const track_state_t *st, long pos, long *lo, long *hi)
 {
     if(!ui_view_is_book(st->path)) return 0;
     if(!book_metadata_ready(st)) return 0;
     if(g_nchaps <= 0) return 0;
     int cur = 0;
-    for(int i = 0; i < g_nchaps; i++){ if(g_chaps[i].start_ms <= st->position_ms) cur = i; else break; }
+    for(int i = 0; i < g_nchaps; i++){ if(g_chaps[i].start_ms <= pos) cur = i; else break; }
     long a = g_chaps[cur].start_ms;
     long b = (cur + 1 < g_nchaps) ? g_chaps[cur+1].start_ms
                                   : (st->duration_ms > 0 ? st->duration_ms : a);
@@ -3315,15 +3323,41 @@ void ui_record_play(const track_state_t *st)
     }
 }
 
-void ui_update(const track_state_t *st)
+/* Draw pos on the ring and the elapsed/remaining times. Seek/progress window: a book's ring + times track the chapter
+ * that contains pos (the whole-book ring is unusable - 1 degree can be minutes on a long book). Music uses the whole
+ * track. Also called with a skip's target before the player reports it, so the window follows pos, not st. */
+static void np_show_position(const track_state_t *st, long pos)
 {
     char elapsed_buf[12];   /* room for H:MM:SS (audiobook-length) - mmss now emits hours */
     char remain_core[12];
     char remain_buf[14];    /* "-" + H:MM:SS */
+    long dur = st->duration_ms > 0 ? st->duration_ms : 0;
+    if(pos < 0) pos = 0;
+    if(dur > 0 && pos > dur) pos = dur;
+    if(!book_chapter_window(st, pos, &g_seek_lo, &g_seek_hi)){ g_seek_lo = 0; g_seek_hi = dur; }
+    long span = g_seek_hi - g_seek_lo;
+    long rel  = pos - g_seek_lo;
+    if(rel < 0) rel = 0;
+    if(span > 0 && rel > span) rel = span;
+    if(g_scrubbing) return;   /* the finger owns the arc and times while scrubbing */
+
+    mmss(rel, elapsed_buf, sizeof(elapsed_buf));   /* elapsed within the window (chapter for a book) */
+    set_label_text_changed(t_elapsed, elapsed_buf);
+    if(span > 0) {
+        long remain = span - rel;
+        mmss(remain, remain_core, sizeof(remain_core));
+        snprintf(remain_buf, sizeof(remain_buf), "-%s", remain_core);
+    } else {
+        snprintf(remain_buf, sizeof(remain_buf), "0:00");
+    }
+    set_label_text_changed(t_remain, remain_buf);
+    set_progress_changed((span > 0) ? (int32_t)(((long long)rel * 1000LL) / (long long)span) : 0);
+}
+
+void ui_update(const track_state_t *st)
+{
     long dur;
     long pos;
-    long remain;
-    int32_t progress;
 
     receiver_view_tick(NULL);
     if(ui_receiver_active()) return;
@@ -3469,22 +3503,12 @@ void ui_update(const track_state_t *st)
     }
     if(dur > 0 && pos > dur) pos = dur;
 
-    /* Seek/progress window: a book's ring + times track the CURRENT CHAPTER (the whole-book
-     * ring is unusable - 1 degree can be minutes on a long book). Music uses the whole track. */
-    if(!book_chapter_window(st, &g_seek_lo, &g_seek_hi)){ g_seek_lo = 0; g_seek_hi = dur; }
-    long span = g_seek_hi - g_seek_lo;
-    long rel  = pos - g_seek_lo;
-    if(rel < 0) rel = 0;
-    if(span > 0 && rel > span) rel = span;
-
-    progress = (span > 0) ? (int32_t)(((long long)rel * 1000LL) / (long long)span) : 0;
-
     /* seek echo-suppression: while the post-seek hold is active and the player
      * is still streaming a stale (far-from-target) position, keep the arc and
      * times pinned at the seeked target instead of snapping back. */
     if(g_seek_hold_until) {
         long d = pos - g_seek_target_ms; if(d < 0) d = -d;   /* ABSOLUTE ms gap - unaffected by a chapter-window flip at a seek-to-boundary */
-        if(lv_tick_get() < g_seek_hold_until && d > 3000) {
+        if(seek_hold_active() && d > 3000) {
             ui_pp_glyph(btn_pp, ui_pp_icon_playing(st->state == 2));
             if(theme_kit()->np_state) theme_kit()->np_state(ui_pp_icon_playing(st->state == 2), 1);   /* keep the words with the glyph */
             return;   /* ignore this stale echo */
@@ -3492,21 +3516,7 @@ void ui_update(const track_state_t *st)
         g_seek_hold_until = 0; g_seek_target_ms = -1;   /* caught up or window lapsed */
     }
 
-    if(!g_scrubbing){
-        mmss(rel, elapsed_buf, sizeof(elapsed_buf));   /* elapsed within the window (chapter for a book) */
-        set_label_text_changed(t_elapsed, elapsed_buf);
-
-        if(span > 0) {
-            remain = span - rel;
-            if(remain < 0) remain = 0;
-            mmss(remain, remain_core, sizeof(remain_core));
-            snprintf(remain_buf, sizeof(remain_buf), "-%s", remain_core);
-        } else {
-            snprintf(remain_buf, sizeof(remain_buf), "0:00");
-        }
-        set_label_text_changed(t_remain, remain_buf);
-        set_progress_changed(progress);
-    }
+    np_show_position(st, pos);
 
     ui_pp_glyph(btn_pp, ui_pp_icon_playing(st->state == 2));
     if(theme_kit()->np_state) theme_kit()->np_state(ui_pp_icon_playing(st->state == 2), 1);
