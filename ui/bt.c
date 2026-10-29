@@ -1510,7 +1510,7 @@ void bt_create(lv_obj_t *root){
 
     g_list = lv_obj_create(root);
     lv_obj_remove_style_all(g_list);
-    lv_obj_set_pos(g_list, 40, 138); lv_obj_set_size(g_list, 280, 180);
+    lv_obj_set_pos(g_list, 40, 120); lv_obj_set_size(g_list, 280, 198);   /* from just under the control row; bottom unchanged */
     lv_obj_set_style_pad_bottom(g_list, 44, 0);   /* last row scrolls clear of the round bottom bezel */
     lv_obj_set_style_bg_opa(g_list, LV_OPA_TRANSP, 0);
     lv_obj_set_style_pad_row(g_list, 6, 0);
