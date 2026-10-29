@@ -85,13 +85,18 @@ static void scan_stop(void){
 enum { JOB_DRAIN = 1, JOB_FORGET };
 static void bt_job_add(unsigned h, int kind, const char *mac);
 static struct { char cmd[512]; unsigned handle; } g_queries[4];
+static void bt_capture_drop_slot(int i){
+    proc_cancel(g_queries[i].handle);
+    bt_job_add(g_queries[i].handle, JOB_DRAIN, NULL);
+    g_queries[i].handle = 0; g_queries[i].cmd[0] = 0;
+}
 static void bt_capture_drop_except(const char *keep){
-    for(int i = 0; i < 4; i++){
-        if(!g_queries[i].handle || (keep && !strcmp(g_queries[i].cmd, keep))) continue;
-        proc_cancel(g_queries[i].handle);
-        bt_job_add(g_queries[i].handle, JOB_DRAIN, NULL);
-        g_queries[i].handle = 0; g_queries[i].cmd[0] = 0;
-    }
+    for(int i = 0; i < 4; i++)
+        if(g_queries[i].handle && !(keep && !strcmp(g_queries[i].cmd, keep))) bt_capture_drop_slot(i);
+}
+static void bt_capture_drop(const char *cmd){
+    for(int i = 0; i < 4; i++)
+        if(g_queries[i].handle && !strcmp(g_queries[i].cmd, cmd)) bt_capture_drop_slot(i);
 }
 static int run_cap_bounded(const char *cmd, char *out, int cap, int timeout_ms){
     out[0] = 0;
@@ -173,13 +178,32 @@ static void list_msg_scanning(void){
 }
 
 /* powered = bluetoothd up AND adapter Powered: yes */
+#define BT_SHOW_CMD "bluetoothctl show 2>/dev/null"
+static int g_bt_on_last;   /* bt_on()'s last answer; bt_disable() clears it, so it never outlives a power-off */
 static int bt_on(void){
-    static int last;
     /* bluetoothctl talks to bluetoothd over D-Bus and can stall if the daemon is wedged - bound it so
-     * this probe (called from UI poll timers) never freezes the main thread. */
-    char s[2048]; bt_capture_wait("bluetoothctl show 2>/dev/null", s, sizeof s, 250);
-    if(s[0]) last = strstr(s, "Powered: yes") != NULL;
-    return last; /* pending/failed probe does not establish power loss */
+     * this one-off probe never freezes the main thread for long. */
+    char s[2048]; bt_capture_wait(BT_SHOW_CMD, s, sizeof s, 250);
+    if(s[0]) g_bt_on_last = strstr(s, "Powered: yes") != NULL;
+    return g_bt_on_last; /* pending/failed probe does not establish power loss */
+}
+/* bt_enable()'s bring-up is running (its subshell removes the marker when done). bluetoothd is too busy to answer
+ * bt_on() within 250 ms meanwhile, so callers wait for the adapter with bt_on_poll() instead. */
+static int bt_starting(void){ return access("/tmp/bt_enabling", F_OK) == 0; }
+/* The bring-up polls' probe. While the radio comes up bluetoothd is too busy to answer within bt_on()'s 250 ms, so a
+ * blocking probe froze the UI for 250 ms of every poll. This one starts the query and reads the answer on a later
+ * tick: 1 only for a completed "Powered: yes", 0 while pending, off or unknown. */
+#define BT_POWER_POLL_MS 500
+static int bt_on_poll(void){
+    char s[2048];
+    return run_cap_bounded(BT_SHOW_CMD, s, sizeof s, 2000) == PROC_COMPLETE && strstr(s, "Powered: yes") != NULL;
+}
+/* (Re)start a bring-up poll. A probe that a cancelled poll left in flight answers for an earlier radio state, so
+ * drop it first. */
+static lv_timer_t *bt_power_poll_start(lv_timer_t *old, lv_timer_cb_t cb){
+    if(old) lv_timer_del(old);
+    bt_capture_drop(BT_SHOW_CMD);
+    return lv_timer_create(cb, BT_POWER_POLL_MS, NULL);
 }
 
 /* Cheap "is the BT radio enabled?" for the status icon + QS tile: reads the bluetooth rfkill soft-block
@@ -455,6 +479,7 @@ static void bt_enable(void){
 }
 static void bt_disable(void){
     bootrestore_cancel();   /* Off must also cancel the independent boot observer */
+    g_bt_on_last = 0;
 #ifdef DISKOS_TEST_BT_PREPARE
     ui_bt_route_prepare_cancel();
 #endif
@@ -625,7 +650,7 @@ void bt_notify_player_restart(void){
     ui_bt_route_prepare_cancel();
 #endif
     g_bt_autorouted[0] = 0;
-    if(bt_on() && !g_bt_autoroute_timer) bt_autoroute_start();
+    if(bt_radio_on() && bt_on() && !g_bt_autoroute_timer) bt_autoroute_start();
 }
 
 /* ---- pair + connect ----------------------------------------------------- */
@@ -1231,8 +1256,7 @@ static void scan_abort(void){
     g_scan_gen++; g_scan_running = 0; g_scan_n = 0; g_scan_done = 0;
     pthread_mutex_unlock(&g_scan_mu);
 }
-static void start_scan(void){
-    if(!bt_on()){ list_msg("Bluetooth is off"); return; }
+static void start_scan(void){   /* callers have established that the adapter is powered */
     list_msg_scanning();
     /* Classic BR/EDR inquiry - what BT speakers/headphones use - needs ~10-12s to find and
      * resolve a device's name/class; the old 6s window quit before speakers ever appeared. */
@@ -1245,14 +1269,14 @@ static void start_scan(void){
 /* ---- radio toggle ------------------------------------------------------- */
 /* bt_enable() is slow (rfkill cycle + patchram firmware download + hci0 bring-up,
  * several seconds). A fixed settle timer would either fire too early ("No audio
- * devices found" before the radio is up) or never actively scan. Poll bt_on()
+ * devices found" before the radio is up) or never actively scan. Poll bt_on_poll()
  * until the adapter is Powered, then run a real scan. */
 static lv_timer_t *g_radio_timer;
 static uint32_t    g_radio_start;
 static void radio_on_poll_cb(lv_timer_t *t){
     if(t != g_radio_timer) return;
     if(cfg_get_int("bt_on", 0) != 1){ lv_timer_del(t); g_radio_timer = NULL; return; }
-    if(bt_on()){
+    if(bt_on_poll()){
         lv_timer_del(g_radio_timer); g_radio_timer = NULL;
         bt_ensure_services();
         bt_autoroute_start();
@@ -1281,8 +1305,7 @@ void bt_power_set(int on){
         list_msg("Turning on " LV_SYMBOL_BLUETOOTH);
         g_radio_start = lv_tick_get();
         if(g_scanwait_timer){ lv_timer_del(g_scanwait_timer); g_scanwait_timer = NULL; }  /* radio poll owns bring-up now - keep the two mutually exclusive */
-        if(g_radio_timer) lv_timer_del(g_radio_timer);
-        g_radio_timer = lv_timer_create(radio_on_poll_cb, 1000, NULL);
+        g_radio_timer = bt_power_poll_start(g_radio_timer, radio_on_poll_cb);
     } else {
         cfg_set_int("bt_on", 0);   /* OFF before teardown so boot-restore won't resurrect it */
         if(g_radio_timer){ lv_timer_del(g_radio_timer); g_radio_timer = NULL; }
@@ -1309,8 +1332,7 @@ int bt_toggle(void){
         bt_enable();
         g_radio_start = lv_tick_get();
         if(g_scanwait_timer){ lv_timer_del(g_scanwait_timer); g_scanwait_timer = NULL; }
-        if(g_radio_timer) lv_timer_del(g_radio_timer);
-        g_radio_timer = lv_timer_create(radio_on_poll_cb, 1000, NULL);
+        g_radio_timer = bt_power_poll_start(g_radio_timer, radio_on_poll_cb);
     } else {
         if(g_radio_timer){ lv_timer_del(g_radio_timer); g_radio_timer = NULL; }        /* cancel the bring-up poll too */
         bt_attempt_cancel(0);  /* a pending attempt must not scan_kick() or route while BT is off */
@@ -1345,7 +1367,7 @@ static void bootrestore_cancel(void){
 static void bootrestore_poll_cb(lv_timer_t *t){
     if(t != g_bootrestore_timer) return;
     if(cfg_get_int("bt_on", 0) != 1){ bootrestore_cancel(); return; }
-    if(bt_on()){
+    if(bt_on_poll()){
         bootrestore_cancel();
         bt_ensure_services();
         bt_autoroute_start();          /* speaker auto-reconnects -> auto-route routes it */
@@ -1359,14 +1381,17 @@ void bt_boot_restore(void){
     bootrestore_cancel();   /* replacement/off/already-up paths must not leave an old observer */
     bt_init_intent();
     if(cfg_get_int("bt_on", 0) != 1) return;              /* was off -> stay off */
-    if(bt_on()){ bt_ensure_services(); bt_autoroute_start(); return; }   /* already up (UI restart) */
+    if(bt_radio_on() && bt_on()){ bt_ensure_services(); bt_autoroute_start(); return; }   /* already up (UI restart); a blocked radio has no bluetoothd, which bt_on() would wait out */
     bt_enable();
     g_bootrestore_start = lv_tick_get();
-    if(g_bootrestore_timer) lv_timer_del(g_bootrestore_timer);
-    g_bootrestore_timer = lv_timer_create(bootrestore_poll_cb, 1000, NULL);
+    g_bootrestore_timer = bt_power_poll_start(g_bootrestore_timer, bootrestore_poll_cb);
 }
 
-static void rescan_cb(lv_event_t *e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) start_scan(); }
+static void rescan_cb(lv_event_t *e){
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if(g_radio_timer || g_scanwait_timer) return;   /* still coming up: the poll scans once the adapter is powered */
+    if(bt_radio_on() && bt_on()) start_scan(); else list_msg("Bluetooth is off");
+}
 static void back_cb(lv_event_t *e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) screen_back(); }
 
 void bt_create(lv_obj_t *root){
@@ -1441,7 +1466,7 @@ static void scanwait_poll_cb(lv_timer_t *t){
     if(screen_current() != SCR_BT){                 /* user left the BT screen -> stop waiting */
         lv_timer_del(g_scanwait_timer); g_scanwait_timer = NULL; return;
     }
-    if(bt_on()){
+    if(bt_on_poll()){
         lv_timer_del(g_scanwait_timer); g_scanwait_timer = NULL;
         bt_ensure_services(); bt_autoroute_start(); start_scan();
         return;
@@ -1467,7 +1492,8 @@ void bt_open(void){
      * fired would otherwise scan here AND on the next poll tick). */
     if(g_radio_timer){ lv_timer_del(g_radio_timer); g_radio_timer = NULL; }
     if(g_scanwait_timer){ lv_timer_del(g_scanwait_timer); g_scanwait_timer = NULL; }
-    if(bt_on()){                                   /* fully up -> scan immediately */
+    if(!bt_starting() && bt_radio_on() && bt_on()){   /* fully up -> scan immediately (bt_on() would wait out its
+                                                     * 250 ms mid bring-up, and with no bluetoothd on a blocked radio) */
         bt_ensure_services(); bt_autoroute_start(); start_scan();
     } else if(want){                                /* on/coming up (e.g. just toggled from Quick Settings)
                                                      * -> poll until Powered, then scan. NON-destructive:
@@ -1476,8 +1502,7 @@ void bt_open(void){
                                                      * flaky bt_on() probe) can't kill a working controller. */
         list_msg_scanning();
         g_scanwait_start = lv_tick_get();
-        if(g_scanwait_timer) lv_timer_del(g_scanwait_timer);
-        g_scanwait_timer = lv_timer_create(scanwait_poll_cb, 1000, NULL);
+        g_scanwait_timer = bt_power_poll_start(g_scanwait_timer, scanwait_poll_cb);
     } else {
         list_msg("Bluetooth is off");
     }
