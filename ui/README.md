@@ -27,6 +27,7 @@ Built with **LVGL 9.2.2** (software renderer) on a static-musl mipsel toolchain.
 ## Source layout
 | Area | Files |
 |---|---|
+| C++ rewrite | [`src/`](src/README.md): the modules that replace the C below, one folder per area |
 | Core / loop / nav | `main.c`, `screenmgr.c` / `screens.h`, `fb_pan.c`, `ipc.c` / `ipc.h`, `config.c` |
 | Now Playing + art | `ui.c` / `ui.h`, `art.c` / `art.h`, `artcache.c`, `saver.c`, `songinfo.c`, `npmenus.c` |
 | Library / browse | `home.c`, `library.c`, `musicdb.c`, `search.c`, `playlistview.c`, `scanner.c` |
@@ -83,10 +84,23 @@ set `DISKOS_DEP_OUT` to keep them in a directory shared between build directorie
   `mq_ui` and as a pre-commit hook; `tools/check_punct.py` (no punctuation the device fonts lack) runs as a
   pre-commit hook.
 
+### C++ modules and host tests
+
+The UI is being rewritten in C++23 under [`src/`](src/README.md), module by module. The device build compiles
+the modules too, and `cmake --build --preset device -t tidy` runs clang-tidy on them. Their Catch2 tests run on
+the host, with the host's GCC 14, under sanitizers:
+
+```sh
+cmake --preset host && cmake --build --preset host && ctest --preset host   # ASan + UBSan
+```
+
+`host-tsan` is the same with ThreadSanitizer. The host presets need no stock inputs or cross toolchain.
+
 ## Build in Docker (recommended)
 
 The container builds the cross compiler from musl-cross-make at a pinned commit, with source-download
-hashes from that recipe, and carries CMake, Ninja, Python and the stock helper's compiler:
+hashes from that recipe, and carries CMake, Ninja, Python, the stock helper's compiler, and for the C++
+modules the host's GCC 14, Catch2 v3 and clang-tidy:
 
 ```sh
 docker build -t diskos-ui-builder .                                  # from this ui/ directory
@@ -96,7 +110,12 @@ docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" -v /path/to/inputs:/inputs
 ```
 
 The `-u` flag keeps the build outputs owned by you, not root. The first `docker build` compiles GCC (about
-ten minutes); later UI builds reuse the image.
+ten minutes); later UI builds reuse the image. The host tests need no inputs:
+
+```sh
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" diskos-ui-builder \
+  sh -c 'cmake --preset host && cmake --build --preset host && ctest --preset host'
+```
 
 ## Troubleshooting
 

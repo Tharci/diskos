@@ -1,0 +1,64 @@
+# diskOS C++ static analysis (clang-tidy 19, from the build image). Run it with
+#   cmake --build --preset device -t tidy
+# CI turns every finding into an error. Silencing one takes NOLINT(check-name): reason.
+---
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  misc-*,
+  modernize-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -clang-analyzer-unix.API,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -misc-include-cleaner,
+  -modernize-use-trailing-return-type,
+  -readability-identifier-length,
+  -readability-magic-numbers
+# Why the exclusions: swappable parameters and magic numbers flag ordinary protocol code (two
+# lengths side by side, a documented tag value) far more often than real bugs. unix.API misreads
+# musl's O_CREAT and flags every open(). include-cleaner trips over libstdc++'s internal headers on
+# the musl target. Trailing return types and identifier length are taste, decided the other way.
+CheckOptions:
+  # Size limits: a function does one thing.
+  readability-function-size.LineThreshold: 60
+  readability-function-size.StatementThreshold: 50
+  readability-function-size.NestingThreshold: 4
+  readability-function-size.ParameterThreshold: 5
+  readability-function-cognitive-complexity.Threshold: 20
+  readability-function-cognitive-complexity.IgnoreMacros: true
+  # Naming: CamelCase types and enum values, snake_case functions and variables, kCamelCase
+  # constants, a trailing _ on private and protected members, ALL_CAPS for macros only.
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.UnionCase: CamelCase
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.EnumConstantCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  readability-identifier-naming.TypedefCase: CamelCase
+  readability-identifier-naming.TemplateParameterCase: CamelCase
+  readability-identifier-naming.ConceptCase: CamelCase
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.MethodCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.MemberCase: lower_case
+  readability-identifier-naming.PrivateMemberSuffix: _
+  readability-identifier-naming.ProtectedMemberSuffix: _
+  readability-identifier-naming.ConstexprVariableCase: CamelCase
+  readability-identifier-naming.ConstexprVariablePrefix: k
+  readability-identifier-naming.GlobalConstantCase: CamelCase
+  readability-identifier-naming.GlobalConstantPrefix: k
+  readability-identifier-naming.StaticConstantCase: CamelCase
+  readability-identifier-naming.StaticConstantPrefix: k
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  # A type's data is either all public (a struct, no suffix) or all private (a class): never both.
+  misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: true
+  cppcoreguidelines-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: true
+...

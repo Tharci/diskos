@@ -1,33 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 diskOS contributors
 # diskOS UI (LVGL 9.2.2) for the FiiO Snowsky Disc. Build with a preset from CMakePresets.json:
-#   cmake --preset device && cmake --build --preset device
-# The device preset reads STOCK_SYSROOT and STOCK_AV_HEADERS from the environment (see README.md).
-# This file holds the inputs and options; the build itself is in cmake/, one file per part.
+#   cmake --preset device && cmake --build --preset device      mq_ui for the Disc
+#   cmake --preset host && ctest --preset host                  the C++ tests, with sanitizers
+# This file is the outline; each part of the build is a file in cmake/.
 cmake_minimum_required(VERSION 3.25)
-project(diskos_ui LANGUAGES C ASM)
+project(diskos_ui LANGUAGES C CXX ASM)
 
-set(STOCK_SYSROOT "" CACHE PATH
-    "Your extracted stock V2.57 root filesystem (lib/, usr/lib/) for diskos-audiodec")
-set(STOCK_AV_HEADERS "" CACHE FILEPATH "ffmpeg-4.2.2.tar.xz: only its public headers are used")
-set(DISKOS_DEP_OUT "" CACHE PATH
-    "Where tools/build-native-deps.py puts the third-party libraries (shareable)")
-if(NOT DISKOS_DEP_OUT)
-    set(DISKOS_DEP_OUT "${CMAKE_BINARY_DIR}/deps")
-endif()
-if(NOT STOCK_SYSROOT OR NOT STOCK_AV_HEADERS)
-    message(FATAL_ERROR "set STOCK_SYSROOT and STOCK_AV_HEADERS (environment or -D): see README.md")
+include(cmake/flags.cmake)    # diskos_reproducible, diskos_size_optimized
+include(cmake/cxx.cmake)      # C++23 and its warnings, diskos_module(), diskos_test()
+if(NOT CMAKE_CROSSCOMPILING)
+    include(cmake/host.cmake) # sanitizers and Catch2
 endif()
 
-option(DISKOS_PROFILE "Measurement build: compile in prof.c (never shipped)" OFF)
-option(DISKOS_TEST_OUTPUTS "Device-test build: show SPDIF Output and USB Audio" OFF)
-option(DISKOS_TEST_BT_PREPARE "Bluetooth preparation experiment (use its own build directory)" OFF)
+add_subdirectory(src)         # the C++ modules (and, on the host, their tests)
 
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
-include(cmake/flags.cmake)           # diskos_reproducible, diskos_size_optimized
-include(cmake/third_party.cmake)     # third_party::* libraries
-include(cmake/audiodec.cmake)        # the stock-library helper embedded in mq_ui
-include(cmake/legacy_sources.cmake)  # the C sources, in link order
-include(cmake/mq_ui.cmake)           # the UI binary
-include(cmake/helpers.cmake)         # diskos-bootprobe, diskos-artdec (built on request)
+if(CMAKE_CROSSCOMPILING)
+    include(cmake/device.cmake)  # mq_ui and its helpers
+endif()

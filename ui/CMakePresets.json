@@ -15,9 +15,39 @@
         "STOCK_AV_HEADERS": "$env{STOCK_AV_HEADERS}",
         "DISKOS_DEP_OUT": "$env{DISKOS_DEP_OUT}"
       }
+    },
+    {
+      "name": "host",
+      "displayName": "Host tests (ASan + UBSan)",
+      "description": "The C++ modules and their Catch2 tests, built with the host's GCC 14.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "DISKOS_SANITIZERS": "address,undefined"
+      }
+    },
+    {
+      "name": "host-tsan",
+      "inherits": "host",
+      "displayName": "Host tests (TSan)",
+      "binaryDir": "${sourceDir}/build/host-tsan",
+      "cacheVariables": { "DISKOS_SANITIZERS": "thread" }
     }
   ],
   "buildPresets": [
-    { "name": "device", "configurePreset": "device" }
+    { "name": "device", "configurePreset": "device" },
+    { "name": "host", "configurePreset": "host" },
+    { "name": "host-tsan", "configurePreset": "host-tsan" }
+  ],
+  "testPresets": [
+    {
+      "name": "host",
+      "configurePreset": "host",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    { "name": "host-tsan", "inherits": "host", "configurePreset": "host-tsan" }
   ]
 }

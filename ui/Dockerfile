@@ -8,14 +8,17 @@
 # Build the UI:       see README.md (CMake preset "device"; needs the stock V2.57 sysroot and FFmpeg headers mounted)
 #   LVGL is vendored at ui/lvgl; FreeType and the other libraries at ui/third_party.
 
-FROM debian:12-slim
+FROM debian:13-slim
 
 # cmake/ninja: the build. python3: tools/build-native-deps.py and tools/embed_audiodec.py. gcc-mipsel-linux-gnu and
 # libc6-dev-mipsel-cross: the dynamically linked diskos-audiodec helper, built against the stock glibc sysroot.
+# The host's g++ 14 matches the cross GCC's C++23, so the host preset (Catch2 tests, sanitizers) builds here too;
+# clang-tidy checks the C++ sources against the device build's compile commands.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential ca-certificates git wget xz-utils bzip2 patch rsync file \
         cmake ninja-build python3 \
         gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu libc6-dev-mipsel-cross \
+        catch2 clang-tidy \
     && rm -rf /var/lib/apt/lists/*
 
 ARG MCM_URL=https://github.com/richfelker/musl-cross-make.git
