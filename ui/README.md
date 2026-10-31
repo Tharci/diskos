@@ -38,7 +38,7 @@ Built with **LVGL 9.2.2** (software renderer) on a static-musl mipsel toolchain.
 ## Build
 Requires:
 - A static **mipsel-linux-musl** cross toolchain built for the stock firmware's float ABI: **MIPS32r2, FP64,
-  NaN2008** (GCC 11.2.0, musl 1.2.6). Build it with [musl-cross-make](https://github.com/richfelker/musl-cross-make)
+  NaN2008** (GCC 14.3.0 with C and C++, musl 1.2.6). Build it with [musl-cross-make](https://github.com/richfelker/musl-cross-make)
   and the pinned config in [`toolchain/mcm-config.mak`](toolchain/mcm-config.mak), or just use the Docker builder
   below. Generic prebuilt mipsel toolchains (e.g. musl.cc) target the older MIPS-I / FP32 ABI: the result runs, but
   the Disc's kernel then emulates every floating-point instruction in software, which is much slower.

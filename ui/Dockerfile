@@ -1,6 +1,6 @@
 # diskOS UI build environment - builds the pinned mipsel musl cross compiler from source, then builds `mq_ui`.
 #
-# The compiler is musl-cross-make at a fixed commit with toolchain/mcm-config.mak (GCC 11.2.0, musl 1.2.6,
+# The compiler is musl-cross-make at a fixed commit with toolchain/mcm-config.mak (GCC 14.3.0 with C and C++, musl 1.2.6,
 # binutils 2.44), targeting the stock firmware's float ABI (MIPS32r2, FP64, NaN2008). musl-cross-make checks every
 # downloaded source tarball against its own pinned hashes, so the toolchain cannot drift silently.
 #
