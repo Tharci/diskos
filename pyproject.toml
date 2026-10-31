@@ -1,0 +1,412 @@
+[project]
+name = "diskos-installer"
+version = "1.2.2"   # keep equal to diskos_installer.__version__ (tests/test_project.py checks)
+description = "Builds and flashes diskOS for the FiiO Snowsky Disc from the user's own stock firmware"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+# Exact pins: the license texts in licenses/ are for these versions (tests/test_project.py checks the
+# lock against them). Upgrading one means updating its license file too.
+dependencies = [
+    "pyusb==1.3.1",          # mask-ROM USB device detection (BSD-3-Clause)
+    "pycryptodome==3.23.0",  # AES-decrypt of FiiO OTA chunks (BSD-2-Clause + public-domain)
+    "certifi==2026.2.25",    # pinned CA bundle for the firmware download (MPL-2.0)
+    "platformdirs==4.2.2",   # per-user cache locations (MIT)
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.2",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    # Exact: a new ruff or ty release can change formatting or diagnostics. Bump deliberately, with the
+    # matching rev in .pre-commit-config.yaml.
+    "ruff==0.17.3",
+    "ty==0.0.95",
+]
+
+[tool.uv]
+package = false
+
+# ---- ruff: linter + formatter ------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+    ".dev",
+    "corresponding-source",
+    "licenses",
+    "spl-src",
+    "src/usbboot",
+    "ui/lvgl",
+    "ui/third_party",
+]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes: undefined names, unused imports and variables
+    "I",        # import sorting
+    "B",        # bugbear: mutable defaults, loop-variable closures, except mistakes
+    "UP",       # pyupgrade, as far as target-version allows
+    "SIM",      # simpler conditionals
+    "C4",       # comprehensions
+    "RET",      # returns
+    "PL",       # pylint, incl. size limits (see [tool.ruff.lint.pylint])
+    "S",        # bandit security: this tool downloads firmware and runs subprocesses
+    "PTH",      # pathlib over os.path
+    "RUF",      # ruff's own checks
+    "ERA",      # commented-out code
+    "TID",      # banned imports
+]
+ignore = [
+    "T20",   # print is this CLI's output (not selected; listed for the record)
+    "D",     # docstrings: per module, later
+    "ANN",   # annotations: per module, later, together with ty strictness
+    "COM",   # trailing commas: the formatter's job
+]
+
+[tool.ruff.lint.pylint]
+max-statements = 50
+max-branches = 12
+max-args = 5
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",      # assert
+    "S108",      # fixed /tmp paths in fixtures
+    "PLR2004",   # magic values in expectations
+]
+
+# ---- Legacy baseline -------------------------------------------------------------------------
+# The rules each existing file broke when linting was introduced (2026-10-31). Files not listed
+# here, including every new file, get the full rule set. To tighten: clean a file, delete its
+# entry. Never add an entry: fix new code instead.
+"build/deterministic_zip.py" = ["PLR2004"]
+"build/macos_inputs.py" = ["PLC0415", "PLR2004"]
+"build/macos_release.py" = ["SIM117"]
+"build/usbboot_manifest.py" = ["B904", "C408", "E501", "PLR0912", "PLR2004", "RUF005"]
+"build/verify_git_blobs.py" = ["PLW2901", "RUF059", "S603", "S607", "UP022"]
+"diskos_installer/__main__.py" = ["B904", "E501", "PLC0415", "PLR0911", "PLR0912", "PLR0915", "PLR2004", "PTH113", "PTH118", "S108"]
+"diskos_installer/basegate.py" = ["C416", "E501", "PLR2004", "PTH123", "RUF005", "S101", "UP031"]
+"diskos_installer/buildfs.py" = ["PLR2004", "RUF005"]
+"diskos_installer/bundle.py" = ["E501", "PLC0415", "PLR0912", "PLR0915", "PLR2004", "PTH100", "PTH101", "PTH110", "PTH112", "PTH113", "PTH116", "PTH117", "PTH118", "PTH119", "PTH120", "PTH123", "S103"]
+"diskos_installer/errors.py" = ["E501"]
+"diskos_installer/firmware_catalogue.py" = ["PLC0415", "PTH100", "PTH103", "PTH105", "PTH108", "PTH110", "PTH116", "PTH118", "PTH119", "PTH120", "PTH123", "UP031"]
+"diskos_installer/firmware_download.py" = ["PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "PTH108", "S310", "SIM105", "UP031"]
+"diskos_installer/firmware_fetch.py" = ["PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "PLW1510", "PTH100", "PTH108", "PTH120", "S110", "S603", "S607", "SIM105", "UP031"]
+"diskos_installer/firmware_local.py" = ["E501", "PLC0415", "PLR0911", "PLR0913", "PLR0917", "PLR2004", "PTH108", "PTH110", "PTH111", "PTH112", "PTH117", "PTH118", "PTH123", "UP031"]
+"diskos_installer/firmware_resolve.py" = ["E501", "PLR0911", "PTH100", "PTH112", "PTH116", "PTH118", "PTH120", "PTH202", "RUF059", "UP031"]
+"diskos_installer/flash_child.py" = ["PLC0415", "PLR2004", "PTH100", "PTH117", "PTH118", "PTH119", "PTH120", "PTH123", "S603"]
+"diskos_installer/flasher.py" = ["B904", "C408", "E501", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "PLW1510", "PTH100", "PTH110", "PTH118", "PTH119", "PTH123", "PTH202", "RUF005", "RUF059", "S110", "S603", "S607", "SIM105", "SIM115"]
+"diskos_installer/gui.py" = ["E501", "E731", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "PLW0108", "RET503", "RUF005", "RUF059", "S110", "SIM102", "SIM105", "UP031"]
+"diskos_installer/gui_entry.py" = ["B905", "PLC0415", "PLR0911", "PLR0912", "PLR0915", "PLR2004", "PTH102", "PTH117", "PTH118", "PTH123", "PTH206", "PTH208", "S110", "SIM105"]
+"diskos_installer/gui_theme.py" = ["B023", "E501", "E731", "PLC0415", "PLR0913", "PLR0917", "PLR2004", "PTH100", "PTH113", "PTH118", "PTH120", "PTH123", "RUF046", "S110", "SIM105", "UP031"]
+"diskos_installer/imagebuild.py" = ["B007", "B904", "E402", "E501", "PLC0415", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004", "PLW1510", "PLW2901", "PTH102", "PTH103", "PTH105", "PTH106", "PTH107", "PTH108", "PTH110", "PTH112", "PTH114", "PTH116", "PTH117", "PTH118", "PTH119", "PTH120", "PTH123", "PTH202", "PTH207", "S324", "S603", "S607", "SIM102", "SIM115"]
+"diskos_installer/macos_runtime.py" = ["E501", "PLC0415"]
+"diskos_installer/net_tls.py" = ["E501", "PLC0415", "PTH112", "PTH113", "UP031"]
+"diskos_installer/platform_probe.py" = ["E501", "PLC0415", "PLR0911", "PLR2004", "PLW0603", "PLW1510", "PLW2901", "PTH112", "PTH113", "PTH118", "PTH123", "PTH207", "PTH208", "S110", "S607", "UP031"]
+"diskos_installer/pseudofs.py" = ["PLR0912", "PLR0915", "PLR2004", "RUF059", "SIM115", "UP031"]
+"diskos_installer/readiness.py" = ["PLR0911", "PLR0913", "PLR0917", "PTH110", "PTH113", "PTH118", "PTH119", "UP031"]
+"diskos_installer/service.py" = ["B904", "E501", "PLC0415", "PLR0912", "PLR0915", "PLW0108", "PTH110", "PTH118", "PTH120", "PTH123", "PTH202", "SIM102"]
+"diskos_installer/state.py" = ["E501", "PLC0415", "PLR2004", "PLW1510", "PTH103", "PTH105", "PTH106", "PTH108", "PTH109", "PTH110", "PTH111", "PTH112", "PTH113", "PTH116", "PTH117", "PTH118", "PTH123", "PTH202", "PTH208", "S603", "SIM105", "SIM115", "UP031"]
+"diskos_installer/ui.py" = ["PLR2004"]
+"diskos_installer/windows_usb.py" = ["E501", "PLC0415", "PLR0912", "PLR0915", "PLR2004", "PLW1510", "S603"]
+"flash/assemble_stage1.py" = ["PLR2004", "PTH123", "SIM115", "UP031"]
+"tests/test_bind_winusb.py" = ["E501", "PLC0415", "PLW1510", "S314", "S603", "S607"]
+"tests/test_boot_select.py" = ["E501", "PLW0603", "PLW1510", "PTH116", "PTH123", "S324", "S603", "SIM105"]
+"tests/test_buildfs.py" = ["SIM117"]
+"tests/test_deterministic_zip.py" = ["B007", "PLW1510", "RUF059", "S603", "SIM117"]
+"tests/test_firmware_catalogue.py" = ["B023", "PLC0415", "PLW1510", "PTH116", "PTH119", "S603", "SIM117"]
+"tests/test_firmware_download.py" = ["B023", "B905", "C408", "PLC0415", "PTH118", "RUF005", "RUF007", "S603", "SIM117"]
+"tests/test_firmware_fetch.py" = ["E501", "E731", "PLR0913", "PLR0917", "PLW1510", "PTH100", "PTH110", "PTH118", "PTH120", "PTH123", "PTH208", "S603", "S607", "SIM105", "UP031"]
+"tests/test_firmware_local.py" = ["E501", "PLC0415", "PTH104", "PTH118", "PTH119", "PTH123", "PTH211", "UP031"]
+"tests/test_firmware_resolve.py" = ["PLC0415", "PTH110", "PTH116", "PTH118", "SIM117", "UP031"]
+"tests/test_flashstate.py" = ["PLC0415", "PLW1510", "S603", "S607"]
+"tests/test_frozen_launch.py" = ["B023", "C408", "E731", "PLC0415", "PTH100", "RUF005", "SIM117"]
+"tests/test_git_blobs.py" = ["E402", "PLW1510", "S603", "S607", "UP022"]
+"tests/test_gui_entry.py" = ["B023", "E501", "PLC0415", "PLW1510", "PTH105", "S603", "SIM117"]
+"tests/test_gui_firmware.py" = ["B023", "E501", "PLC0415", "PTH118", "PTH120", "RET503", "RUF005", "SIM105", "UP031"]
+"tests/test_gui_leftovers.py" = ["B905", "E501", "PLC0206", "PLC0415", "PTH113", "PTH118", "PTH120", "PTH123", "SIM115", "UP031"]
+"tests/test_gui_ota.py" = ["PTH123", "SIM115"]
+"tests/test_gui_polish.py" = ["E501", "PLC0415", "PTH118", "PTH120", "PTH123", "PTH202", "PTH208", "SIM115", "UP031"]
+"tests/test_gui_ready.py" = ["B023", "PLC0415", "PLR0913", "PLR0917", "PTH118", "PTH120", "S110", "SIM105", "SIM115", "UP031"]
+"tests/test_gui_theme.py" = ["B017", "E501", "PLC0415", "PLW0108", "PTH118", "PTH120", "PTH123", "RUF005", "RUF015", "RUF059", "S110", "SIM105", "SIM115", "UP031"]
+"tests/test_image_edits.py" = ["B023", "PLC0415", "PLR0915", "PTH113", "PTH118", "PTH208", "SIM117"]
+"tests/test_image_validation.py" = ["B023", "E501", "PLC0415", "PLR0912", "PLR0915", "RET503", "SIM117"]
+"tests/test_macos_brew_version.py" = ["PLW1510", "S603", "S607"]
+"tests/test_macos_build.py" = ["E402", "PLW1510", "S603"]
+"tests/test_macos_runtime.py" = ["E501", "PLC0415", "PLW1510", "S603", "S607", "SIM117"]
+"tests/test_names.py" = ["B023", "PLC0415", "PLW1510", "RUF005", "S107", "S603", "S607"]
+"tests/test_net_tls.py" = ["PLC0415", "PTH118", "PTH123", "RUF005", "S603", "S607", "SIM117", "UP031"]
+"tests/test_ota_boot.py" = ["E501", "F841", "PLR1704", "PLW1510", "PTH105", "PTH121", "S603", "S607"]
+"tests/test_ota_option.py" = ["E501", "PTH118", "PTH123"]
+"tests/test_sd_guards.py" = ["C408", "E501", "PLC0415", "PLR0913", "PLR0917", "PLW1510", "PLW2901", "PTH101", "S603", "SIM105", "SIM117", "UP031"]
+"tests/test_stage_release.py" = ["E501", "PLC0415", "PLW1510", "RUF005", "S603", "S607"]
+"tests/test_usbboot_manifest.py" = ["C408"]
+"tests/test_usbboot_transport.py" = ["PLW1510", "S603", "S607"]
+"tests/test_windows_build.py" = ["PLC0415", "PLR0912", "PLW0108", "SIM117"]
+"tests/test_windows_cli.py" = ["B023", "B905", "E501", "E731", "PLC0415", "PLR0913", "PLR0915", "PLR0917", "PLW1510", "PLW2901", "PTH120", "RUF005", "S102", "SIM102", "SIM117"]
+"tests/test_windows_driver_setup.py" = ["B023", "C408", "E501", "PLC0415", "PLR0915", "SIM117", "UP031"]
+"tests/test_windows_flash.py" = ["B023", "C408", "E501", "SIM117"]
+"tests/test_windows_host.py" = ["B023", "E501", "PLC0415", "PLW1510", "PTH100", "S603", "SIM117"]
+"tests/test_windows_release_inventory.py" = ["B023", "B905", "E501", "PLC0415", "PLR0912", "PLR0915", "PLW1510", "PLW2901", "RUF005", "S102", "S603", "S607", "SIM117"]
+"tests/test_windows_sources.py" = ["PLW1510", "S603", "S607"]
+"tests/test_windows_sources_spoof.py" = ["PLW1510", "S603", "S607"]
+"tests/test_windows_tools_recipe.py" = ["PLC0415", "PLW1510", "S603", "S607"]
+"tests/test_windows_usb.py" = ["C408", "E501", "PLC0415", "PLW1510", "S603", "S607", "SIM117"]
+"ui/tests/boot_probe_test.py" = ["B023", "C408", "E501", "PLC3002", "PLR2004", "PLW1509", "PLW1510", "PLW2901", "PTH123", "S101", "S603", "SIM105"]
+"ui/tests/boot_select_test.py" = ["B904", "E501", "PLR2004", "PLW1510", "PLW2901", "S324", "S603"]
+"ui/tests/font_coverage_test.py" = ["E501", "PLW1510", "RUF001", "S603"]
+"ui/tests/launcher_test.py" = ["E501", "S101", "S603", "S607", "S608", "UP031"]
+"ui/tests/rmguard_test.py" = ["E501", "S603"]
+"ui/tests/storage_test.py" = ["E402", "E501", "PLW1510", "S108", "S603"]
+"ui/tests/test_airplay_jpeg.py" = ["B905", "PLR2004", "PLW1510", "S603", "S607"]
+"ui/tests/transport_test.py" = ["E501", "PLW1510", "S603"]
+"ui/tools/build-native-deps.py" = ["S603", "S607"]
+"ui/tools/embed_audiodec.py" = ["B904", "C408", "PLR2004", "PTH105", "PTH108", "PTH123", "SIM105", "UP031"]
+"ui/tools/gen_beam_glyph.py" = ["E501", "PLR0913", "PLR0917", "RUF005"]
+"ui/tools/gen_theme_fonts.py" = ["E501", "PLC0415", "RUF005", "S603", "S607", "UP031"]
+"ui/tools/gen_theme_presets.py" = ["C408", "E501", "E741", "PLR0913", "PLR0917", "PLR2004", "RUF059", "UP031"]
+"ui/tools/generate_cjk_supplement.py" = ["E501", "S603", "S607"]
+"ui/tools/generate_i18n.py" = ["B905", "E501", "PLR2004", "S101", "UP031"]
+
+# ---- ty: type checker ---------------------------------------------------------------------------
+[tool.ty.environment]
+python-version = "3.10"
+python-platform = "all"   # the installer runs on Linux, macOS and Windows (ctypes.windll, winreg, ...)
+extra-paths = ["build", "tests", "ui/tests"]   # modules the tests import via sys.path
+
+[tool.ty.src]
+exclude = [   # the same vendored trees ruff skips
+    ".dev",
+    "corresponding-source",
+    "licenses",
+    "spl-src",
+    "src/usbboot",
+    "ui/lvgl",
+    "ui/third_party",
+]
+
+# ---- ty legacy baseline: like the ruff one above (same rules: clean a file, delete its entry) ----
+[[tool.ty.overrides]]
+include = ["build/deterministic_zip.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/__main__.py"]
+rules = { invalid-argument-type = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/basegate.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/buildfs.py"]
+rules = { no-matching-overload = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/firmware_fetch.py"]
+rules = { invalid-argument-type = "ignore", invalid-assignment = "ignore", no-matching-overload = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/firmware_local.py"]
+rules = { invalid-assignment = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/firmware_resolve.py"]
+rules = { invalid-assignment = "ignore", not-subscriptable = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/flash_child.py"]
+rules = { no-matching-overload = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/flasher.py"]
+rules = { invalid-argument-type = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/gui.py"]
+rules = { invalid-argument-type = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/gui_entry.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/gui_theme.py"]
+rules = { invalid-argument-type = "ignore", invalid-method-override = "ignore", not-iterable = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["diskos_installer/ui.py"]
+rules = { no-matching-overload = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_bind_winusb.py"]
+rules = { unresolved-attribute = "ignore", unsupported-operator = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_boot_select.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_buildfs.py"]
+rules = { invalid-argument-type = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_deterministic_zip.py"]
+rules = { invalid-argument-type = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_firmware_catalogue.py"]
+rules = { invalid-assignment = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_firmware_download.py"]
+rules = { invalid-method-override = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_flashstate.py"]
+rules = { invalid-argument-type = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_frozen_launch.py"]
+rules = { invalid-assignment = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_git_blobs.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_gui_entry.py"]
+rules = { invalid-assignment = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_gui_firmware.py"]
+rules = { call-non-callable = "ignore", invalid-argument-type = "ignore", invalid-assignment = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_gui_leftovers.py"]
+rules = { invalid-argument-type = "ignore", invalid-assignment = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_gui_polish.py"]
+rules = { invalid-assignment = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_gui_ready.py"]
+rules = { invalid-assignment = "ignore", not-subscriptable = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_gui_theme.py"]
+rules = { invalid-argument-type = "ignore", invalid-assignment = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_image_edits.py"]
+rules = { invalid-argument-type = "ignore", invalid-assignment = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_image_validation.py"]
+rules = { unresolved-import = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_macos_brew_version.py"]
+rules = { not-subscriptable = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_macos_build.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_macos_runtime.py"]
+rules = { invalid-argument-type = "ignore", invalid-assignment = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_names.py"]
+rules = { invalid-argument-type = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_net_tls.py"]
+rules = { invalid-argument-type = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_ota_boot.py"]
+rules = { invalid-argument-type = "ignore", unsupported-operator = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_sd_guards.py"]
+rules = { no-matching-overload = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_stage_release.py"]
+rules = { invalid-argument-type = "ignore", not-subscriptable = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_usbboot_manifest.py"]
+rules = { invalid-argument-type = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_capabilities.py"]
+rules = { invalid-argument-type = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_cli.py"]
+rules = { unresolved-attribute = "ignore", unsupported-operator = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_driver_setup.py"]
+rules = { invalid-assignment = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_flash.py"]
+rules = { invalid-argument-type = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_host.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_release_inventory.py"]
+rules = { call-non-callable = "ignore", invalid-argument-type = "ignore", unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_sources.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_sources_spoof.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_tools_recipe.py"]
+rules = { unresolved-attribute = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["tests/test_windows_usb.py"]
+rules = { invalid-argument-type = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["ui/tests/boot_probe_test.py"]
+rules = { unsupported-operator = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["ui/tests/storage_test.py"]
+rules = { unresolved-import = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["ui/tests/test_airplay_jpeg.py"]
+rules = { unresolved-import = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["ui/tools/gen_beam_glyph.py"]
+rules = { unresolved-import = "ignore" }
+
+[[tool.ty.overrides]]
+include = ["ui/tools/gen_theme_fonts.py"]
+rules = { unresolved-import = "ignore" }
+
+# ---- pytest -------------------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "tests"]   # the package, and the tests' shared helpers (unittest discover did both)
+addopts = "-ra --strict-markers --strict-config"

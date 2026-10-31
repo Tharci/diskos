@@ -21,7 +21,6 @@
 </p>
 
 <p align="center">
-  <a href="https://b0hemia.github.io/diskos/">Website</a> |
   <a href="#see-diskos">Screenshots</a> |
   <a href="#before-you-install">Before you install</a> |
   <a href="#install">Install</a> |
@@ -103,7 +102,7 @@
 You need a FiiO Snowsky Disc, a reliable USB cable and about 20 uninterrupted minutes for flashing.
 Choose the firmware version already on your Disc and press **Get firmware**; the installer downloads
 and verifies the matching official FiiO ZIP and fills in its path. A saved verified copy or
-**Browse...** lets you prepare offline. Linux and source checkouts need Python 3.8 or newer;
+**Browse...** lets you prepare offline. Linux and source checkouts need Python 3.10 or newer;
 the macOS app and Windows release ZIP include their runtime and tools. The installer builds the
 root filesystem image on your computer; this project does not distribute FiiO's root filesystem.
 Back up your music, keep a separate copy of the saved stock image, and read the [full requirements](docs/INSTALL.md#requirements).
@@ -251,10 +250,6 @@ Report vulnerabilities privately through [SECURITY.md](SECURITY.md).
 
 The installer, scripts, and documentation are MIT licensed; see [LICENSE](LICENSE).
 The on-device UI source in [ui/](ui/) is GPL-3.0-or-later; see [ui/COPYING](ui/COPYING).
-The website HTML, CSS, JavaScript, and diskOS-owned screenshot images in [site/](site/)
-are MIT licensed under [LICENSE](LICENSE). This grant covers only rights held by diskOS
-contributors; third-party artwork and trademarks remain with their respective owners.
-Website fonts retain their own licences; see [licenses/README.md](licenses/README.md#website-fonts).
 Third-party license details and corresponding source are listed in [NOTICE.md](NOTICE.md),
 [SPL_SOURCE.md](SPL_SOURCE.md), and [licenses/](licenses/).
 

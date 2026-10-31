@@ -5,7 +5,7 @@ set -eu
 export LC_ALL=C TZ=UTC
 umask 022
 fail() { echo "FAIL: $*" >&2; exit 1; }
-snapshot= base_url= rootfs= out=
+snapshot='' base_url='' rootfs='' out=''
 while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || fail 'expected --snapshot TIMESTAMP --base-url URL --rootfs NAME --out DIR'
     case "$1" in
@@ -23,7 +23,7 @@ printf '%s\n' "$rootfs" | grep -Eq '^ubuntu-base-24\.04(\.[0-9]+)?-base-amd64\.t
 [ "$(id -u)" != 0 ] || fail 'run as an ordinary user with rootless Podman'
 [ ! -e "$out" ] && [ ! -L "$out" ] || fail 'refusing to overwrite evidence directory'
 mkdir -- "$out"
-out=$(CDPATH= cd -- "$out" && pwd)
+out=$(CDPATH='' cd -- "$out" && pwd)
 cd "$out"
 printf '%s\n' "$snapshot" > snapshot.txt
 printf '%s/%s\n' "${base_url%/}" "$rootfs" > rootfs-url.txt

@@ -11,10 +11,10 @@ import platform
 import struct
 import sys
 
-MASKROM_VID = 0x0a108 & 0xFFFF  # printed as a108 by lsusb; VID field is 0xa108
-MASKROM_PID = 0xeaef
+MASKROM_VID = 0x0A108 & 0xFFFF  # printed as a108 by lsusb; VID field is 0xa108
+MASKROM_PID = 0xEAEF
 # lsusb shows "a108:eaef"; libusb reports idVendor=0xa108 idProduct=0xeaef
-MASKROM_VID = 0xa108
+MASKROM_VID = 0xA108
 
 
 def host():
@@ -28,17 +28,23 @@ def host():
         os_key = sysname
     machine = platform.machine().lower()
     arch = {
-        "x86_64": "x86_64", "amd64": "x86_64",
-        "arm64": "arm64", "aarch64": "arm64",
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+        "arm64": "arm64",
+        "aarch64": "arm64",
     }.get(machine, machine)
     return os_key, arch
 
 
 def windows_native_runtime():
     """Native x64 Windows CPython; shell choice does not qualify Python."""
-    return (sys.platform == "win32" and platform.system() == "Windows"
-            and host() == ("windows", "x86_64") and struct.calcsize("P") == 8
-            and platform.python_implementation() == "CPython")
+    return (
+        sys.platform == "win32"
+        and platform.system() == "Windows"
+        and host() == ("windows", "x86_64")
+        and struct.calcsize("P") == 8
+        and platform.python_implementation() == "CPython"
+    )
 
 
 def windows_dev_runtime():
@@ -58,6 +64,7 @@ def is_supported():
 
 def host_status():
     from .flasher import flash_eligible
+
     if flash_eligible():
         return "flashing enabled" if host()[0] == "windows" else "supported"
     if host()[0] == "windows":
@@ -81,7 +88,7 @@ def distro_info():
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
-                    data[k] = v.strip('"\'')
+                    data[k] = v.strip("\"'")
         return data
     except Exception:
         return {}
@@ -109,33 +116,40 @@ def _bundled_libusb_backend():
     global LIBUSB_LOADED
     if host()[0] == "macos":
         import os
-        import usb.backend.libusb1 as libusb1
+
+        from usb.backend import libusb1
+
         from . import bundle
         from .macos_runtime import prepare_tools
+
         prepare_tools(bundle.vendor_dir())
         path = os.path.join(bundle.vendor_dir(), "lib", "libusb-1.0.0.dylib")
         # A frozen release must never silently fall back to a host library.
         if not os.path.isfile(path):
             if getattr(sys, "frozen", False):
-                raise RuntimeError('Missing bundled libusb: ' + path)
+                raise RuntimeError("Missing bundled libusb: " + path)
             import ctypes.util
-            path = ctypes.util.find_library('usb-1.0')
+
+            path = ctypes.util.find_library("usb-1.0")
             if not path:
-                for prefix in ('/opt/homebrew/lib', '/usr/local/lib'):
-                    candidate = os.path.join(prefix, 'libusb-1.0.dylib')
+                for prefix in ("/opt/homebrew/lib", "/usr/local/lib"):
+                    candidate = os.path.join(prefix, "libusb-1.0.dylib")
                     if os.path.isfile(candidate):
                         path = candidate
                         break
         backend = libusb1.get_backend(find_library=lambda _name: path) if path else None
         if backend is None:
-            raise RuntimeError('Cannot load macOS libusb: ' + str(path))
-        LIBUSB_LOADED = str(getattr(getattr(backend, 'lib', None), '_name', path))
+            raise RuntimeError("Cannot load macOS libusb: " + str(path))
+        LIBUSB_LOADED = str(getattr(getattr(backend, "lib", None), "_name", path))
         return backend
     try:
         import glob
         import os
-        import usb.backend.libusb1 as libusb1
+
+        from usb.backend import libusb1
+
         from . import bundle
+
         libdir = os.path.join(bundle.vendor_dir(), "lib")
         # macOS dylib or Linux .so, whatever we bundled
         for pat in ("libusb-1.0*.dylib", "libusb-1.0.so*", "libusb-1.0*"):
@@ -155,9 +169,12 @@ def _maskrom_count_pyusb():
     except Exception:
         return None
     try:
-        backend = _bundled_libusb_backend()   # prefer our bundled libusb
-        devs = list(usb.core.find(find_all=True, idVendor=MASKROM_VID,
-                                  idProduct=MASKROM_PID, backend=backend))
+        backend = _bundled_libusb_backend()  # prefer our bundled libusb
+        devs = list(
+            usb.core.find(
+                find_all=True, idVendor=MASKROM_VID, idProduct=MASKROM_PID, backend=backend
+            )
+        )
         return len(devs)
     except Exception:
         return None
@@ -167,6 +184,7 @@ def _maskrom_count_lsusb():
     """Fallback: parse `lsusb` if present (Linux)."""
     import shutil
     import subprocess
+
     if not shutil.which("lsusb"):
         return None
     try:
@@ -180,6 +198,7 @@ def maskrom_nodes(sys_root="/sys/bus/usb/devices", dev_root="/dev/bus/usb"):
     """Linux: the /dev/bus/usb/BBB/DDD node of every device in mask-ROM mode, found through sysfs (no libusb).
     Returns a list (possibly empty), or None when sysfs is not there (not Linux)."""
     import os
+
     if not os.path.isdir(sys_root):
         return None
     nodes = []
@@ -202,12 +221,14 @@ def maskrom_nodes(sys_root="/sys/bus/usb/devices", dev_root="/dev/bus/usb"):
     return nodes
 
 
-USB_ACCESS_FIX = ("install the udev rule once: `sudo cp udev/70-diskos-maskrom.rules /etc/udev/rules.d/ && "
-                  "sudo udevadm control --reload-rules && sudo udevadm trigger`, then unplug and replug the device. "
-                  "Without a desktop login session (e.g. over SSH), add GROUP=\"<group>\" to that rule "
-                  "using a group available on your system (for example plugdev on Debian or uucp on Arch), "
-                  "add your user to that group, then log out and back in. "
-                  "Do not run the installer with sudo.")
+USB_ACCESS_FIX = (
+    "install the udev rule once: `sudo cp udev/70-diskos-maskrom.rules /etc/udev/rules.d/ && "
+    "sudo udevadm control --reload-rules && sudo udevadm trigger`, then unplug and replug the device. "
+    'Without a desktop login session (e.g. over SSH), add GROUP="<group>" to that rule '
+    "using a group available on your system (for example plugdev on Debian or uucp on Arch), "
+    "add your user to that group, then log out and back in. "
+    "Do not run the installer with sudo."
+)
 
 
 def maskrom_access(sys_root="/sys/bus/usb/devices", dev_root="/dev/bus/usb"):
@@ -215,17 +236,21 @@ def maskrom_access(sys_root="/sys/bus/usb/devices", dev_root="/dev/bus/usb"):
     Linux the node is root-only until the udev rule grants access (GitHub #10: counted, then usbboot failed E301).
     Returns ("ok"|"denied"|"unknown", detail). "unknown" = not Linux, no device, or an unexpected error."""
     if host()[0] == "windows":
-        from .windows_usb import inventory, require_target
         from .errors import PreflightError
+        from .windows_usb import inventory, require_target
+
         try:
             row = require_target(inventory())
         except PreflightError as e:
             return "denied", str(e)
         except OSError as e:
             return "unknown", str(e)
-        return "unknown", "WinUSB bound; run native diagnostic to prove access: " + row["instance_id"]
+        return "unknown", "WinUSB bound; run native diagnostic to prove access: " + row[
+            "instance_id"
+        ]
     import errno
     import os
+
     nodes = maskrom_nodes(sys_root, dev_root)
     if nodes is None:
         return "unknown", "not checked on this system"
@@ -247,6 +272,7 @@ def maskrom_count():
     to lsusb, returns -1 if neither is available (caller should warn)."""
     if host()[0] == "windows":
         from .windows_usb import inventory
+
         try:
             return inventory()["count"]
         except OSError:

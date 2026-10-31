@@ -4,7 +4,7 @@ set -eu
 export LC_ALL=C TZ=UTC
 umask 022
 fail() { echo "FAIL: $*" >&2; exit 1; }
-image_file= out= epoch=
+image_file='' out='' epoch=''
 while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || fail 'expected --image-id FILE --out DIR --epoch N'
     case "$1" in
@@ -19,10 +19,10 @@ case "$epoch" in ''|*[!0-9]*) fail 'epoch must be a nonnegative integer';; esac
 image=$(cat "$image_file")
 printf '%s\n' "$image" | grep -Eq '^(sha256:)?[0-9a-f]{64}$' || fail 'image ID must be a full digest'
 image="sha256:${image#sha256:}"
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 [ ! -e "$out" ] && [ ! -L "$out" ] || fail 'refusing to overwrite output directory'
 mkdir -- "$out"
-out=$(CDPATH= cd -- "$out" && pwd)
+out=$(CDPATH='' cd -- "$out" && pwd)
 printf '%s\n' "$image" > "$out/image.id"
 printf '%s\n' "$epoch" > "$out/source-date-epoch.txt"
 podman image inspect --format '{{.Id}}' "$image" > "$out/image-inspect.id"

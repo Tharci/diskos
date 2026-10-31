@@ -11,9 +11,11 @@ from . import bundle, flasher, platform_probe
 from .errors import PreflightError
 
 # row states: True = ok, False = needs attention, None = not known yet / checked later
-STEPS = ("Power the Disc OFF.",
-         "Hold Volume Down.",
-         "Plug in USB. The screen stays black; that is expected.")
+STEPS = (
+    "Power the Disc OFF.",
+    "Hold Volume Down.",
+    "Plug in USB. The screen stays black; that is expected.",
+)
 
 
 def _tools():
@@ -26,8 +28,7 @@ def _tools():
         if os.path.lexists(path):
             if not os.path.isfile(path):
                 missing.append(name)
-        elif not (not windows and name in ("mksquashfs", "unsquashfs")
-                  and bundle._which_abs(name)):
+        elif not (not windows and name in ("mksquashfs", "unsquashfs") and bundle._which_abs(name)):
             missing.append(name)
     return missing
 
@@ -46,8 +47,14 @@ def _linux_access(nodes):
 def probe(inventory=None):
     """Windows passes the driver inventory it already read (a dict, or an error string);
     elsewhere the mask-ROM devices are counted here. Returns a plain dict."""
-    out = {"os": platform_probe.host()[0], "count": None, "access": None, "inv": None,
-           "inv_error": None, "missing_tools": []}
+    out = {
+        "os": platform_probe.host()[0],
+        "count": None,
+        "access": None,
+        "inv": None,
+        "inv_error": None,
+        "missing_tools": [],
+    }
     if out["os"] == "windows":
         if isinstance(inventory, dict):
             out["inv"], out["count"] = inventory, inventory.get("count")
@@ -70,7 +77,15 @@ def probe(inventory=None):
 
 
 def _row(key, label, ok, text, fix="", action=None, help=False):
-    return {"key": key, "label": label, "ok": ok, "text": text, "fix": fix, "action": action, "help": help}
+    return {
+        "key": key,
+        "label": label,
+        "ok": ok,
+        "text": text,
+        "fix": fix,
+        "action": action,
+        "help": help,
+    }
 
 
 def _device_row(p):
@@ -81,15 +96,28 @@ def _device_row(p):
     if p["count"] is None:
         return _row("device", "Disc in flash mode", None, "Checking...")
     if n == -1:
-        return _row("device", "Disc in flash mode", False, "USB cannot be listed on this computer",
-                    "Run 'diskos-installer doctor' for details.")
+        return _row(
+            "device",
+            "Disc in flash mode",
+            False,
+            "USB cannot be listed on this computer",
+            "Run 'diskos-installer doctor' for details.",
+        )
     if n == 0:
-        text = ("Only a disconnected Disc is recorded" if state == "phantom"
-                else "No Disc in flash mode yet")
+        text = (
+            "Only a disconnected Disc is recorded"
+            if state == "phantom"
+            else "No Disc in flash mode yet"
+        )
         return _row("device", "Disc in flash mode", False, text, "", help=True)
     if n > 1:
-        return _row("device", "Disc in flash mode", False, "%d devices in flash mode - need exactly 1" % n,
-                    "Unplug the other Ingenic devices.")
+        return _row(
+            "device",
+            "Disc in flash mode",
+            False,
+            "%d devices in flash mode - need exactly 1" % n,
+            "Unplug the other Ingenic devices.",
+        )
     return _row("device", "Disc in flash mode", True, "1 Disc found in flash mode")
 
 
@@ -103,24 +131,37 @@ def _access_row(p):
         if state == "winusb":
             return _row("access", label, True, "Windows USB driver (WinUSB) is ready")
         if state == "driver":
-            return _row("access", label, False, "Windows USB driver not set up yet",
-                        "Windows asks for administrator approval once.", "driver")
+            return _row(
+                "access",
+                label,
+                False,
+                "Windows USB driver not set up yet",
+                "Windows asks for administrator approval once.",
+                "driver",
+            )
         return _row("access", label, None, "Checked once the Disc is found")
     label = "USB access"
     if p["count"] != 1:
         return _row("access", label, None, "Checked once the Disc is found")
     state = (p["access"] or ("unknown", ""))[0]
     if state == "ok":
-        return _row("access", label, True, "USB permissions look ready; access is checked before flashing")
+        return _row(
+            "access", label, True, "USB permissions look ready; access is checked before flashing"
+        )
     if state == "denied":
-        return _row("access", label, False, "This user cannot open the Disc over USB",
-                    "Fix: sudo cp udev/70-diskos-maskrom.rules /etc/udev/rules.d/ && sudo udevadm control "
-                    "--reload-rules && sudo udevadm trigger, then replug the Disc (see docs/INSTALL.md).")
+        return _row(
+            "access",
+            label,
+            False,
+            "This user cannot open the Disc over USB",
+            "Fix: sudo cp udev/70-diskos-maskrom.rules /etc/udev/rules.d/ && sudo udevadm control "
+            "--reload-rules && sudo udevadm trigger, then replug the Disc (see docs/INSTALL.md).",
+        )
     return _row("access", label, None, "Checked when the flash starts")
 
 
 def _firmware_row(mode, firmware, have_stock, fw=None):
-    if fw is not None:      # the GUI's acquisition state: (verified, text, fix)
+    if fw is not None:  # the GUI's acquisition state: (verified, text, fix)
         return _row("firmware", "Firmware", fw[0], fw[1], fw[2])
     label = "Firmware chosen"
     if mode == "restore" and have_stock:
@@ -133,14 +174,24 @@ def _firmware_row(mode, firmware, have_stock, fw=None):
 
 def _tools_row(p):
     if p["missing_tools"]:
-        return _row("tools", "Installer tools", False, "Installer tools missing: " + ", ".join(p["missing_tools"]),
-                    "Download the installer again; a file is missing from this copy.")
+        return _row(
+            "tools",
+            "Installer tools",
+            False,
+            "Installer tools missing: " + ", ".join(p["missing_tools"]),
+            "Download the installer again; a file is missing from this copy.",
+        )
     return _row("tools", "Installer tools", True, "All bundled tools found")
 
 
 def evaluate(p, mode="install", firmware="", have_stock=False, fw=None):
     """Checklist rows for the given probe. Rows warn only; none of them blocks Install."""
-    return [_device_row(p), _access_row(p), _firmware_row(mode, firmware, have_stock, fw), _tools_row(p)]
+    return [
+        _device_row(p),
+        _access_row(p),
+        _firmware_row(mode, firmware, have_stock, fw),
+        _tools_row(p),
+    ]
 
 
 def needs_flash_mode_help(rows):

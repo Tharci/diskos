@@ -12,13 +12,14 @@ two sets above. If it is set but missing, unreadable or not a certificate file,
 building the context fails with E151; it is never silently ignored and never
 replaces the pinned bundle. An empty value counts as unset.
 """
+
 import os
 import ssl
 from urllib.parse import urlsplit
 
 from . import errors
 
-ALLOWED_HOSTS = frozenset(('fiio-firmware.fiio.net', 'fiio-firmware.oss-us-west-1.aliyuncs.com'))
+ALLOWED_HOSTS = frozenset(("fiio-firmware.fiio.net", "fiio-firmware.oss-us-west-1.aliyuncs.com"))
 
 
 class UrlNotAllowed(ValueError):
@@ -34,35 +35,40 @@ def check_url(url):
     no non-ASCII or control characters. Host case is ignored (DNS is case-blind).
     """
     if not isinstance(url, str) or not url:
-        raise UrlNotAllowed('URL must be a non-empty string')
-    if not url.isascii() or any(c <= ' ' or c in '\x7f\\' for c in url):
-        raise UrlNotAllowed('URL has characters outside the plain ASCII allowlist')
+        raise UrlNotAllowed("URL must be a non-empty string")
+    if not url.isascii() or any(c <= " " or c in "\x7f\\" for c in url):
+        raise UrlNotAllowed("URL has characters outside the plain ASCII allowlist")
     try:
         parts = urlsplit(url)
     except ValueError as exc:
-        raise UrlNotAllowed('URL does not parse') from exc
-    if parts.scheme != 'https':
-        raise UrlNotAllowed('only https is allowed')
+        raise UrlNotAllowed("URL does not parse") from exc
+    if parts.scheme != "https":
+        raise UrlNotAllowed("only https is allowed")
     host = parts.netloc.lower()
-    if host.endswith(':443'):
+    if host.endswith(":443"):
         host = host[:-4]
     if host not in ALLOWED_HOSTS:
-        raise UrlNotAllowed('host is not on the firmware allowlist')
+        raise UrlNotAllowed("host is not on the firmware allowlist")
     return url
 
 
 def _certifi_bundle():
     try:
         import certifi
+
         path = certifi.where()
     except Exception as exc:  # ImportError, or a damaged frozen layout
         raise errors.PreflightError(
-            'The CA bundle (certifi) is missing from this installation (%s)' % exc, code='E150',
-            action='reinstall the installer, or re-run ./install.sh; a browser download still works') from exc
+            "The CA bundle (certifi) is missing from this installation (%s)" % exc,
+            code="E150",
+            action="reinstall the installer, or re-run ./install.sh; a browser download still works",
+        ) from exc
     if not os.path.isfile(path):
         raise errors.PreflightError(
-            'The CA bundle file is missing: %s' % path, code='E150',
-            action='reinstall the installer; a browser download still works')
+            "The CA bundle file is missing: %s" % path,
+            code="E150",
+            action="reinstall the installer; a browser download still works",
+        )
     return path
 
 
@@ -88,21 +94,27 @@ def build_context(bundle=None, environ=None):
             ctx.load_verify_locations(cafile=cafile, capath=capath)
         except (OSError, ssl.SSLError) as exc:
             raise errors.PreflightError(
-                'System CA roots cannot be loaded (%s)' % exc,
-                code='E150',
-                action='repair this computer\'s certificate installation') from exc
+                "System CA roots cannot be loaded (%s)" % exc,
+                code="E150",
+                action="repair this computer's certificate installation",
+            ) from exc
     path = bundle or _certifi_bundle()
     try:
         ctx.load_verify_locations(cafile=path)
     except (OSError, ssl.SSLError) as exc:
-        raise errors.PreflightError('The CA bundle cannot be loaded: %s (%s)' % (path, exc), code='E150',
-                                    action='reinstall the installer; a browser download still works') from exc
-    custom = env.get('SSL_CERT_FILE')
+        raise errors.PreflightError(
+            "The CA bundle cannot be loaded: %s (%s)" % (path, exc),
+            code="E150",
+            action="reinstall the installer; a browser download still works",
+        ) from exc
+    custom = env.get("SSL_CERT_FILE")
     if custom:
         try:
             ctx.load_verify_locations(cafile=custom)
         except (OSError, ssl.SSLError) as exc:
             raise errors.PreflightError(
-                'SSL_CERT_FILE is set but unusable: %s (%s)' % (custom, exc), code='E151',
-                action='fix or unset SSL_CERT_FILE') from exc
+                "SSL_CERT_FILE is set but unusable: %s (%s)" % (custom, exc),
+                code="E151",
+                action="fix or unset SSL_CERT_FILE",
+            ) from exc
     return ctx

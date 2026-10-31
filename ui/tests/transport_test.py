@@ -2,16 +2,23 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 diskOS contributors
 """Exercise shared transport and pause feedback, with IPC failures and storage holds."""
+
+import os
+import subprocess
+import tempfile
 from pathlib import Path
-import os,subprocess,tempfile
-app=Path(__file__).resolve().parents[1]
-s=(app/'main.c').read_text();hint=s[s.index('static int      g_pp_hint'):s.index('/* set absolute volume')]
-scan=s[s.index('void ui_rescan_library(void)'):s.index('/* Poll for scan completion')]
-s=(app/'ui.c').read_text();start=s.index('int ui_transport_command(')
-local_start=s.index('static int transport_local(',start)
-action=s[start:s.index('\n}',local_start)+2]
-hold=s[s.index('static int seek_hold_active(void)'):];hold=hold[:hold.index('\n')+1]   # the real hold test
-headers=r'''
+
+app = Path(__file__).resolve().parents[1]
+s = (app / "main.c").read_text()
+hint = s[s.index("static int      g_pp_hint") : s.index("/* set absolute volume")]
+scan = s[s.index("void ui_rescan_library(void)") : s.index("/* Poll for scan completion")]
+s = (app / "ui.c").read_text()
+start = s.index("int ui_transport_command(")
+local_start = s.index("static int transport_local(", start)
+action = s[start : s.index("\n}", local_start) + 2]
+hold = s[s.index("static int seek_hold_active(void)") :]
+hold = hold[: hold.index("\n") + 1]  # the real hold test
+headers = r"""
 #include <assert.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -54,8 +61,8 @@ static int transport_local(const char *cmd);
 static int playback_command(const char *c,int (*f)(const char *)){return f(c);}
 static long shown=-1;   /* the position a skip drew before the player confirmed it */
 static void np_show_position(const track_state_t *st,long pos){(void)st;shown=pos;}
-'''
-tests=r'''
+"""
+tests = r"""
 int main(void){
     g_playing=1; now=1000;
     assert(ui_transport_command("0201000C0000")==0);
@@ -110,23 +117,41 @@ int main(void){
     puts("PASS honest scan admission, busy/error feedback and the started toast");
     puts("HARNESS COMPLETE");
 }
-'''
+"""
+
+
 def run_harness(exe, timeout):
     """Run a compiled harness; its LAST stdout line must be HARNESS COMPLETE, so an early return 0 fails."""
     r = subprocess.run([str(exe)], capture_output=True, text=True, timeout=timeout)
-    print(r.stdout, end='')
+    print(r.stdout, end="")
     if r.stderr:
-        print(r.stderr, end='')
+        print(r.stderr, end="")
     if r.returncode != 0:
-        raise SystemExit(f'FAIL harness exited {r.returncode}')
+        raise SystemExit(f"FAIL harness exited {r.returncode}")
     lines = r.stdout.strip().splitlines()
-    if not lines or lines[-1] != 'HARNESS COMPLETE':
-        raise SystemExit('FAIL harness did not reach its HARNESS COMPLETE line')
+    if not lines or lines[-1] != "HARNESS COMPLETE":
+        raise SystemExit("FAIL harness did not reach its HARNESS COMPLETE line")
 
 
-with tempfile.TemporaryDirectory(prefix='diskos-transport-test-') as t:
-    p=Path(t);(p/'test.c').write_text(headers+hold+hint+action+scan+tests)
-    subprocess.run([os.environ.get('CC','cc'),'-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(p/'test.c'),'-o',str(p/'test')],check=True)
-    run_harness(p/'test', 10)
+with tempfile.TemporaryDirectory(prefix="diskos-transport-test-") as t:
+    p = Path(t)
+    (p / "test.c").write_text(headers + hold + hint + action + scan + tests)
+    subprocess.run(
+        [
+            os.environ.get("CC", "cc"),
+            "-g",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-fsanitize=address,undefined",
+            str(p / "test.c"),
+            "-o",
+            str(p / "test"),
+        ],
+        check=True,
+    )
+    run_harness(p / "test", 10)
 
-print('COMPLETE transport_test.py')   # last line: the runner requires it, so an early clean exit cannot pass
+print(
+    "COMPLETE transport_test.py"
+)  # last line: the runner requires it, so an early clean exit cannot pass
