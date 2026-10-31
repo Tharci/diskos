@@ -54,8 +54,7 @@ uv run pytest                 # the test suite
 
 The pre-commit hooks format and lint Python with **ruff**, type-check it with **ty**, check shell
 scripts with **shellcheck**, keep `uv.lock` and `requirements.txt` in sync, and fix whitespace. CI
-runs the same hooks plus the tests on Linux, macOS and Windows with Python 3.10 (the minimum) and
-the newest Python.
+runs the same hooks plus the tests on Linux with Python 3.10 (the minimum) and the newest Python.
 
 - To change a dependency, edit `pyproject.toml` (runtime pins also need their `licenses/` and
   `NOTICE.md` entries updated: `tests/test_project.py` checks), then commit the updated

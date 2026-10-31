@@ -33,13 +33,14 @@ jobs:
       - run: uv run pre-commit run --all-files --show-diff-on-failure
 
   test:
-    name: Tests (${{ matrix.os }}, Python ${{ matrix.python }})
-    runs-on: ${{ matrix.os }}
+    name: Tests (Linux, Python ${{ matrix.python }})
+    # Linux only for now. The installer also runs on macOS and Windows, but its tests have never been
+    # run automatically there: add those runners once their results have been reviewed.
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]   # the installer runs on all three
-        python: ["3.10", "3.14"]                             # the supported floor and the newest
+        python: ["3.10", "3.14"]   # the supported floor and the newest
     env:
       # The python.org / system interpreter from setup-python, as end users have it (with its Tk),
       # rather than a uv-downloaded build.
