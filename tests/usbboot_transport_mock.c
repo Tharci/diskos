@@ -68,7 +68,10 @@ int libusb_bulk_transfer(libusb_device_handle *h, unsigned char endpoint,
     if(scenario == 5) *actual = len + 1;
     if(scenario == 17) return LIBUSB_ERROR_NO_DEVICE;
     if(scenario == 18) return 1;
-    memset(data, 'X', *actual); return 0;
+    /* Report the scenario's bogus length (4: negative, 5: past the buffer) but fill only what exists:
+     * a memset of *actual itself crashed the harness (4) or overran the caller's buffer (5). */
+    if(*actual > 0) memset(data, 'X', *actual < len ? *actual : len);
+    return 0;
 }
 int main(int argc, char **argv) {
     scenario = atoi(argv[1]);
