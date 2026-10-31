@@ -100,6 +100,7 @@ int  mdb_plan_pos(const mdb_plan_t *plan, int song_id);                         
 void mdb_plan_free(mdb_plan_t *plan);
 int  mdb_subtrack_count(const char *path, int iso_only);   /* CUE/ISO count; -1 = retry (iso_only: IS_ISO rows only) */
 int  mdb_subtrack_plan(const char *const *paths, int npaths, mdb_plan_t *plan);   /* type-5 plan, TRACK order; 1 built, 0 absent, -1 retry (caller frees built plan) */
+int  mdb_folder_plan(const char *dir, int recursive, const char *tapped, mdb_plan_t *plan, int *start_id);   /* type-5 plan of a folder (+ subfolders), PATH/TRACK order; *start_id = tapped's first row (0 = not indexed); 1 built, 0 none, -1 retry (caller frees built plan) */
 
 /* Up Next: the player's live queue from the current song on (read-only; the stock player owns it).
  * Sequential/repeat modes play LIST_SONG_0 in ID order; shuffle plays LIST_SONG_3 in ID order, whose POS_ID is

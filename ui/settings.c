@@ -6,6 +6,7 @@
 #include "config.h"
 #include "anim.h"
 #include "musicdb.h"
+#include "folderbrowser.h"
 #include "fwcaps.h"
 #include "device_names_ui.h"
 #include "version.h"
@@ -28,6 +29,7 @@
 #include "system.h"
 #include "ota.h"
 #include "controls.h"
+#include "volkeys.h"
 #include "i18n.h"
 #include "ipc.h"
 #include "custom_saver_db.h"
@@ -89,7 +91,7 @@ typedef struct setting_s {
     const char *label;
     st_type_t   type;
     const char *cfg_key;
-    int         min, max, step;            /* slider */
+    int         min, max, step;            /* slider: a drag snaps to min + n*step */
     const char *const *opts; int nopts;    /* cycler */
     const char *ro_val;                    /* readonly */
     void (*apply)(int v);                  /* optional apply hook / decode seam */
@@ -242,22 +244,6 @@ static void apply_screen_rot(int v){
     } else if(ctl_rotation_pending())
         cfg_set_int(CTL_CFG_ROT, g_set_prev);   /* stored only when the user taps Keep (controls.c); the row keeps the old one till then */
 }
-static void key_act_apply(int key, const char *cfg_key, int v){
-    if(v != CTL_ACT_VOLUME && ui_cast_session_active()){   /* 16b: a track action would start local audio behind the receiver */
-        cfg_set_int(cfg_key, g_set_prev);
-        ui_toast("Stop beaming to change this");
-        lv_async_call(detail_refresh_async, NULL);
-        return;
-    }
-    if(ui_set_volume_key(key, v) != 0){
-        cfg_set_int(cfg_key, g_set_prev);
-        ui_toast("Couldn't change it - try again");
-        lv_async_call(detail_refresh_async, NULL);
-    }
-}
-static void apply_key_single(int v){ key_act_apply(CTL_KEY_SINGLE, "key_single", v); }
-static void apply_key_double(int v){ key_act_apply(CTL_KEY_DOUBLE, "key_double", v); }
-static void apply_key_long(int v){   key_act_apply(CTL_KEY_LONG, "key_long", v); }
 static void apply_charge_protect(int v){
     if(power_apply_charge(v) != 0){
         cfg_set_int("charge_protect", g_set_prev);
@@ -649,7 +635,7 @@ void settings_apply_startup(int restore_brightness){
     { int fj = mdb_sysconfig_folder_jump();             /* the player's Play Through Folders switch (it owns it) */
       if(fj >= 0 && fj != cfg_get_int("folder_jump", 0)) cfg_set_int("folder_jump", fj); }
     power_startup_mirror();        /* the player's own Idle poweroff / Charging optimization values */
-    controls_startup_mirror();     /* the player's Screen rotation and volume-key actions */
+    controls_startup_mirror();     /* the player's Screen rotation */
     cfg_set_int("sleep_idx", 0);   /* never auto-arm a sleep timer across reboots */
     apply_boot_default(cfg_get_int("boot_default", 0));  /* keep the boot-hook flag in sync */
     ui_set_accent_config(cfg_get_int("accent_mode", 0), cfg_get_int("accent_color", 0xF23260));
@@ -686,6 +672,7 @@ static const char *const OPT_NPSTYLE[] = { "Cover", "Vinyl" };
 static const char *const OPT_APPEARANCE[] = { "Dark", "Light" };
 static const char *const OPT_FONTSIZE[] = { "Small", "Medium", "Large" };
 static const char *const OPT_ALBUMVIEW[] = { "List", "Cover Flow" };
+static const char *const OPT_FOLDERQUEUE[] = { [FQ_FOLDER] = "This Folder", [FQ_SUBFOLDERS] = "With Subfolders", [FQ_ALL] = "All Songs" };
 static const char *const OPT_SAVERSTYLE[] = { "Cover", "Analog", "Minimal", "Digital", "Vinyl", "Custom" };
 static const char *const OPT_OLDTAGS[] = { "Auto", "Western", "Cyrillic" };
 static const char *const OPT_BOOTDEF[] = { "diskOS", "Stock" };
@@ -701,7 +688,6 @@ static const char *const OPT_DFILTER[]= { "Fast LL","Slow LL","Slow PC","Fast PC
 static const char *const OPT_MEMORY[] = { "Off", "Position", "Song" };
 static const char *const OPT_ARTISTCLASS[] = { "By Artist", "By Album Artist" };
 static const char *const OPT_ROTATION[] = { "Normal", "Turn 90", "Turn 180", "Turn 270" };   /* stock values 0..3 */
-static const char *const OPT_VOLKEY[] = { "Switch Track", "Adjust Volume" };
 
 static const setting_t TABLE[] = {
     /* Display order: a category page lists its rows in this order, and a heading appears wherever "section" changes
@@ -754,6 +740,8 @@ static const setting_t TABLE[] = {
     { "Library", "Browsing", "Artists",     ST_CYCLER, "artist_class", 0,0,0, OPT_ARTISTCLASS, 2, NULL, apply_artist_class, 0 },
     { "Library", "Browsing", "Track Numbers", ST_TOGGLE, "track_numbers", 0,1,1, NULL, 0, NULL, apply_track_numbers, 0 },
     { "Library", "Browsing", "Album View",  ST_CYCLER, "album_view", 0,0,0, OPT_ALBUMVIEW, 2, NULL, NULL, 0 },
+    { "Library", "Browsing", "Folder Playback", ST_CYCLER, "folder_queue", 0,0,0, OPT_FOLDERQUEUE, 3, NULL, NULL, FQ_FOLDER,
+      "What a tapped file queues" },
     { "Library", "Artwork and lyrics", "Online Album Art", ST_TOGGLE, "online_art", 0,1,1, NULL, 0, NULL, apply_online_art, 0 },
     { "Library", "Artwork and lyrics", "Album Art Cache", ST_CYCLER, "artcache", 0,0,0, OPT_ARTCACHE, 3, NULL, apply_artcache, 0,
       "Loads covers in advance" },
@@ -764,9 +752,12 @@ static const setting_t TABLE[] = {
     { "Library", "Maintenance", "Import Playlists", ST_ACTION, NULL, 0,0,0, NULL,0, "Import", apply_import_m3u, 0 },
     /* ---- Controls ---- */
     { "Controls", NULL, "Quick Settings", ST_ACTION, NULL, 0,0,0, NULL,0, LV_SYMBOL_RIGHT, apply_qsconfig, 0 },
-    { "Controls", NULL, "Vol Keys: Press", ST_CYCLER, "key_single", 0,0,0, OPT_VOLKEY, 2, NULL, apply_key_single, CTL_ACT_VOLUME },
-    { "Controls", NULL, "Vol Keys: Double Press", ST_CYCLER, "key_double", 0,0,0, OPT_VOLKEY, 2, NULL, apply_key_double, CTL_ACT_VOLUME },
-    { "Controls", NULL, "Vol Keys: Long Press", ST_CYCLER, "key_long", 0,0,0, OPT_VOLKEY, 2, NULL, apply_key_long, CTL_ACT_VOLUME },
+    { "Controls", NULL, "Volume Step", ST_SLIDER, "vol_step", 1,5,1, NULL,0, NULL, NULL, VK_STEP_DEFAULT,
+      "Levels per press or repeat" },
+    { "Controls", NULL, "Volume Hold Delay", ST_SLIDER, "vol_hold_ms", 200,1000,10, NULL,0, NULL, NULL, VK_HOLD_DEFAULT,
+      "Before a held volume key repeats" },
+    { "Controls", NULL, "Volume Repeat Delay", ST_SLIDER, "vol_repeat_ms", 20,150,10, NULL,0, NULL, NULL, VK_REPEAT_DEFAULT,
+      "Between repeated volume steps" },
     { "Controls", NULL, "Back-swipe",  ST_SLIDER, "swipe_thresh", 30,120,5, NULL,0, NULL, apply_swipe, 60 },
     /* ---- Battery & Power ---- */
     { "Battery & Power", NULL, "Charging Limit", ST_TOGGLE, "charge_protect", 0,1,1, NULL, 0, NULL, apply_charge_protect, 0 },
@@ -836,6 +827,7 @@ void settings_restart_prompt(const char *note){ g_restart_note = note; apply_res
  * callback (uncommitted value) so brightness shows "%" and swipe-thresh "px" while dragging too. */
 static void fmt_slider(const setting_t *s, int v, char *buf, int n){
     if(s->cfg_key && !strcmp(s->cfg_key, "swipe_thresh"))    snprintf(buf,n, "%d px", v);
+    else if(s->cfg_key && (!strcmp(s->cfg_key, "vol_hold_ms") || !strcmp(s->cfg_key, "vol_repeat_ms"))) snprintf(buf,n, "%d ms", v);
     else if(s->cfg_key && !strcmp(s->cfg_key, "brightness")) snprintf(buf,n, "%d%%", v*100/40);  /* 4..40 -> 10..100% */
     else                                                    snprintf(buf,n, "%d", v);
 }
@@ -851,8 +843,9 @@ static int setting_unavailable(const setting_t *s){
                        || (!strcmp(s->cfg_key, "ota_auto") && !ota_supported(&OTA_DEV))
                        || ((!strcmp(s->cfg_key, "idle_off_idx") || !strcmp(s->cfg_key, "charge_protect")
                             || !strcmp(s->cfg_key, "sleep_action")) && !power_supported())
-                       || ((!strcmp(s->cfg_key, CTL_CFG_ROT) || !strcmp(s->cfg_key, "key_single")
-                            || !strcmp(s->cfg_key, "key_double") || !strcmp(s->cfg_key, "key_long")) && !ctl_supported()));
+                       || (!strcmp(s->cfg_key, CTL_CFG_ROT) && !ctl_supported())
+                       || ((!strcmp(s->cfg_key, "vol_step") || !strcmp(s->cfg_key, "vol_hold_ms")
+                            || !strcmp(s->cfg_key, "vol_repeat_ms")) && !volkeys_owned()));
 }
 static const char *val_text(const setting_t *s, char *buf, int n){
     if(setting_unavailable(s)) return tr(s->cfg_key && (!strcmp(s->cfg_key, "ota_allow") || !strcmp(s->cfg_key, "ota_auto")) ? "Not supported on this install" : "Not on this firmware");
@@ -944,10 +937,17 @@ static void setlist_scroll_remember(void){
 static void detail_back_cb(lv_event_t *e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) screen_back(); }
 
 /* VALUE_CHANGED: apply live only (no flash write); RELEASED persists once. This
- * avoids rewriting the whole config file on every pixel of a slider drag. */
+ * avoids rewriting the whole config file on every pixel of a slider drag. The value snaps to the row's step
+ * (LVGL slides in 1s), so a drag lands on round values; the release reads the snapped value back. */
 static void detail_slider_cb(lv_event_t *e){
     lv_obj_t *sl = lv_event_get_target(e);
     int v = lv_slider_get_value(sl);
+    if(g_active->step > 1){
+        int k = (v - g_active->min + g_active->step / 2) / g_active->step;
+        v = g_active->min + k * g_active->step;
+        if(v > g_active->max) v = g_active->max;
+        lv_slider_set_value(sl, v, LV_ANIM_OFF);
+    }
     if(g_active->apply) g_active->apply(v);
     lv_obj_t *vl = lv_event_get_user_data(e);
     if(vl){ char b[16]; fmt_slider(g_active, v, b, sizeof b); lv_label_set_text(vl, b); }   /* keep %/px unit while dragging */

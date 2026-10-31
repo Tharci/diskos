@@ -10,6 +10,7 @@ scan=s[s.index('void ui_rescan_library(void)'):s.index('/* Poll for scan complet
 s=(app/'ui.c').read_text();start=s.index('int ui_transport_command(')
 local_start=s.index('static int transport_local(',start)
 action=s[start:s.index('\n}',local_start)+2]
+hold=s[s.index('static int seek_hold_active(void)'):];hold=hold[:hold.index('\n')+1]   # the real hold test
 headers=r'''
 #include <assert.h>
 #include <stdio.h>
@@ -51,6 +52,8 @@ int ui_pp_icon_playing(int real);
 #define PB_E_NOSINK (-2)   /* LOCAL source: the facade calls the local function unchanged */
 static int transport_local(const char *cmd);
 static int playback_command(const char *c,int (*f)(const char *)){return f(c);}
+static long shown=-1;   /* the position a skip drew before the player confirmed it */
+static void np_show_position(const track_state_t *st,long pos){(void)st;shown=pos;}
 '''
 tests=r'''
 int main(void){
@@ -84,6 +87,19 @@ int main(void){
     send_fail=0;assert(ui_transport_command("0201000C0001")==0 && cancelled==1 && disarmed==1);
     puts("PASS bounded book seeks, failed seek preserves resume, successful music skip clears it");
 
+    /* The player reports position once a second and holds that back after a seek: rapid skips must chain from the
+     * unconfirmed target (and draw it at once), and only a lapsed hold falls back to the reported position. */
+    book=1; send_fail=0; state.position_ms=60000; state.duration_ms=600000; g_seek_hold_until=0; g_seek_target_ms=-1; now=10000;
+    assert(ui_transport_command("0201000C0002")==0 && requested_seek==45000 && shown==45000);
+    now=10700; assert(ui_transport_command("0201000C0002")==0 && requested_seek==30000 && shown==30000);
+    now=11400; assert(ui_transport_command("0201000C0001")==0 && requested_seek==60000 && shown==60000);
+    now=11400+2500; state.position_ms=90000;
+    assert(ui_transport_command("0201000C0002")==0 && requested_seek==75000);
+    now=UINT32_MAX-1000; g_seek_hold_until=0; g_seek_target_ms=-1; state.position_ms=60000;
+    assert(ui_transport_command("0201000C0002")==0 && requested_seek==45000);
+    now=500; assert(ui_transport_command("0201000C0002")==0 && requested_seek==30000);   /* hold survives the tick wrap */
+    puts("PASS rapid book skips chain from the unconfirmed target, a lapsed hold falls back to the report");
+
     local=0; ui_rescan_library(); assert(scans==0);
     local=1;scan_busy=1;toast[0]=0;ui_rescan_library();assert(scans==0 && cancels==1 && !strcmp(toast,"Cancelling scan..."));
     cancel_ok=0;toast[0]=0;ui_rescan_library();assert(scans==0 && cancels==2 && toast[0]==0);   /* committing: refused, completion reports */
@@ -109,7 +125,7 @@ def run_harness(exe, timeout):
 
 
 with tempfile.TemporaryDirectory(prefix='diskos-transport-test-') as t:
-    p=Path(t);(p/'test.c').write_text(headers+hint+action+scan+tests)
+    p=Path(t);(p/'test.c').write_text(headers+hold+hint+action+scan+tests)
     subprocess.run([os.environ.get('CC','cc'),'-g','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(p/'test.c'),'-o',str(p/'test')],check=True)
     run_harness(p/'test', 10)
 

@@ -217,8 +217,8 @@ An indexed file format may still fail to play on the Disc.
 Some mono FLAC, MP3, and Opus files can play slowed down in the stock player. Now Playing
 may still retain the old track after a mono Opus file advances into another mono Opus file.
 The stock player and connected headphones also affect some audio and Bluetooth choices.
-Browse Files plays ordinary indexed audio files through the all-songs queue rather than a folder queue. On V2.09,
-playlist and book playback may fail; on V2.57, the Custom EQ editor is view-only.
+Browse Files queues a tapped file's folder from the library database, so files that are not yet indexed are left out
+of the queue. On V2.09, playlist and book playback may fail; on V2.57, the Custom EQ editor is view-only.
 Beam to Cast supports MP3, AAC, Opus, Ogg Vorbis, and 16- or 24-bit FLAC and PCM WAV up to 96
 kHz, in mono or stereo. Google Home Mini receivers accept FLAC up to 48 kHz. AirPlay decodes
 mono or stereo MP3, FLAC and PCM WAV at 8-384 kHz and converts AAC, ALAC, Opus, Ogg Vorbis, WMA,

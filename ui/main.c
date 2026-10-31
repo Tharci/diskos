@@ -13,7 +13,6 @@
 #include <ucontext.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <sys/mman.h>   /* mmap /dev/mem: read the Vol-Up GPIO pin level directly at boot */
 #include <stdint.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -21,7 +20,7 @@
 #include <sys/stat.h>
 #include <glob.h>
 #include <dirent.h>      /* mkdir() for the SD mount point */
-#include <linux/input.h>   /* EVIOCGKEY / KEY_MAX for the boot-time Vol-Up override */
+#include <linux/input.h>   /* input_event / EV_KEY: the power press handed to the player */
 #include <net/if.h>
 #include "lvgl/lvgl.h"
 #include "lvgl/src/core/lv_refr_private.h"
@@ -30,6 +29,7 @@
 #include "fontft.h"
 #include "fb_pan.h"
 #include "controls.h"
+#include "volkeys.h"
 #include "screens.h"
 #include "modes.h"
 #include "receiver.h"
@@ -263,8 +263,10 @@ static int screen_frame_step(int on, int bl_state, int *player_off, int poweroff
 /* One short power-button press into the player's key device (V2.57: mq_player reads event0 "x2000_key" without a
  * grab and toggles its screen on EV_KEY 265 value 1). Used only to undo the
  * player's sleep after a press that was meant to wake diskOS's own Screen Off, so the player and diskOS agree on
- * whether the screen is on. Never codes 264 (power-off) or a held key. 1 = written. */
+ * whether the screen is on. Never codes 264 (power-off) or a held key. 1 = written (or, while diskOS holds event0's
+ * grab, queued for the key thread, the only one that can write past the grab). */
 static int power_key_inject(void){
+    if(volkeys_press_power()){ fprintf(stderr, "power key: queued a press to wake the player's screen\n"); return 1; }
     char path[64], name[32];
     for(int i = 0; i < 8; i++){
         snprintf(path, sizeof path, "/sys/class/input/event%d/device/name", i);
@@ -2301,6 +2303,13 @@ void ui_book_user_seeked(long target_ms){
         } else {
             g_book_ckpt_ok = 1;                                 /* no concrete target to confirm -> allow checkpointing */
         }
+    } else if(!g_book_sess[0] && target_ms >= 0){
+        /* No session yet: after a boot or a UI restart the player holds the book paused, and book_tick adopts it only
+         * once it plays. Persist this seek as the bookmark now - adoption compares the playing position with the
+         * saved one and would otherwise "resume" to the older, deeper bookmark over the position just chosen. */
+        track_state_t st; ipc_get_state(&st);
+        if(st.have_track && st.player_confirmed && mdb_is_book_path(st.path) && !mdb_book_save(st.path, st.path, target_ms, 0))
+            ui_toast("Couldn't save book position - try again");
     }
 }
 
@@ -2570,28 +2579,6 @@ int ui_sleep_state(int *secs_left){
 static char g_app_exec[256];
 static int  g_app_pending = 0;
 void app_launch(const char *exec){ snprintf(g_app_exec, sizeof g_app_exec, "%s", exec); g_app_pending = 1; }
-/* Live Vol-Up pin level; 1 = held. Same register map as the boot override (x2000 pinctrl, GPB PxPIN,
- * bit 13, active low) - the input layer is unusable here because the stock player grabs event0. */
-/* Mapped ONCE and kept: re-opening and re-mapping /dev/mem five times a second is pure waste. NULL if
- * the mapping is unavailable, in which case the escape below is simply unavailable too (and says so). */
-static volatile uint32_t *gpio_gpb_pin(void){
-    static volatile uint32_t *pin = NULL;
-    static int tried = 0;
-    if(!tried){
-        tried = 1;
-        int mem = open("/dev/mem", O_RDONLY | O_SYNC);
-        if(mem >= 0){
-            void *map = mmap(NULL, 4096, PROT_READ, MAP_SHARED, mem, 0x10010000);
-            if(map != MAP_FAILED) pin = (volatile uint32_t *)((char *)map + 0x100);
-            close(mem);
-        }
-    }
-    return pin;
-}
-static int volup_held(void){
-    volatile uint32_t *pin = gpio_gpb_pin();
-    return pin ? (((*pin >> 13) & 1u) ? 0 : 1) : 0;
-}
 static void app_run(const char *exec){
     /* preflight: a missing/non-executable app shouldn't blank the screen for nothing */
     if(access(exec, X_OK) != 0){
@@ -2599,8 +2586,9 @@ static void app_run(const char *exec){
         ui_toast("Can't launch app");
         return;
     }
-    if(!gpio_gpb_pin()) ui_toast("Note: hold-to-close is unavailable");   /* no silent loss of the escape */
+    if(!volkeys_escape_ready()) ui_toast("Note: hold-to-close is unavailable");   /* no silent loss of the escape */
     int failed = 0, killed = 0;
+    volkeys_set_app(1);                /* the key thread keeps the volume keys working while the UI loop is parked here */
     pid_t pid = fork();
     if(pid == 0){
         setpgid(0, 0);                 /* own group so one kill takes any grandchildren too */
@@ -2613,33 +2601,30 @@ static void app_run(const char *exec){
         int grouped = (setpgid(pid, pid) == 0 || errno == EACCES);
         /* The app owns the screen until it exits, so a HUNG app used to own it forever - taking Settings,
          * and with it the user's route back to the stock firmware, for the rest of the session. Wait
-         * without a deadline (a long-running app is legitimate) but keep an escape: hold Vol-Up for ~3s
-         * to force-close it. Measured as elapsed MONOTONIC time, not a count of loop iterations. */
-        struct timespec t0 = {0,0}; int holding = 0;
+         * without a deadline (a long-running app is legitimate) but keep an escape: hold Vol-Up AND Vol-Down
+         * for ~3s to force-close it (volkeys.c times it; holding both never changes the volume, a single held
+         * key ramps it). */
         for(;;){
             pid_t w = waitpid(pid, &status, WNOHANG);
             if(w == pid) break;
             if(w < 0 && errno != EINTR){ failed = 1; break; }
-            if(volup_held()){
-                struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
-                if(!holding){ holding = 1; t0 = now; }
-                else if(now.tv_sec - t0.tv_sec >= 3){
-                    if(grouped) kill(-pid, SIGKILL);   /* the app and anything it spawned */
-                    kill(pid, SIGKILL);                /* and the app itself, in case grouping failed
-                                                        * or it moved itself to another group */
-                    for(int k = 0; k < 20; k++){       /* bounded reap: never block on a D-state child */
-                        if(waitpid(pid, &status, WNOHANG) == pid) break;
-                        usleep(100000);
-                    }
-                    killed = 1; break;
+            if(volkeys_take_escape()){
+                if(grouped) kill(-pid, SIGKILL);   /* the app and anything it spawned */
+                kill(pid, SIGKILL);                /* and the app itself, in case grouping failed
+                                                    * or it moved itself to another group */
+                for(int k = 0; k < 20; k++){       /* bounded reap: never block on a D-state child */
+                    if(waitpid(pid, &status, WNOHANG) == pid) break;
+                    usleep(100000);
                 }
-            } else holding = 0;
+                killed = 1; break;
+            }
             usleep(200000);
         }
         if(!failed && !killed && WIFEXITED(status) && WEXITSTATUS(status) == 127) failed = 1;  /* exec failed */
     } else {
         failed = 1;  /* fork failed */
     }
+    volkeys_set_app(0);
     /* reclaim the screen: invalidate everything and force an immediate redraw */
     lv_obj_invalidate(lv_screen_active());
     lv_refr_now(NULL);
@@ -2652,6 +2637,11 @@ static void app_run(const char *exec){
 static void state_sync_retry_cb(lv_timer_t *t){
     (void)t;
     ipc_send_probe("02020008");   /* silent: a miss during the connect race must not toast */
+}
+
+/* Until the player has taken them: all three stock volume-key gestures to Adjust Volume (controls.c says why). */
+static void keys_volume_only_cb(lv_timer_t *t){
+    if(controls_keys_volume_only() == 0) lv_timer_delete(t);
 }
 
 /* Bounded recovery; only a new identity or active transport cancellation restores eligibility. */
@@ -4080,7 +4070,7 @@ static int cast_pick(const char *host, int port, int replace, const ho_local *l,
     if(AP_PROOF_BUSY()){ ui_beam_refuse("Proof is running - cancel it first"); return -1; }   /* one owner of the machine and of power_set_hold */
     if(modes_output_busy()){ ui_beam_refuse("Another output is busy. Wait for the output switch, then try again."); return -1; }   /* 16b carry-over: an output switch is settling */
     if(l && l->path && mdb_is_book_path(l->path)){ ui_beam_refuse("Audiobooks cannot be beamed. Choose a music track."); return -1; }   /* 15c, owner decision 77: a playing book is never handed off; before any session exists, so nothing leaks and the machine stays LOCAL */
-    if(!ui_cast_keys_ok()){ ui_beam_refuse("Volume keys must use Adjust Volume to beam"); return -1; }   /* 16b: a stock key must not start local audio behind the receiver; refused before any session exists, the setting is never rewritten */
+    if(!ui_cast_keys_ok()){ ui_beam_refuse("Volume keys must use Adjust Volume to beam"); return -1; }   /* 16b: a stock key must not start local audio behind the receiver (controls.c); refused before any session exists */
     if(!cast_sd_open()) return ui_beam_refuse("SD card is not readable. Restart the Disc and check the card.");
     if(!l || !l->have_track) return ui_beam_refuse("Choose a music track on the Disc first.");
     if(g_ho_sess){
@@ -4111,7 +4101,7 @@ int ui_cast_paused(void){ if(aps_sender_active(&g_sender)) return g_sender.view.
 int ui_cast_pick_request(const char *host, int port){
     if(aps_sender_active(&g_sender) || g_sender_pending) return ui_beam_refuse("Another output is busy. Stop beaming first.");
     if(ui_receiver_in_use()){ ui_beam_refuse("Receiver source is in use. Select Local in Audio Source first."); return -1; }   /* a receiver source holds the player: refused before any request exists */
-    if(!ui_cast_keys_ok()) return ui_beam_refuse("Set press, double press and long press to Adjust Volume in Settings > Controls.");
+    if(!ui_cast_keys_ok()) return ui_beam_refuse("Volume keys must use Adjust Volume to beam");
     if(!host || !*host || strlen(host) >= sizeof g_pickreq.host || port < 1 || port > 65535 || g_pickreq.pend || ho_get(&g_ho) != HO_LOCAL) return ui_beam_refuse("Beam is busy. Wait, then try again.");
     ui_beam_clear_error(); g_sender.error = 0;
     snprintf(g_pickreq.host, sizeof g_pickreq.host, "%s", host); g_pickreq.port = port; g_pickreq.pend = 1;
@@ -4292,7 +4282,7 @@ int ui_airplay_volume_query(void){ return aps_sender_volume_query(&g_sender); }
 int ui_airplay_error(void){ return g_sender.error; }
 int ui_airplay_pick_request(const rd_receiver *target){
     if(!target || target->protocol == RD_CAST) return ui_beam_refuse("Receiver is unavailable. Search again.");
-    if(!ui_cast_keys_ok()) return ui_beam_refuse("Set press, double press and long press to Adjust Volume in Settings > Controls.");
+    if(!ui_cast_keys_ok()) return ui_beam_refuse("Volume keys must use Adjust Volume to beam");
     if(ui_receiver_in_use()) return ui_beam_refuse("Receiver source is in use. Select Local in Audio Source first.");
     if(ui_cast_phase() || modes_output_busy()) return ui_beam_refuse("Another output is busy. Stop beaming or wait for the output switch.");
     if(!cast_sd_open()) return ui_beam_refuse("SD card is not readable. Restart the Disc and check the card.");
@@ -4313,63 +4303,21 @@ static int sender_reload_ready(void){
     aps_sender_cancel(&g_sender, lv_tick_get()); return 0;
 }
 static struct { int pending, id, ord, force; uint32_t deadline, probe_at; unsigned generation, report, transport; pb_view view; } g_sender_return;
-/* V2.57 dispatcher tables 0x6db9b0 / 0x6dba00, handlers 0x4e74ec,
- * 0x4e7510, 0x4e7370, 0x4e7678, 0x4e760c, 0x4e7594.
- * Read the kernel's already classified gestures. Never infer intent from a714:
- * route changes and player metadata can also report Local volume. */
-static int sender_key_direction(unsigned type, unsigned code, int value){
-    if(type != EV_KEY || (value != 1 && value != 2)) return 0;
-    if(code == 251 || code == 263 || code == 266) return 1;
-    if(code == 252 || code == 262 || code == 267) return -1;
-    return 0;
-}
+/* Receiver volume from the volume keys: volkeys.c counts the presses (the stock gesture codes never reach the player
+ * or us), and the AirPlay/Cast sessions live on this loop. */
 static void sender_keys(void){
-    static int fd = -1, dropped; static unsigned attempt;
-    static pb_source last_source;
+    int steps = volkeys_take_remote();
     pb_source source = playback_source();
-    unsigned current = source == PB_SRC_CAST ? ho_attempt(&g_ho) : g_sender.serial;
-    int active = source == PB_SRC_CAST
-        ? g_cast_on && g_ho_sess && ho_get(&g_ho) == HO_CASTING
-        : aps_sender_active(&g_sender);
-    if(!active){
-        if(fd >= 0) close(fd);
-        fd = -1; attempt = 0; dropped = 0; return;
+    int active = source == PB_SRC_CAST ? g_cast_on && g_ho_sess && ho_get(&g_ho) == HO_CASTING
+        : source == PB_SRC_AIRPLAY && aps_sender_active(&g_sender);
+    if(!steps || !active) return;
+    power_note_input();
+    for(int dir = steps > 0 ? 1 : -1; steps; steps -= dir){
+        int rc = source == PB_SRC_AIRPLAY ? aps_sender_volume_step(&g_sender, dir)
+            : ui_beam_volume() < 0 ? -1 : cast_session_volume_step(g_ho_sess, dir);
+        if(rc < 0){ sender_notice(PB_CMD_VOLUME); break; }
     }
-    if(attempt != current || last_source != source){
-        attempt = current; last_source = source; dropped = 0;
-        if(fd >= 0) close(fd);
-        fd = -1;
-        if(fw_os_ver() == 257){
-            for(int i = 0; i < 8 && fd < 0; i++){
-                char path[80], name[32]; snprintf(path, sizeof path, "/sys/class/input/event%d/device/name", i);
-                FILE *f = fopen(path, "r"); if(!f) continue;
-                int got = fgets(name, sizeof name, f) != NULL; fclose(f);
-                if(!got || (strcmp(name, "x2000_key\n") && strcmp(name, "x2000_key"))) continue;
-                snprintf(path, sizeof path, "/dev/input/event%d", i); fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-            }
-        }
-    }
-    if(fd < 0) return;
-    /* The device kernel uses the 32-bit timeval ABI, independent of musl time_t. */
-    struct { uint32_t sec, usec; uint16_t type, code; int32_t value; } ev[16];
-    ssize_t n = read(fd, ev, sizeof ev);
-    if(n < 0 && (errno == EAGAIN || errno == EINTR)) return;
-    if(n <= 0 || n % sizeof ev[0]){ close(fd); fd = -1; return; }
-    for(size_t i = 0; i < (size_t)n/sizeof ev[0]; i++){
-        if(ev[i].type == EV_SYN){
-            if(ev[i].code == SYN_DROPPED) dropped = 1;
-            else if(ev[i].code == SYN_REPORT) dropped = 0;
-            continue;
-        }
-        int direction = sender_key_direction(ev[i].type, ev[i].code, ev[i].value);
-        if(!dropped && direction && (source == PB_SRC_AIRPLAY || source == PB_SRC_CAST)){
-            power_note_input();
-            int rc = source == PB_SRC_AIRPLAY ? aps_sender_volume_step(&g_sender, direction)
-                : ui_beam_volume() < 0 ? -1 : cast_session_volume_step(g_ho_sess, direction);
-            if(rc < 0) sender_notice(PB_CMD_VOLUME);
-            if(ui_screen_backlight_on()) ui_show_volume(0);
-        }
-    }
+    if(ui_screen_backlight_on()) ui_show_volume(0);
 }
 int ui_airplay_can_return(void){ return g_sender.view.active && !aps_sender_active(&g_sender); }
 int ui_airplay_return_single(void){ return g_sender.view.active && !g_sender.local_id; }
@@ -4391,7 +4339,7 @@ static int sender_dispatch(const track_state_t *st, int playing){
            ho_get(&g_ho) != HO_LOCAL || g_pickreq.pend || mdb_is_book_path(st->path) || aps_sender_begin(&g_sender, &g_sender_target, &local, now))
             ui_beam_refuse(ui_receiver_in_use() ? "Receiver source is in use. Select Local in Audio Source first." :
                 modes_output_busy() ? "Another output is busy. Wait for the output switch, then try again." :
-                !ui_cast_keys_ok() ? "Set all volume keys to Adjust Volume in Settings > Controls." :
+                !ui_cast_keys_ok() ? "Volume keys must use Adjust Volume to beam" :
                 !cast_sd_open() ? "SD card is not readable. Restart the Disc and check the card." :
                 mdb_is_book_path(st->path) ? "Audiobooks cannot be beamed. Choose a music track." :
                 "Couldn't start beaming. Check the receiver and output, then try again.");
@@ -4679,6 +4627,9 @@ int main(int argc, char **argv){
         fprintf(stderr,"ipc not ready, retrying in background\n"); fflush(stderr);
         lv_timer_create(ipc_connect_retry_cb, 1000, NULL);
     }
+    volkeys_start();                                     /* the volume keys: a step per press, repeats on a hold (volkeys.c) */
+    lv_timer_t *keys_t = lv_timer_create(keys_volume_only_cb, 2000, NULL);
+    lv_timer_set_repeat_count(keys_t, 30);               /* a minute is plenty for the player's queue to appear */
     /* Startup state-sync: ask the player to re-emit its a2 metadata for the LIVE
      * track so Now Playing is populated on launch (instead of "No Track").
      * 0202 (frame "02020008") is the decoded "request current state" command -
@@ -4837,20 +4788,25 @@ int main(int argc, char **argv){
          * (no ack to correlate our restore's echo). The "boots at 0" seen in dev was our
          * `reboot`s skipping the player's shutdown-save, not a real power-off. VERIFY on device:
          * set a volume, power OFF with the button, power ON -> should return to that volume. */
-        /* volume change (hardware buttons -> player -> a714 frame): show the bar + count activity,
-         * but ONLY while the screen is already on. The player owns the physical keys, so a VOLUME
-         * press - and any play-triggered or BT-autoroute volume RE-report (bt.c resends 0715 ->
-         * a714 echo) - lands here as an a714 frame. Waking a dimmed/off panel from a player frame is
-         * exactly the "random wake" bug: never call ui_backlight() from player IPC. Deliberate touch
-         * (the raw-evdev path below) is the only thing that may wake the screen. Always consume the
-         * seq so it can't re-fire. */
-        if(st.volume_seq != last_vol_seq){
+        volkeys_publish(playback_source() != PB_SRC_LOCAL, cfg_get_int("vol_hold_ms", VK_HOLD_DEFAULT),
+                        cfg_get_int("vol_repeat_ms", VK_REPEAT_DEFAULT), cfg_get_int("vol_step", VK_STEP_DEFAULT),
+                        cfg_get_int("max_vol", VOL_MAX));
+        /* volume change: a volume key (volkeys.c sends the level and reports it here at once) or an a714 frame - the
+         * echo of a sent level, or a play-triggered / BT-autoroute RE-report (bt.c resends 0715 -> a714 echo). Show the
+         * bar + count activity, but ONLY while the screen is already on: waking a dimmed/off panel from a player frame
+         * is exactly the "random wake" bug, so never call ui_backlight() from here. Deliberate touch (the raw-evdev path
+         * below) is the only thing that may wake the screen. While a key ramps, an a714 is a late echo of a level
+         * already shown and would pull the dial back, so it only counts as activity. Always consume the seq so it
+         * can't re-fire. */
+        int key_vol, key_shown = volkeys_take_shown(&key_vol);
+        if(key_shown || st.volume_seq != last_vol_seq){
+            int echo = !key_shown && volkeys_echo_window();
             last_vol_seq = st.volume_seq;
             power_note_input();   /* a volume key press counts as input for idle power-off (last_activity only moves when the panel is off) */
-            if(bl_state == 0){
+            if(bl_state == 0 && !echo){
                 last_activity = lv_tick_get();
                 if(screen_current()==SCR_SAVER) screen_back();
-                ui_show_volume(st.volume);
+                ui_show_volume(key_shown ? key_vol : st.volume);
             }
         }
         /* the metadata 'state' field is unreliable (reports 0 while playing); infer play/pause from

@@ -50,7 +50,7 @@ Wi-Fi, Bluetooth, EQ, Search, Rescan, and Source are the initial tiles. The othe
 
 ### Volume
 
-Press a volume key to change the level when that key action is set to Adjust Volume; the on-screen volume display appears with the new value. Drag its arc to set a level; it closes by itself shortly after the last change. Audio > Max Volume caps the value sent to the player. Volume key press, double press, and long press actions can be changed on V2.57.
+Press a volume key to change the level by one step at once; hold it to keep stepping until you let go. Every press counts, however quickly you tap. The on-screen volume display appears with the new value when the screen is on. Drag its arc to set a level; it closes by itself shortly after the last change. Each step is two levels of 120 by default; Controls > Volume Step sets 1 to 5. Volume Hold Delay and Volume Repeat Delay set how long a key must be held before it repeats and how fast it then steps; Audio > Max Volume caps the level. On firmware other than V2.57 the volume keys keep the stock behavior.
 
 <table>
 <tr>
@@ -121,7 +121,7 @@ If Wi-Fi is off, tap Wi-Fi settings to connect. Use Search again to refresh the 
 
 AirPlay PIN pairing uses a keypad on the Disc; enter the digits shown by the receiver and tap Pair. Successful pairing is remembered. If pairing fails before PIN entry, Beam keeps the failure on screen so you can try again. After a PIN or verification failure, Forget pairing clears the saved pairing before retrying. Password-protected AirPlay 1 receivers are not supported.
 
-While you beam, the Disc stays quiet. Play, pause, skip, seek, volume keys and the volume dial act on the receiver. Now Playing says "Beaming to" with its name, or "Paused -" with its name when paused. Before starting, set all three volume-key actions (Press, Double Press and Long Press) to Adjust Volume under Settings > Controls. If they need changing, the picker explains this before listing devices and its Controls button opens that category directly. You cannot change them to Switch Track during Beam.
+While you beam, the Disc stays quiet. Play, pause, skip, seek, volume keys and the volume dial act on the receiver. Now Playing says "Beaming to" with its name, or "Paused -" with its name when paused. On firmware other than V2.57, Beam needs the stock volume-key actions all set to Adjust Volume; the picker says so before listing devices.
 
 Compatible AirPlay receivers show the track's cover, title, artist and progress. TV remotes can play, pause and skip to the next or previous track where supported. Cast and AirPlay covers update with the track; Beam waits up to 15 seconds for a cover that is not ready when playback starts.
 
@@ -243,7 +243,7 @@ Library > Books lists indexed .m4b audiobooks separately from music, with author
 
 ### Browse Files
 
-Library > Folders opens the microSD card as folders and files. Tap a folder to descend, the header Back control to ascend, or a supported file to request playback. Tapping a .cue sheet or an indexed SACD .iso starts its indexed tracks in track order. A file must already be in the library database: an unindexed selection reports "Not in library", and ordinary file playback uses the all-songs queue rather than a folder-only queue.
+Library > Folders opens the microSD card as folders and files. Tap a folder to descend, the header Back control to ascend, or a supported file to request playback. Tapping a .cue sheet or an indexed SACD .iso starts its indexed tracks in track order. Tapping an audio file plays it with the rest of its folder as the queue, in file-name order (capital letters sort before lower case). Settings > Library > Folder Playback can include the folder's subfolders or use the whole library instead. Hold a folder to play all of it, subfolders included, from its first song in Sequential mode, the way Library rows play when held; this does not depend on Folder Playback. The queue holds only files already in the library database: an unindexed selection reports "Not in library", and other unindexed files in the folder are skipped.
 
 ## Make it yours
 
@@ -359,6 +359,7 @@ Display controls appearance and idle behavior. Changing theme or text size redra
 | Artists | By Artist by default; By Album Artist uses album-artist tags. Unsupported firmware says "Not on this firmware". |
 | Track Numbers | Off by default; show numbers in album song lists. |
 | Album View | List by default; choose List or Cover Flow for Albums. |
+| Folder Playback | This Folder by default; what plays after a file tapped in Library > Folders: This Folder, With Subfolders, or All Songs. |
 
 #### Artwork and lyrics
 
@@ -381,9 +382,9 @@ Display controls appearance and idle behavior. Changing theme or text size redra
 | Row | Action and default |
 |---|---|
 | Quick Settings | Open the tile picker and optional playback-control row. Choose up to six tiles, or five with playback controls; the picker shows the selected count and available capacity. Beam starts hidden. |
-| Vol Keys: Press | Adjust Volume by default; on V2.57 a single press can instead Switch Track. |
-| Vol Keys: Double Press | Adjust Volume by default; on V2.57 a double press can instead Switch Track. |
-| Vol Keys: Long Press | Adjust Volume by default; on V2.57 a hold can instead Switch Track. |
+| Volume Step | 2 by default; 1 to 5 volume levels (of 120) per press or repeat, for example a larger step with a longer repeat delay. V2.57 only. |
+| Volume Hold Delay | 400 ms by default; 200 to 1000 ms, in steps of 10, before a held volume key starts repeating. V2.57 only. |
+| Volume Repeat Delay | 40 ms by default; 20 to 150 ms, in steps of 10, between the steps of a held volume key. V2.57 only. |
 | Back-swipe | 60 pixels by default; drag from 30 to 120 pixels to change the needed travel. |
 
 ### Settings: Battery & Power
@@ -470,7 +471,7 @@ Wi-Fi allows up to 75 seconds for a connection. Network details refresh as it co
 
 ### Apps, Last.fm, and weather
 
-Swipe left from Home to Apps, then tap Last.fm, Settings, or an installed external app. An external app takes over the screen and touch input while it runs; its behavior depends on that app. Last.fm setup shows a QR code for entering your own API key and secret on a phone, then a second authorization step; after connection, toggle Scrobbling or tap Disconnect. Failed account or session setting saves are retried. Cast listening can scrobble; AirPlay sending and receiving do not. It is Off until you set it up; the setup page uses plain HTTP on your local Wi-Fi.
+Swipe left from Home to Apps, then tap Last.fm, Settings, or an installed external app. An external app takes over the screen and touch input while it runs; its behavior depends on that app. The volume keys keep working. If an app stops responding, hold Volume Up and Volume Down together for about three seconds to close it. Last.fm setup shows a QR code for entering your own API key and secret on a phone, then a second authorization step; after connection, toggle Scrobbling or tap Disconnect. Failed account or session setting saves are retried. Cast listening can scrobble; AirPlay sending and receiving do not. It is Off until you set it up; the setup page uses plain HTTP on your local Wi-Fi.
 
 With Weather on Home enabled, tap the glance to open Weather. "Weather unavailable" is tappable too, so you can set the location before a reading is available. In Weather, choose a location manually or request automatic location. Weather depends on Wi-Fi and the remote service.
 
@@ -509,13 +510,15 @@ The stock player handles the physical power button: one press blanks the display
 
 When the sleep timer shuts the Disc down, or it powers off after being idle, with the screen on, the screen closes into the disc. A light travels once round the ring while the card is saved safely, and the screen fades to black when done. If saving cannot finish, the screen comes back. The power key is unchanged. The charging icon follows the stock player's charging report and disappears when full; idle power-off does not run while charging, with AirPlay Receiving or Bluetooth Receiving selected, or using USB DAC or USB Storage. These idle holds do not cancel an explicit sleep-timer shutdown.
 
-The physical play/pause button controls playback through the stock player. The Volume Up and Volume Down keys adjust volume by default, or switch tracks according to the V2.57 Vol Keys settings. The separate Screensaver, Screen Off, Sleep Timer, and Idle Power-off choices control later idle behavior. For USB Storage, eject the card safely on the computer before changing modes; diskOS can refuse the switch when card ownership is uncertain.
+The physical play/pause button controls playback through the stock player. The Volume Up and Volume Down keys only change the volume. While an external app is open they still change it, and holding both keys for about three seconds force-closes an app that stops responding. The separate Screensaver, Screen Off, Sleep Timer, and Idle Power-off choices control later idle behavior. For USB Storage, eject the card safely on the computer before changing modes; diskOS can refuse the switch when card ownership is uncertain.
 
 ### Limits
 
 The scanner indexes common music formats and also recognizes AAC, OGG, OPUS, APE, AIFF/AIF, WMA, DSF,
 DFF, DTS, external CUE sheets, and SACD ISO tracks; indexing a format does not ensure the stock
-player can play it. V2.09 playlist and book playback may fail.
+player can play it. WAV tags come from an embedded ID3 tag, with the file's LIST/INFO text filling any
+title, artist, album, genre or track number it lacks; use Rescan Library to read them for WAV files indexed before.
+DFF and DTS files are listed by file name. V2.09 playlist and book playback may fail.
 
 Some mono FLAC, MP3, and Opus files can play slowed down, taking about twice as long
 in the stock player. diskOS checks briefly for a missed track advance while the screen
