@@ -10,8 +10,11 @@ _TTY = sys.stdout.isatty()
 
 
 _ASCII_SYMBOLS = {
-    "\u25b6": ">", "\u2713": "OK", "\u2717": "X",
-    "\u2588": "#", "\u00b7": ".",
+    "\u25b6": ">",
+    "\u2713": "OK",
+    "\u2717": "X",
+    "\u2588": "#",
+    "\u00b7": ".",
     **dict.fromkeys("\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f", "*"),
 }
 
@@ -25,14 +28,18 @@ def output_text(text, encoding):
     except LookupError:
         return output_text(text, "ascii")
     except UnicodeEncodeError:
+
         def fallback(char):
             try:
                 char.encode(encoding)
                 return char
             except UnicodeEncodeError:
-                replacement = _ASCII_SYMBOLS.get(char, char.encode("ascii", "backslashreplace").decode("ascii"))
+                replacement = _ASCII_SYMBOLS.get(
+                    char, char.encode("ascii", "backslashreplace").decode("ascii")
+                )
                 # Even ASCII can be absent from a codec (for example, cp864's %).
                 return replacement.encode(encoding, "replace").decode(encoding)
+
         return "".join(fallback(char) for char in text)
 
 
@@ -63,12 +70,28 @@ def _c(code, s):
     return f"\033[{code}m{s}\033[0m" if _TTY else s
 
 
-def bold(s):   return _c("1", s)
-def dim(s):    return _c("2", s)
-def red(s):    return _c("31", s)
-def green(s):  return _c("32", s)
-def yellow(s): return _c("33", s)
-def cyan(s):   return _c("36", s)
+def bold(s):
+    return _c("1", s)
+
+
+def dim(s):
+    return _c("2", s)
+
+
+def red(s):
+    return _c("31", s)
+
+
+def green(s):
+    return _c("32", s)
+
+
+def yellow(s):
+    return _c("33", s)
+
+
+def cyan(s):
+    return _c("36", s)
 
 
 def _t():
@@ -80,7 +103,7 @@ def info(msg):
 
 
 def step(msg):
-    _print(f"\n{cyan(chr(0x25b6))} {bold(msg)}")
+    _print(f"\n{cyan(chr(0x25B6))} {bold(msg)}")
 
 
 def ok(msg):
@@ -124,10 +147,12 @@ class Bar:
         if _TTY:
             fill = int(self.width * frac)
             bar = "\u2588" * fill + "\u00b7" * (self.width - fill)
-            line = (f"\r  {self.label} {cyan(bar)} {int(frac*100):3d}%"
-                    f"  {dim(fmt_dur(elapsed))}"
-                    + (f" \u00b7 ETA {fmt_dur(eta)}" if eta > 0 else "")
-                    + (f"  {note}" if note else ""))
+            line = (
+                f"\r  {self.label} {cyan(bar)} {int(frac * 100):3d}%"
+                f"  {dim(fmt_dur(elapsed))}"
+                + (f" \u00b7 ETA {fmt_dur(eta)}" if eta > 0 else "")
+                + (f"  {note}" if note else "")
+            )
             pad = max(0, self.last_len - len(line))
             SafeOutput(sys.stdout).write(line + " " * pad)
             sys.stdout.flush()
@@ -169,18 +194,18 @@ class Heartbeat:
             approx = ""
             if self.expect:
                 approx = f" / ~{fmt_dur(self.expect)}"
-            line = (f"\r  {cyan(spin)} {self.label}  {dim(fmt_dur(elapsed) + approx)}"
-                    f"  {yellow(chr(0xb7) + ' ' + self.reminder)}"
-                    + (f"  {note}" if note else ""))
+            line = (
+                f"\r  {cyan(spin)} {self.label}  {dim(fmt_dur(elapsed) + approx)}"
+                f"  {yellow(chr(0xB7) + ' ' + self.reminder)}" + (f"  {note}" if note else "")
+            )
             pad = max(0, self.last_len - len(line))
             SafeOutput(sys.stdout).write(line + " " * pad)
             sys.stdout.flush()
             self.last_len = len(line)
-        else:
-            # non-TTY: a line every ~30s so a log shows liveness without spamming
-            if int(elapsed) % 30 == 0 and int(elapsed) != getattr(self, "_last_log", -1):
-                self._last_log = int(elapsed)
-                _print(f"  {self.label}: {fmt_dur(elapsed)} elapsed ({self.reminder})")
+        # non-TTY: a line every ~30s so a log shows liveness without spamming
+        elif int(elapsed) % 30 == 0 and int(elapsed) != getattr(self, "_last_log", -1):
+            self._last_log = int(elapsed)
+            _print(f"  {self.label}: {fmt_dur(elapsed)} elapsed ({self.reminder})")
 
     def stop(self):
         if _TTY:
@@ -194,7 +219,9 @@ def confirm(prompt, default=False):
         return default
     d = "Y/n" if default else "y/N"
     try:
-        _print_prompt = output_text(f"{yellow('?')} {prompt} [{d}] ", getattr(sys.stdout, "encoding", None))
+        _print_prompt = output_text(
+            f"{yellow('?')} {prompt} [{d}] ", getattr(sys.stdout, "encoding", None)
+        )
         ans = input(_print_prompt).strip().lower()
     except EOFError:
         return default

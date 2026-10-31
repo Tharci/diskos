@@ -23,6 +23,7 @@ parent dies the helper sees EOF on stdin and exits; live helpers are also killed
 at interpreter exit. The helper never takes the run lock: it borrows the held
 one from the parent (inherited fd on POSIX).
 """
+
 import atexit
 import itertools
 import json
@@ -37,14 +38,14 @@ import time
 import weakref
 
 MODE = "--_diskos-fetch-helper"
-TIMEOUT = 15.0           # socket-operation timeout (seconds)
-DEADLINE = 1800.0        # overall acquisition deadline (seconds)
-GRACE = 0.5              # wait for a polite exit after cancel before killing
+TIMEOUT = 15.0  # socket-operation timeout (seconds)
+DEADLINE = 1800.0  # overall acquisition deadline (seconds)
+GRACE = 0.5  # wait for a polite exit after cancel before killing
 DEADLINE_SLACK = 2.0
-ORPHAN_EXIT = 3.0        # helper: seconds after the parent vanished before it exits
+ORPHAN_EXIT = 3.0  # helper: seconds after the parent vanished before it exits
 PROGRESS_INTERVAL = 0.1
 _MAX_LINE = 1 << 16
-_CODE = re.compile(r'E\d{3}\Z')
+_CODE = re.compile(r"E\d{3}\Z")
 _ops = itertools.count(1)
 _live = weakref.WeakSet()
 
@@ -75,6 +76,7 @@ def _lines(fd):
 
 def _borrowed_lock(cfg):
     from diskos_installer.__main__ import _Lock
+
     lock = _Lock(windows=bool(cfg["win"]))
     if lock.windows:
         lock.handle = 1  # the parent holds the machine-wide mutex for us
@@ -88,6 +90,7 @@ def helper_main(argv=None, stdin_fd=None, out=None, exit_fn=os._exit):
     if list(sys.argv[1:] if argv is None else argv) != [MODE]:
         return 2
     from diskos_installer import firmware_catalogue, firmware_download
+
     out = out or sys.stdout
     lines = _lines(sys.stdin.fileno() if stdin_fd is None else stdin_fd)
 
@@ -100,12 +103,17 @@ def helper_main(argv=None, stdin_fd=None, out=None, exit_fn=os._exit):
                 out.flush()
             except (OSError, ValueError):
                 pass
+
     try:
         cfg = json.loads(next(lines, ""))
         op, version = cfg["op"], cfg["version"]
         timeout, deadline = float(cfg["timeout"]), float(cfg["deadline"])
-        if (type(op) is not int or version not in firmware_catalogue.CATALOGUE
-                or not 0 < timeout <= 120 or not 0 < deadline <= 7200):
+        if (
+            type(op) is not int
+            or version not in firmware_catalogue.CATALOGUE
+            or not 0 < timeout <= 120
+            or not 0 < deadline <= 7200
+        ):
             return 2
         reserved = cfg.get("partial")
         if reserved is not None and not isinstance(reserved, str):
@@ -133,6 +141,7 @@ def helper_main(argv=None, stdin_fd=None, out=None, exit_fn=os._exit):
         timer = threading.Timer(ORPHAN_EXIT, die)
         timer.daemon = True
         timer.start()
+
     threading.Thread(target=watch, daemon=True).start()
     real = firmware_catalogue.new_partial
     reserved = [reserved] if reserved else []
@@ -140,25 +149,42 @@ def helper_main(argv=None, stdin_fd=None, out=None, exit_fn=os._exit):
     def heartbeat():
         while not done.wait(timeout / 2):
             emit(op=op, ev="heartbeat")
+
     threading.Thread(target=heartbeat, daemon=True).start()
 
     def new_partial(*args, **kwargs):
-        path = reserved.pop() if reserved else real(*args, **kwargs)  # the parent made the first one
+        path = (
+            reserved.pop() if reserved else real(*args, **kwargs)
+        )  # the parent made the first one
         partial.append(path)
         emit(op=op, ev="partial", path=path)
         return path
+
     firmware_catalogue.new_partial = new_partial
     try:
         path = firmware_download.download(
-            version, lock, progress=lambda d, t: emit(op=op, ev="progress", done=d, total=t),
-            cancel=cancel.is_set, timeout=timeout, deadline=deadline)
+            version,
+            lock,
+            progress=lambda d, t: emit(op=op, ev="progress", done=d, total=t),
+            cancel=cancel.is_set,
+            timeout=timeout,
+            deadline=deadline,
+        )
         emit(op=op, ev="result", ok=True, path=path)
     except Exception as exc:
         code = getattr(exc, "code", "")
         known = hasattr(exc, "message")
-        emit(op=op, ev="result", ok=False, code=code if known and _CODE.match(code) else "E160",
-             message=exc.message if known else "The download helper failed (%s)" % type(exc).__name__,
-             action=getattr(exc, "action", None), status=getattr(exc, "status", None))
+        emit(
+            op=op,
+            ev="result",
+            ok=False,
+            code=code if known and _CODE.match(code) else "E160",
+            message=exc.message
+            if known
+            else "The download helper failed (%s)" % type(exc).__name__,
+            action=getattr(exc, "action", None),
+            status=getattr(exc, "status", None),
+        )
     finally:
         done.set()
         firmware_catalogue.new_partial = real
@@ -176,8 +202,12 @@ atexit.register(_kill_all)
 
 def _typed(msg):
     from . import firmware_download as dl
-    classes = {c.code: c for c in vars(dl).values()
-               if isinstance(c, type) and issubclass(c, dl.DownloadError)}
+
+    classes = {
+        c.code: c
+        for c in vars(dl).values()
+        if isinstance(c, type) and issubclass(c, dl.DownloadError)
+    }
     code, text = msg.get("code"), str(msg.get("message") or "Download failed")[:300]
     action = msg.get("action")
     action = str(action)[:200] if action else None
@@ -185,42 +215,59 @@ def _typed(msg):
     if cls is dl.HttpStatusError and type(msg.get("status")) is int:
         return cls(msg["status"])
     if cls is None or cls is dl.HttpStatusError:
-        return dl.DownloadError(text, code=code if isinstance(code, str) and _CODE.match(code) else None,
-                                action=action)
+        return dl.DownloadError(
+            text, code=code if isinstance(code, str) and _CODE.match(code) else None, action=action
+        )
     return cls(text, action=action)
 
 
 class Acquisition:
     """One supervised download. wait() returns the cache path or raises a DownloadError."""
 
-    def __init__(self, version, on_event, op_id, run_lock, timeout, deadline, stall, argv, interval):
+    def __init__(
+        self, version, on_event, op_id, run_lock, timeout, deadline, stall, argv, interval
+    ):
         from . import firmware_catalogue
+
         self.op_id, self._cb, self._interval = op_id, on_event, interval
         self._deadline, self._stall = deadline, stall
-        self._cache_dir = os.path.dirname(firmware_catalogue._cache_path(firmware_catalogue._pin(version)))
+        self._cache_dir = os.path.dirname(
+            firmware_catalogue._cache_path(firmware_catalogue._pin(version))
+        )
         self._gate = threading.RLock()
         self._cancel, self._closed = threading.Event(), False
         self._life = threading.Lock()  # sole owner of signalling and reaping the helper
         self._partials, self._path, self._error = [], None, None
-        cfg = {"op": op_id, "version": version, "timeout": timeout, "deadline": deadline,
-               "win": bool(run_lock.windows), "lock_path": run_lock.path, "lock_fd": run_lock.fd}
+        cfg = {
+            "op": op_id,
+            "version": version,
+            "timeout": timeout,
+            "deadline": deadline,
+            "win": bool(run_lock.windows),
+            "lock_path": run_lock.path,
+            "lock_fd": run_lock.fd,
+        }
         kw = {}
         if os.name == "nt":
             kw["creationflags"] = 0x08000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
         else:
-            kw.update(start_new_session=True, pass_fds=() if run_lock.fd is None else (run_lock.fd,))
+            kw.update(
+                start_new_session=True, pass_fds=() if run_lock.fd is None else (run_lock.fd,)
+            )
         try:
             # Reserved here so cancellation never depends on the helper's announcement.
             cfg["partial"] = firmware_catalogue.new_partial(version, run_lock)
             self._partials.append(cfg["partial"])
             self._proc = subprocess.Popen(
-                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **kw)
+                argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **kw
+            )
             self._proc.stdin.write((json.dumps(cfg) + "\n").encode())
             self._proc.stdin.flush()
         except OSError as exc:
             self._kill()
             self._remove_partials()
             from .firmware_download import DownloadError
+
             raise DownloadError("Could not start the download helper: %s" % exc.strerror) from exc
         _live.add(self)
         self._queue = queue.Queue()
@@ -268,6 +315,7 @@ class Acquisition:
 
     def _supervise(self):
         from . import firmware_download as dl
+
         start = last = time.monotonic()
         seen = sent = -1
         verifying = False
@@ -277,10 +325,13 @@ class Acquisition:
                 if self._cancel.is_set():
                     self._error = dl.Cancelled("Firmware download cancelled")
                 elif now - start >= self._deadline + DEADLINE_SLACK:
-                    self._error = dl.DeadlineExceeded("The download took too long",
-                                                      action="retry, or use the browser download")
+                    self._error = dl.DeadlineExceeded(
+                        "The download took too long", action="retry, or use the browser download"
+                    )
                 elif now - last >= self._stall:
-                    self._error = dl.Timeout("The connection timed out", action="check the connection and retry")
+                    self._error = dl.Timeout(
+                        "The connection timed out", action="check the connection and retry"
+                    )
                 if self._error:
                     break
                 try:
@@ -289,8 +340,10 @@ class Acquisition:
                     continue
                 if raw is None:
                     code = self._proc.returncode  # diagnostic only; never reaps
-                    self._error = dl.DownloadError("The download helper stopped unexpectedly%s" % (
-                        "" if code is None else " (exit %s)" % code))
+                    self._error = dl.DownloadError(
+                        "The download helper stopped unexpectedly%s"
+                        % ("" if code is None else " (exit %s)" % code)
+                    )
                     break
                 try:
                     msg = json.loads(raw) if raw else None
@@ -303,15 +356,22 @@ class Acquisition:
                     continue  # stale: belongs to another request
                 ev = msg.get("ev")
                 if ev in ("partial", "progress", "heartbeat", "result"):
-                    last = time.monotonic()  # only this operation's recognised events prove liveness
+                    last = (
+                        time.monotonic()
+                    )  # only this operation's recognised events prove liveness
                 if ev == "partial" and isinstance(msg.get("path"), str):
                     self._partials.append(msg["path"])
                 elif ev == "heartbeat":
                     pass
                 elif ev == "progress":
                     done, total = msg.get("done"), msg.get("total")
-                    if (type(done) is int and type(total) is int and 0 <= done <= total and done >= seen
-                            and (done == total or now - sent >= self._interval or seen < 0)):
+                    if (
+                        type(done) is int
+                        and type(total) is int
+                        and 0 <= done <= total
+                        and done >= seen
+                        and (done == total or now - sent >= self._interval or seen < 0)
+                    ):
                         seen, sent = done, now
                         self._emit("progress", done, total)
                         if done == total and not verifying:
@@ -327,6 +387,7 @@ class Acquisition:
 
     def _finish(self):
         from . import firmware_download as dl
+
         with self._gate:
             self._closed = True
             cancelled = self._cancel.is_set()
@@ -368,8 +429,12 @@ class Acquisition:
                 return
             try:
                 if os.name == "nt":
-                    subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=10,
+                    )
                     proc.kill()
                 else:
                     os.killpg(proc.pid, signal.SIGKILL)  # the helper's own session only
@@ -379,16 +444,26 @@ class Acquisition:
 
     def _remove_partials(self):
         for path in self._partials:
-            if os.path.dirname(os.path.abspath(path)) == os.path.abspath(self._cache_dir) \
-                    and path.endswith(".part"):
+            if os.path.dirname(os.path.abspath(path)) == os.path.abspath(
+                self._cache_dir
+            ) and path.endswith(".part"):
                 try:
                     os.unlink(path)
                 except OSError:
                     pass
 
 
-def start(version, on_event=None, run_lock=None, op_id=None, timeout=TIMEOUT, deadline=DEADLINE,
-          stall=None, argv=None, interval=PROGRESS_INTERVAL):
+def start(
+    version,
+    on_event=None,
+    run_lock=None,
+    op_id=None,
+    timeout=TIMEOUT,
+    deadline=DEADLINE,
+    stall=None,
+    argv=None,
+    interval=PROGRESS_INTERVAL,
+):
     """Start a supervised download of `version`; return the Acquisition.
 
     on_event(op_id, kind, done, total) with kind "progress" (throttled, bytes
@@ -397,9 +472,17 @@ def start(version, on_event=None, run_lock=None, op_id=None, timeout=TIMEOUT, de
     """
     if run_lock is None or (run_lock.fd is None and run_lock.handle is None):
         raise RuntimeError("A held installer run lock is required")
-    return Acquisition(version, on_event or (lambda *a: None), next(_ops) if op_id is None else op_id,
-                       run_lock, timeout, deadline, 2 * timeout if stall is None else stall,
-                       helper_argv() if argv is None else list(argv), interval)
+    return Acquisition(
+        version,
+        on_event or (lambda *a: None),
+        next(_ops) if op_id is None else op_id,
+        run_lock,
+        timeout,
+        deadline,
+        2 * timeout if stall is None else stall,
+        helper_argv() if argv is None else list(argv),
+        interval,
+    )
 
 
 if __name__ == "__main__":

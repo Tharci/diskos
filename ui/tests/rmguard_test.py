@@ -6,11 +6,12 @@
 Extracting the helpers keeps this regression test linked to main.c without linking
 LVGL or device startup. Cases cover ordinary rm, altered wrappers and publication.
 """
+
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 
 class GuardTests(unittest.TestCase):
@@ -22,8 +23,9 @@ class GuardTests(unittest.TestCase):
         source = (app / "main.c").read_text()
         start = source.index("static const char RMGUARD_SCRIPT[]")
         end = source.index("static int player_config_absent_without_card(", start)
-        helpers = source[start:end].replace('mkdir("/usr/data/diskos",', 'mkdir(test_parent,')
-        harness = r'''
+        helpers = source[start:end].replace('mkdir("/usr/data/diskos",', "mkdir(test_parent,")
+        harness = (
+            r"""
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +38,9 @@ static char test_root[256], test_parent[256], test_fallback[256];
 #define RMGUARD_SYSTEM "/nonexistent-diskos-system-test"
 #define RMGUARD_ROOTFS test_root
 #define RMGUARD_FALLBACK test_fallback
-''' + helpers + r'''
+"""
+            + helpers
+            + r"""
 static void put(const char *dir, const char *data, int mode){
     char p[300]; snprintf(p, sizeof p, "%s/rm", dir);
     int fd = open(p, O_CREAT|O_TRUNC|O_WRONLY, 0600);
@@ -77,12 +81,25 @@ int main(int argc, char **argv){
     free(first);
     return 0;
 }
-'''
+"""
+        )
         c = cls.root / "test.c"
         c.write_text(harness)
         cls.exe = cls.root / "test"
-        subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
-                        "-fsanitize=address,undefined", "-g", str(c), "-o", str(cls.exe)], check=True)
+        subprocess.run(
+            [
+                os.environ.get("CC", "cc"),
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-fsanitize=address,undefined",
+                "-g",
+                str(c),
+                "-o",
+                str(cls.exe),
+            ],
+            check=True,
+        )
 
     @classmethod
     def tearDownClass(cls):
@@ -90,7 +107,9 @@ int main(int argc, char **argv){
 
     def run_case(self, case, expected):
         with tempfile.TemporaryDirectory(dir=self.root) as base:
-            lines = subprocess.check_output([str(self.exe), base, case], text=True, timeout=5).splitlines()
+            lines = subprocess.check_output(
+                [str(self.exe), base, case], text=True, timeout=5
+            ).splitlines()
             self.assertEqual(lines[0], "0 0 1" if expected is None else "1 1 1")
             if expected is None:
                 self.assertEqual(lines[1], "/bin:/usr/bin")

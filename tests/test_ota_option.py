@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 diskOS contributors
 """The build-time OTA option: default OFF, --no-ota is absolute, --ota-key bakes the given public key."""
+
 import base64
 import os
 import tempfile
@@ -29,8 +30,7 @@ class OtaOptionTests(unittest.TestCase):
         self.env_key = self._write("env.pem", _pub(1))
         self.payload_key = self._write("payload.pem", _pub(2))
         self.own_key = self._write("own.pem", _pub(3))
-        ota_env = {"DISKOS_OTA_ROOTPUB", "DISKOS_MIN_KEY_EPOCH",
-                   "DISKOS_MIN_UI_EPOCH"}
+        ota_env = {"DISKOS_OTA_ROOTPUB", "DISKOS_MIN_KEY_EPOCH", "DISKOS_MIN_UI_EPOCH"}
         env = {k: v for k, v in os.environ.items() if k not in ota_env}
         p = mock.patch.dict(os.environ, env, clear=True)
         p.start()
@@ -45,8 +45,11 @@ class OtaOptionTests(unittest.TestCase):
 
     def _payload(self, path):
         real = bundle.data
-        return mock.patch.object(bundle, "data",
-                                 lambda n, required=True: path if n == "diskos-root.pub.pem" else real(n, required))
+        return mock.patch.object(
+            bundle,
+            "data",
+            lambda n, required=True: path if n == "diskos-root.pub.pem" else real(n, required),
+        )
 
     def test_default_without_a_key_is_off(self):
         with self._payload(None):
@@ -56,24 +59,26 @@ class OtaOptionTests(unittest.TestCase):
     def test_payload_key_bakes_release_floors(self):
         with self._payload(self.payload_key):
             cfg = imagebuild.resolve_ota_config()
-        self.assertEqual(cfg["epochs"],
-                         b"MIN_KEY_EPOCH=1\nMIN_UI_EPOCH=7\n")
+        self.assertEqual(cfg["epochs"], b"MIN_KEY_EPOCH=1\nMIN_UI_EPOCH=7\n")
 
     def test_floor_overrides_keep_their_precedence(self):
         os.environ["DISKOS_MIN_UI_EPOCH"] = "9"
         with self._payload(self.payload_key):
-            self.assertEqual(imagebuild.resolve_ota_config()["epochs"],
-                             b"MIN_KEY_EPOCH=1\nMIN_UI_EPOCH=9\n")
+            self.assertEqual(
+                imagebuild.resolve_ota_config()["epochs"], b"MIN_KEY_EPOCH=1\nMIN_UI_EPOCH=9\n"
+            )
             for floor in (1, 5, 6, 7):
                 with self.subTest(floor=floor):
                     cfg = imagebuild.resolve_ota_config(min_ui_epoch=floor)
                     self.assertEqual(
-                        cfg["epochs"],
-                        f"MIN_KEY_EPOCH=1\nMIN_UI_EPOCH={floor}\n".encode("ascii"))
+                        cfg["epochs"], f"MIN_KEY_EPOCH=1\nMIN_UI_EPOCH={floor}\n".encode("ascii")
+                    )
 
     def test_no_ota_overrides_env_and_payload_key(self):
         with self._payload(self.payload_key):
-            self.assertIsNotNone(imagebuild.resolve_ota_config())          # the key really is picked up otherwise
+            self.assertIsNotNone(
+                imagebuild.resolve_ota_config()
+            )  # the key really is picked up otherwise
             os.environ["DISKOS_OTA_ROOTPUB"] = self.env_key
             self.assertIsNotNone(imagebuild.resolve_ota_config())
             self.assertIsNone(imagebuild.resolve_ota_config(no_ota=True))
@@ -109,8 +114,10 @@ class OtaOptionTests(unittest.TestCase):
         self.assertFalse(a.no_ota)
         with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
             p.parse_args(["install", "--stock", "x", "--no-ota", "--ota-key", "k.pem"])
-        with mock.patch.object(cli.service, "do_install", return_value={"ok": True}) as di, \
-                mock.patch.object(cli.flasher, "flash_eligible", return_value=True):
+        with (
+            mock.patch.object(cli.service, "do_install", return_value={"ok": True}) as di,
+            mock.patch.object(cli.flasher, "flash_eligible", return_value=True),
+        ):
             cli.cmd_install(p.parse_args(["install", "--stock", "x", "--no-ota", "-y"]))
         self.assertTrue(di.call_args[0][0]["no_ota"])
 

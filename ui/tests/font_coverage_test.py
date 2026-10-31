@@ -2,16 +2,29 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 diskOS contributors
 """Check the real fallback chain and rasterize reported glyphs with LVGL on the host."""
+
+import os
+import subprocess
+import tempfile
 from pathlib import Path
-import os, subprocess, tempfile
+
 app = Path(__file__).resolve().parents[1]
 # vendored beside the sources (public ui/ tree) or one level up (dev tree)
-lvgl = next(c for c in (app/'lvgl', app.parent/'lvgl') if (c/'src/font/lv_font.c').exists())
-source = (app/'ui.c').read_text()
-a=source.index('static lv_font_t s_cjk;'); b=source.index('/* Shared CJK-capable',a)
-chain=source[a:b]
-points=sorted(set(map(ord,'世界贈予我的妖精帝國曼衍珠汝華Nada Upasana PundarikaLudwig GöranssonZeus’s Law‘’ЛенинградΑθήνα'))- {32})
-header=r'''
+lvgl = next(c for c in (app / "lvgl", app.parent / "lvgl") if (c / "src/font/lv_font.c").exists())
+source = (app / "ui.c").read_text()
+a = source.index("static lv_font_t s_cjk;")
+b = source.index("/* Shared CJK-capable", a)
+chain = source[a:b]
+points = sorted(
+    set(
+        map(
+            ord,
+            "世界贈予我的妖精帝國曼衍珠汝華Nada Upasana PundarikaLudwig GöranssonZeus’s Law‘’ЛенинградΑθήνα",
+        )
+    )
+    - {32}
+)
+header = r"""
 #include "lvgl/lvgl.h"
 #include "fonts_intl.h"
 #include <stdio.h>
@@ -29,8 +42,8 @@ uint32_t lv_draw_buf_width_to_stride(uint32_t w, lv_color_format_t cf){
 #define lv_font_montserrat_UI_18_font lv_font_montserrat_18
 #define lv_font_montserrat_UI_20_font lv_font_montserrat_20
 #define theme_font_base(px) (&lv_font_montserrat_##px)   /* the chain base: always Montserrat n */
-'''
-test=r'''
+"""
+test = r"""
 int main(void){
     unsigned cp[] = {POINTS};
     int sizes[] = {14,16,18,20};
@@ -54,25 +67,53 @@ int main(void){
     puts("PASS reported CJK/punctuation plus Latin, Cyrillic and Greek: descriptors, pixels and line metrics at four sizes");
     puts("HARNESS COMPLETE");
 }
-'''.replace('POINTS',','.join(hex(c) for c in points))
+""".replace("POINTS", ",".join(hex(c) for c in points))
+
+
 def run_harness(exe, timeout):
     """Run a compiled harness; its LAST stdout line must be HARNESS COMPLETE, so an early return 0 fails."""
     r = subprocess.run([str(exe)], capture_output=True, text=True, timeout=timeout)
-    print(r.stdout, end='')
+    print(r.stdout, end="")
     if r.stderr:
-        print(r.stderr, end='')
+        print(r.stderr, end="")
     if r.returncode != 0:
-        raise SystemExit(f'FAIL harness exited {r.returncode}')
+        raise SystemExit(f"FAIL harness exited {r.returncode}")
     lines = r.stdout.strip().splitlines()
-    if not lines or lines[-1] != 'HARNESS COMPLETE':
-        raise SystemExit('FAIL harness did not reach its HARNESS COMPLETE line')
+    if not lines or lines[-1] != "HARNESS COMPLETE":
+        raise SystemExit("FAIL harness did not reach its HARNESS COMPLETE line")
 
 
-with tempfile.TemporaryDirectory(prefix='diskos-font-test-') as tmp:
-    p=Path(tmp); (p/'test.c').write_text(header+chain+test)
-    sources=[p/'test.c', lvgl/'src/font/lv_font.c', lvgl/'src/font/lv_font_fmt_txt.c',lvgl/'src/misc/lv_utils.c',app/'font_cjk_extra_16.c',lvgl/'src/font/lv_font_source_han_16_cjk.c']
-    for size in [14,16,18,20]: sources += [app/f'font_intl_{size}.c',lvgl/f'src/font/lv_font_montserrat_{size}.c']
-    cmd=[os.environ.get('CC','cc'),'-g','-O1','-ffunction-sections','-fdata-sections','-fsanitize=address,undefined','-DLV_CONF_INCLUDE_SIMPLE','-I'+str(app),'-I'+str(app.parent),*[str(x) for x in sources],'-Wl,--gc-sections','-o',str(p/'test')]
-    subprocess.run(cmd,check=True);run_harness(p/'test',15)
+with tempfile.TemporaryDirectory(prefix="diskos-font-test-") as tmp:
+    p = Path(tmp)
+    (p / "test.c").write_text(header + chain + test)
+    sources = [
+        p / "test.c",
+        lvgl / "src/font/lv_font.c",
+        lvgl / "src/font/lv_font_fmt_txt.c",
+        lvgl / "src/misc/lv_utils.c",
+        app / "font_cjk_extra_16.c",
+        lvgl / "src/font/lv_font_source_han_16_cjk.c",
+    ]
+    for size in [14, 16, 18, 20]:
+        sources += [app / f"font_intl_{size}.c", lvgl / f"src/font/lv_font_montserrat_{size}.c"]
+    cmd = [
+        os.environ.get("CC", "cc"),
+        "-g",
+        "-O1",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-fsanitize=address,undefined",
+        "-DLV_CONF_INCLUDE_SIMPLE",
+        "-I" + str(app),
+        "-I" + str(app.parent),
+        *[str(x) for x in sources],
+        "-Wl,--gc-sections",
+        "-o",
+        str(p / "test"),
+    ]
+    subprocess.run(cmd, check=True)
+    run_harness(p / "test", 15)
 
-print('COMPLETE font_coverage_test.py')   # last line: the runner requires it, so an early clean exit cannot pass
+print(
+    "COMPLETE font_coverage_test.py"
+)  # last line: the runner requires it, so an early clean exit cannot pass

@@ -16,6 +16,7 @@ so existing `rep.error(str(e))` call sites show the code with no other change.
 class DiskOSError(Exception):
     """Base installer error carrying a stable `code` and an optional `action`
     (a short, plain-language "what to do next")."""
+
     code = "E000"
 
     def __init__(self, message, code=None, action=None):
@@ -34,16 +35,19 @@ class DiskOSError(Exception):
 
 class PreflightError(DiskOSError):
     """E1xx - environment/preflight; the device has NOT been touched."""
+
     code = "E100"
 
 
 class BuildError(DiskOSError):
     """E2xx - firmware extraction / diskOS image build."""
+
     code = "E200"
 
 
 class FlashError(DiskOSError):
     """E3xx - flash orchestration (host side). F0xx = device-writer verdicts."""
+
     code = "E300"
 
 
@@ -71,10 +75,14 @@ DEVICE_RESULT_CODES = {
 }
 
 # For a result that is UNKNOWN after the writer may have started: it may still be running on the Disc by itself.
-WAIT_THEN_RECOVER = ("The Disc may still be writing by itself: leave it connected and powered for at least 25 "
-                     "minutes, then power-cycle it. If it does not boot, it is normally recoverable via mask-ROM "
-                     "(hold Volume-Down while plugging in USB) - re-flash your saved stock image or diskOS.")
+WAIT_THEN_RECOVER = (
+    "The Disc may still be writing by itself: leave it connected and powered for at least 25 "
+    "minutes, then power-cycle it. If it does not boot, it is normally recoverable via mask-ROM "
+    "(hold Volume-Down while plugging in USB) - re-flash your saved stock image or diskOS."
+)
 
-RECOVERABLE = ("The device is normally recoverable via mask-ROM (not guaranteed for every unit "
-               "or failure): power the device OFF, hold Volume-Down, plug in USB to return to "
-               "mask-ROM, and re-flash your saved stock image or diskOS.")
+RECOVERABLE = (
+    "The device is normally recoverable via mask-ROM (not guaranteed for every unit "
+    "or failure): power the device OFF, hold Volume-Down, plug in USB to return to "
+    "mask-ROM, and re-flash your saved stock image or diskOS."
+)

@@ -1,4 +1,5 @@
 """Theme tables and the Welcome mode mapping of the GUI (display tests skip without Tk/display)."""
+
 import os
 import sys
 import threading
@@ -7,7 +8,9 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from diskos_installer import errors, gui, gui_theme as t, service  # noqa: E402
+from diskos_installer import errors, gui, service
+from diskos_installer import gui_theme as t
+
 gui_theme_mod = t
 
 BUTTONS = ("TButton", "Accent.TButton")
@@ -16,19 +19,36 @@ CHOICES = ("TRadiobutton", "Panel.TRadiobutton", "TCheckbutton", "Panel.TCheckbu
 
 class ThemeTables(unittest.TestCase):
     def test_tokens(self):
-        for name, val in (("BG", "#050506"), ("SURFACE", "#121216"), ("HOVER", "#1c1c20"),
-                          ("PRESSED", "#242428"), ("TEXT", "#f5f5f7"), ("SECONDARY", "#b9b8b4"),
-                          ("DIVIDER", "#29292f"), ("LINE", "#5f5f68"), ("ACCENT", "#ff375f"),
-                          ("FOCUS", "#ffb0c0"), ("WARN", "#ffcc00"), ("ERR", "#ff453a"), ("OK", "#34c759"),
-                          ("KICKER", "#908f8b"), ("PANEL", "#050506")):
+        for name, val in (
+            ("BG", "#050506"),
+            ("SURFACE", "#121216"),
+            ("HOVER", "#1c1c20"),
+            ("PRESSED", "#242428"),
+            ("TEXT", "#f5f5f7"),
+            ("SECONDARY", "#b9b8b4"),
+            ("DIVIDER", "#29292f"),
+            ("LINE", "#5f5f68"),
+            ("ACCENT", "#ff375f"),
+            ("FOCUS", "#ffb0c0"),
+            ("WARN", "#ffcc00"),
+            ("ERR", "#ff453a"),
+            ("OK", "#34c759"),
+            ("KICKER", "#908f8b"),
+            ("PANEL", "#050506"),
+        ):
             self.assertEqual(getattr(t, name), val)
 
     def test_every_state_has_explicit_colours(self):
         for name in BUTTONS:
-            self.assertEqual(set(t.STYLES[name]), {"normal", "hover", "pressed", "disabled", "focus"}, name)
+            self.assertEqual(
+                set(t.STYLES[name]), {"normal", "hover", "pressed", "disabled", "focus"}, name
+            )
         for name in CHOICES:
-            self.assertEqual(set(t.STYLES[name]),
-                             {"normal", "hover", "pressed", "disabled", "focus", "selected"}, name)
+            self.assertEqual(
+                set(t.STYLES[name]),
+                {"normal", "hover", "pressed", "disabled", "focus", "selected"},
+                name,
+            )
         self.assertTrue({"normal", "disabled", "focus"} <= set(t.STYLES["TEntry"]))
         for name, states in t.STYLES.items():
             for st, pair in states.items():
@@ -42,23 +62,35 @@ class ThemeTables(unittest.TestCase):
                 if st == "disabled":
                     continue
                 self.assertGreaterEqual(t.contrast(fg, bg), 4.5, (name, st, fg, bg))
-        for fg, bg in (t.LOG, t.BANNER_WARN, t.BANNER_OK, (t.WARN, t.SURFACE), (t.SECONDARY, t.SURFACE),
-                       (t.OK, t.BG), (t.ON_ACCENT, t.ACCENT_HOVER), (t.WARN, t.PANEL), (t.ERR, t.PANEL),
-                       (t.SECONDARY, t.PANEL), (t.KICKER, t.BG), (t.ON_ACCENT, t.ACCENT_PRESSED)):
+        for fg, bg in (
+            t.LOG,
+            t.BANNER_WARN,
+            t.BANNER_OK,
+            (t.WARN, t.SURFACE),
+            (t.SECONDARY, t.SURFACE),
+            (t.OK, t.BG),
+            (t.ON_ACCENT, t.ACCENT_HOVER),
+            (t.WARN, t.PANEL),
+            (t.ERR, t.PANEL),
+            (t.SECONDARY, t.PANEL),
+            (t.KICKER, t.BG),
+            (t.ON_ACCENT, t.ACCENT_PRESSED),
+        ):
             self.assertGreaterEqual(t.contrast(fg, bg), 4.5, (fg, bg))
 
     def test_disabled_and_outlines_stay_visible(self):
         for name in BUTTONS + CHOICES:
             fg, bg = t.STYLES[name]["disabled"]
             self.assertGreaterEqual(t.contrast(fg, bg), 3.0, name)
-        self.assertGreaterEqual(t.contrast(t.LINE, t.BG), 3.0)       # interactive outline
-        self.assertGreaterEqual(t.contrast(t.FOCUS, t.BG), 3.0)      # focus ring
+        self.assertGreaterEqual(t.contrast(t.LINE, t.BG), 3.0)  # interactive outline
+        self.assertGreaterEqual(t.contrast(t.FOCUS, t.BG), 3.0)  # focus ring
         self.assertGreaterEqual(t.contrast(t.ACCENT, t.SURFACE), 3.0)  # selected indicator
 
 
 class NoLiteralLook(unittest.TestCase):
     def test_gui_py_has_no_hard_coded_colours_or_fonts(self):
         import re
+
         src = open(os.path.join(os.path.dirname(gui.__file__), "gui.py")).read()
         self.assertEqual(re.findall(r"#[0-9a-fA-F]{6}", src), [])
         self.assertEqual(re.findall(r"font=\(", src), [])
@@ -68,22 +100,37 @@ class NoLiteralLook(unittest.TestCase):
 class AsciiGuiText(unittest.TestCase):
     def test_decoded_gui_string_literals_are_ascii(self):
         import ast
+
         for module in (gui, t):
             tree = ast.parse(open(module.__file__).read())
             for node in ast.walk(tree):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                    self.assertTrue(node.value.isascii(), (module.__name__, node.lineno, node.value))
+                    self.assertTrue(
+                        node.value.isascii(), (module.__name__, node.lineno, node.value)
+                    )
 
 
 class ValidationRefusalText(unittest.TestCase):
     def test_e304_pre_launch_metadata_suppresses_unknown_guidance_while_flashing(self):
-        message = "The flash could not start because Windows flash validation failed. " \
-                  "Nothing was sent by the flash transfer."
-        action = "See Details for the validation failure. Correct the reported problem " \
-                 "and retry; no flash-recovery wait is needed."
+        message = (
+            "The flash could not start because Windows flash validation failed. "
+            "Nothing was sent by the flash transfer."
+        )
+        action = (
+            "See Details for the validation failure. Correct the reported problem "
+            "and retry; no flash-recovery wait is needed."
+        )
         error = errors.FlashError(message, code="E304", action=action)
-        info = gui.error_info(str(error), {"code": error.code, "message": error.message,
-                              "action": error.action, "pre_launch": True}, flashing=True)
+        info = gui.error_info(
+            str(error),
+            {
+                "code": error.code,
+                "message": error.message,
+                "action": error.action,
+                "pre_launch": True,
+            },
+            flashing=True,
+        )
         self.assertEqual(info["code"], "E304")
         self.assertTrue(info["nothing_written"])
         self.assertFalse(info["unknown"])
@@ -99,6 +146,7 @@ class FontChoice(unittest.TestCase):
     def _root(self):
         try:
             import tkinter as tk
+
             root = tk.Tk()
         except Exception as e:
             self.skipTest("no Tk display: %s" % e)
@@ -109,6 +157,7 @@ class FontChoice(unittest.TestCase):
     def _family(self, platform, families, default="Default Sans"):
         """The default family is controlled too, so the result never depends on what this host's Tk resolved."""
         import tkinter.font as tkfont
+
         root = self._root()
         real = tkfont.nametofont
 
@@ -116,9 +165,12 @@ class FontChoice(unittest.TestCase):
             if name == "TkDefaultFont":
                 return mock.Mock(actual=lambda *x, **y: default)
             return real(name, *a, **k)
-        with mock.patch.object(sys, "platform", platform), \
-                mock.patch.object(tkfont, "families", return_value=families), \
-                mock.patch.object(tkfont, "nametofont", nametofont):
+
+        with (
+            mock.patch.object(sys, "platform", platform),
+            mock.patch.object(tkfont, "families", return_value=families),
+            mock.patch.object(tkfont, "nametofont", nametofont),
+        ):
             fonts = t.make_fonts(root)
         return default, fonts["b"].actual("family"), fonts["b"].cget("family")
 
@@ -143,7 +195,7 @@ def _find(widget, cls=None, text=None):
         if w is not widget:
             out += _find(w, cls, text)
             continue
-        if (cls is None or w.winfo_class() == cls):
+        if cls is None or w.winfo_class() == cls:
             try:
                 ok = text is None or str(w.cget("text")) == text
             except Exception:
@@ -158,13 +210,18 @@ class AppFlows(unittest.TestCase):
     record their FULL arguments and call the confirm gate the way the engine does."""
 
     def setUp(self):
-        self.calls = []                       # (name, params, rep, confirm, confirmed)
-        self.gate = None                      # threading.Event: hold the fake service until set
-        self.service_error = None             # str (RuntimeError) or an exception instance to raise
-        self.after_confirm = None             # callable(rep) run after an accepted confirm (may raise)
-        self.errors = []                      # messagebox.showerror calls
-        self.close_answers = []               # askokcancel calls
-        self.confirm_summary = {"action": "install", "variant": "public", "ota": "on", "duration": "20 min"}
+        self.calls = []  # (name, params, rep, confirm, confirmed)
+        self.gate = None  # threading.Event: hold the fake service until set
+        self.service_error = None  # str (RuntimeError) or an exception instance to raise
+        self.after_confirm = None  # callable(rep) run after an accepted confirm (may raise)
+        self.errors = []  # messagebox.showerror calls
+        self.close_answers = []  # askokcancel calls
+        self.confirm_summary = {
+            "action": "install",
+            "variant": "public",
+            "ota": "on",
+            "duration": "20 min",
+        }
         self.key = True
         self.saved_image = True
 
@@ -172,29 +229,54 @@ class AppFlows(unittest.TestCase):
     def _make(self, key=True, saved_image=True, scaling=None):
         try:
             import tkinter as tk
+
             self.root = tk.Tk()
         except Exception as e:
             self.skipTest("no Tk display: %s" % e)
         if scaling:
             self.root.tk.call("tk", "scaling", scaling)
         self.root.withdraw()
-        for target in (mock.patch.object(gui, "ota_key_available", return_value=key),
-                       mock.patch.object(gui.readiness, "probe", return_value={
-                           "os": "linux", "count": 0, "access": None, "inv": None,
-                           "inv_error": None, "missing_tools": []}),
-                       mock.patch.object(gui.platform_probe, "host", return_value=("linux", "x86_64")),
-                       mock.patch.object(gui.state, "stock_image_exists", return_value=saved_image),
-                       mock.patch.object(gui.firmware_resolve, "identify_zip", side_effect=lambda path, expected=None: gui.firmware_resolve.ZipIdentity(expected, path)),
-                       mock.patch.object(gui.firmware_resolve, "check_space", return_value=None),
-                       mock.patch.object(gui.firmware_resolve, "plan_restore", return_value=gui.firmware_resolve.RestorePlan("backup", "240")),
-                       mock.patch.object(gui.service, "do_install", side_effect=self._svc("install")),
-                       mock.patch.object(gui.service, "do_restore", side_effect=self._svc("restore")),
-                       mock.patch.object(gui.service, "do_remove", side_effect=self._svc("remove")),
-                       mock.patch("tkinter.messagebox.showerror",
-                                  side_effect=lambda *a, **k: self.errors.append(a)),
-                       mock.patch("tkinter.messagebox.showwarning"),
-                       mock.patch("tkinter.messagebox.askokcancel",
-                                  side_effect=lambda *a, **k: self.close_answers.pop(0))):
+        for target in (
+            mock.patch.object(gui, "ota_key_available", return_value=key),
+            mock.patch.object(
+                gui.readiness,
+                "probe",
+                return_value={
+                    "os": "linux",
+                    "count": 0,
+                    "access": None,
+                    "inv": None,
+                    "inv_error": None,
+                    "missing_tools": [],
+                },
+            ),
+            mock.patch.object(gui.platform_probe, "host", return_value=("linux", "x86_64")),
+            mock.patch.object(gui.state, "stock_image_exists", return_value=saved_image),
+            mock.patch.object(
+                gui.firmware_resolve,
+                "identify_zip",
+                side_effect=lambda path, expected=None: gui.firmware_resolve.ZipIdentity(
+                    expected, path
+                ),
+            ),
+            mock.patch.object(gui.firmware_resolve, "check_space", return_value=None),
+            mock.patch.object(
+                gui.firmware_resolve,
+                "plan_restore",
+                return_value=gui.firmware_resolve.RestorePlan("backup", "240"),
+            ),
+            mock.patch.object(gui.service, "do_install", side_effect=self._svc("install")),
+            mock.patch.object(gui.service, "do_restore", side_effect=self._svc("restore")),
+            mock.patch.object(gui.service, "do_remove", side_effect=self._svc("remove")),
+            mock.patch(
+                "tkinter.messagebox.showerror", side_effect=lambda *a, **k: self.errors.append(a)
+            ),
+            mock.patch("tkinter.messagebox.showwarning"),
+            mock.patch(
+                "tkinter.messagebox.askokcancel",
+                side_effect=lambda *a, **k: self.close_answers.pop(0),
+            ),
+        ):
             target.start()
             self.addCleanup(target.stop)
         self.addCleanup(self._teardown)
@@ -225,8 +307,11 @@ class AppFlows(unittest.TestCase):
             rep.log("detail line 1")
             rep.log("detail line 2")
             if self.service_error:
-                raise (self.service_error if isinstance(self.service_error, BaseException)
-                       else RuntimeError(self.service_error))
+                raise (
+                    self.service_error
+                    if isinstance(self.service_error, BaseException)
+                    else RuntimeError(self.service_error)
+                )
             summary = dict(self.confirm_summary)
             if name == "restore":
                 summary["action"] = "restore-stock"
@@ -236,6 +321,7 @@ class AppFlows(unittest.TestCase):
             if rec[4] and self.after_confirm:
                 self.after_confirm(rep)
             return {"ok": True} if rec[4] else {"ok": False, "aborted": True}
+
         return fake
 
     def _pump(self, cond, what, timeout=8.0):
@@ -252,16 +338,22 @@ class AppFlows(unittest.TestCase):
         raise AssertionError(msg)
 
     def _dialog(self):
-        self._pump(lambda: [w for w in self.root.winfo_children() if w.winfo_class() == "Toplevel"],
-                   "confirm dialog")
+        self._pump(
+            lambda: [w for w in self.root.winfo_children() if w.winfo_class() == "Toplevel"],
+            "confirm dialog",
+        )
         return [w for w in self.root.winfo_children() if w.winfo_class() == "Toplevel"][0]
 
     def _answer(self, accept):
         dlg = self._dialog()
         if accept:
             for cb in _find(dlg, "TCheckbutton"):
-                cb.invoke()                    # the "I understand" gate on destructive dialogs
-            btn = [b for b in _find(dlg, "TButton") if str(b.cget("text")) in ("Proceed", "Begin flash (~20 min)")]
+                cb.invoke()  # the "I understand" gate on destructive dialogs
+            btn = [
+                b
+                for b in _find(dlg, "TButton")
+                if str(b.cget("text")) in ("Proceed", "Begin flash (~20 min)")
+            ]
         else:
             btn = _find(dlg, "TButton", "Cancel")
         self.assertEqual(len(btn), 1)
@@ -289,7 +381,7 @@ class AppFlows(unittest.TestCase):
         self._go("/fw/disc.zip")
         self._answer(True)
         self._finish()
-        (name, params, rep, confirm, confirmed), = self.calls
+        ((name, params, rep, confirm, confirmed),) = self.calls
         self.assertEqual(name, "install")
         self.assertEqual(params, {"firmware": "/fw/disc.zip", "variant": "public", "no_ota": False})
         self.assertIs(rep, app.reporter)
@@ -311,7 +403,9 @@ class AppFlows(unittest.TestCase):
         self._go("/fw/disc.zip")
         self._answer(True)
         self._finish()
-        self.assertEqual(self.calls[0][1], {"firmware": "/fw/disc.zip", "variant": "dev", "no_ota": False})
+        self.assertEqual(
+            self.calls[0][1], {"firmware": "/fw/disc.zip", "variant": "dev", "no_ota": False}
+        )
 
     def test_install_ota_off_through_checkbox(self):
         app = self._make()
@@ -322,7 +416,9 @@ class AppFlows(unittest.TestCase):
         self._go("/fw/disc.zip")
         self._answer(True)
         self._finish()
-        self.assertEqual(self.calls[0][1], {"firmware": "/fw/disc.zip", "variant": "public", "no_ota": True})
+        self.assertEqual(
+            self.calls[0][1], {"firmware": "/fw/disc.zip", "variant": "public", "no_ota": True}
+        )
 
     def test_install_no_release_key_forces_ota_off_and_says_so(self):
         app = self._make(key=False)
@@ -332,7 +428,7 @@ class AppFlows(unittest.TestCase):
         labels = [str(w.cget("text")) for w in _find(app.cfg, "Label")]
         self.assertIn(gui.OTA_NO_KEY, labels)
         self.assertNotIn(gui.OTA_HELP, labels)
-        app.ota_var.set(True)                  # even if something ticks it, the install stays off
+        app.ota_var.set(True)  # even if something ticks it, the install stays off
         self._go("/fw/disc.zip")
         self._answer(True)
         self._finish()
@@ -360,7 +456,7 @@ class AppFlows(unittest.TestCase):
         self._go("/fw/disc.zip")
         self._answer(False)
         self._finish()
-        (name, params, _r, _c, confirmed), = self.calls
+        ((name, params, _r, _c, confirmed),) = self.calls
         self.assertIs(confirmed, False)
         self.assertFalse(app.flashing)
         self.assertEqual(app.state, gui.IDLE)
@@ -386,11 +482,11 @@ class AppFlows(unittest.TestCase):
         app = self._make(saved_image=True)
         self._button("Restore stock firmware...").invoke()
         self.assertEqual(str(app.action_btn.cget("text")), gui.MODE_TEXT["restore"][2])
-        self.assertEqual(self.calls, [])       # selecting the mode starts nothing
+        self.assertEqual(self.calls, [])  # selecting the mode starts nothing
         self.app.action_btn.invoke()
         self._answer(True)
         self._finish()
-        (name, params, rep, confirm, confirmed), = self.calls
+        ((name, params, rep, confirm, confirmed),) = self.calls
         self.assertEqual((name, params), ("restore", {"firmware": None}))
         self.assertIs(rep, app.reporter)
         self.assertEqual(confirm, app._worker_confirm)
@@ -425,7 +521,7 @@ class AppFlows(unittest.TestCase):
         app.action_btn.invoke()
         self._answer(True)
         self._finish()
-        (name, params, rep, confirm, confirmed), = self.calls
+        ((name, params, rep, confirm, confirmed),) = self.calls
         self.assertEqual((name, params), ("remove", {"force": False}))
         self.assertIs(rep, app.reporter)
         self.assertIs(confirmed, True)
@@ -453,7 +549,7 @@ class AppFlows(unittest.TestCase):
         app = self._make()
         lbl = app.variant_warn_lbl
         self.assertEqual(str(lbl.cget("text")), "")
-        self.assertEqual(lbl.winfo_manager(), "")            # no empty gap while Public is selected
+        self.assertEqual(lbl.winfo_manager(), "")  # no empty gap while Public is selected
         _find(self.root, "TRadiobutton", "Dev (root shell)")[0].invoke()
         self.assertIn("always-on passwordless USB root", str(lbl.cget("text")))
         self.assertIn("Development devices only.", str(lbl.cget("text")))
@@ -466,8 +562,16 @@ class AppFlows(unittest.TestCase):
     def _controls(self):
         """Every widget the pre-slice _set_controls disabled: mode_frame + cfg descendants of the
         listed classes, plus the action button (and the Windows driver button when present)."""
-        classes = ("TRadiobutton", "TButton", "TEntry", "TCheckbutton", "Radiobutton", "Button",
-                   "Entry", "Checkbutton")
+        classes = (
+            "TRadiobutton",
+            "TButton",
+            "TEntry",
+            "TCheckbutton",
+            "Radiobutton",
+            "Button",
+            "Entry",
+            "Checkbutton",
+        )
         out = []
 
         def walk(w):
@@ -475,6 +579,7 @@ class AppFlows(unittest.TestCase):
                 if c.winfo_class() in classes:
                     out.append(c)
                 walk(c)
+
         walk(self.app.mode_frame)
         walk(self.app.cfg)
         out.append(self.app.action_btn)
@@ -490,19 +595,36 @@ class AppFlows(unittest.TestCase):
         app = self._make()
         ctrls = self._controls()
         # install mode: Restore, Remove, (hidden) Back, Browse, entry, 2 radios, OTA checkbox, action
-        desc = sorted(w.winfo_class() + ":" + (str(w.cget("text")) if w.winfo_class() != "TEntry" else "")
-                      for w in ctrls)
-        self.assertEqual(desc, sorted([
-            "TButton:Restore stock firmware...", "TButton:Remove installer data...", "TButton:Back to install",
-            "TButton:Browse...", "TButton:Get firmware", "TEntry:", "TRadiobutton:Public (recommended)", "TButton:Advanced",
-            "TRadiobutton:Dev (root shell)", "TCheckbutton:" + gui.OTA_LABEL, "TButton:Install diskOS..."]))
+        desc = sorted(
+            w.winfo_class() + ":" + (str(w.cget("text")) if w.winfo_class() != "TEntry" else "")
+            for w in ctrls
+        )
+        self.assertEqual(
+            desc,
+            sorted(
+                [
+                    "TButton:Restore stock firmware...",
+                    "TButton:Remove installer data...",
+                    "TButton:Back to install",
+                    "TButton:Browse...",
+                    "TButton:Get firmware",
+                    "TEntry:",
+                    "TRadiobutton:Public (recommended)",
+                    "TButton:Advanced",
+                    "TRadiobutton:Dev (root shell)",
+                    "TCheckbutton:" + gui.OTA_LABEL,
+                    "TButton:Install diskOS...",
+                ]
+            ),
+        )
         self.assertFalse(any(self._disabled(w) for w in ctrls))
         self.gate = threading.Event()
         self._go("/fw/disc.zip")
         self._pump(lambda: self.calls, "service start")
         self.assertEqual(app.state, gui.RUNNING)
-        self.assertTrue(all(self._disabled(w) for w in ctrls),
-                        [str(w) for w in ctrls if not self._disabled(w)])
+        self.assertTrue(
+            all(self._disabled(w) for w in ctrls), [str(w) for w in ctrls if not self._disabled(w)]
+        )
         # a second click while running starts nothing
         app.action_btn.config(state="normal")
         app.action_btn.invoke()
@@ -532,7 +654,7 @@ class AppFlows(unittest.TestCase):
         self._pump(lambda: self.calls, "service start")
         before = app.mode.get()
         for text in ("Restore stock firmware...", "Remove installer data..."):
-            self._button(text).invoke()      # ttk invoke() on a disabled button does nothing
+            self._button(text).invoke()  # ttk invoke() on a disabled button does nothing
         self.assertEqual(app.mode.get(), before)
         self.gate.set()
         self._answer(True)
@@ -545,10 +667,10 @@ class AppFlows(unittest.TestCase):
         for i in range(30):
             app.reporter.log("queued %d" % i)
         app.reporter.status("a status")
-        self.assertEqual(app.log.get("1.0", "end").strip(), "")     # still queued, not drained
+        self.assertEqual(app.log.get("1.0", "end").strip(), "")  # still queued, not drained
         self._pump(lambda: "queued 29" in app.log.get("1.0", "end"), "drain")
         self.assertFalse(app._details_open)
-        self.assertEqual(app.logbox.winfo_manager(), "")            # hidden
+        self.assertEqual(app.logbox.winfo_manager(), "")  # hidden
         app.details_btn.invoke()
         self.assertTrue(app._details_open)
         self.assertEqual(app.logbox.winfo_manager(), "pack")
@@ -557,7 +679,7 @@ class AppFlows(unittest.TestCase):
             self.assertIn("queued %d" % i, text)
         self.assertIn("a status", text)
         self.assertEqual(str(app.details_btn.cget("text")), "Details")
-        self.assertTrue(app.details_btn._diskos_open)              # chevron turned down
+        self.assertTrue(app.details_btn._diskos_open)  # chevron turned down
         app.details_btn.invoke()
         self.assertFalse(app._details_open)
         self.assertEqual(app.logbox.winfo_manager(), "")
@@ -584,7 +706,7 @@ class AppFlows(unittest.TestCase):
         self.assertTrue(app._details_open)
         self.assertEqual(app.logbox.winfo_manager(), "pack")
         self.assertIn("disc exploded", app.log.get("1.0", "end"))
-        self.assertEqual(self.errors, [])        # the result is on screen; no second pop-up
+        self.assertEqual(self.errors, [])  # the result is on screen; no second pop-up
         self.assertIn("Disc exploded.", self._result_text())
         self.assertFalse(app.flashing)
         self.assertFalse(any(self._disabled(w) for w in self._controls()))
@@ -629,13 +751,15 @@ class AppFlows(unittest.TestCase):
         return out
 
     def _result_text(self):
-        return "\n".join(self._texts(self.app.result_box) + [str(self.app.phase_lbl.cget("text")),
-                                                              str(self.app.chip.cget("text"))])
+        return "\n".join(
+            self._texts(self.app.result_box)
+            + [str(self.app.phase_lbl.cget("text")), str(self.app.chip.cget("text"))]
+        )
 
     def _open_gate(self, summary=None, mode=None):
         """Start the stubbed service and return (app, dialog) with the confirm gate on screen."""
         app = self._make()
-        self.root.deiconify()                  # keys and focus reach a dialog only when its parent is on screen
+        self.root.deiconify()  # keys and focus reach a dialog only when its parent is on screen
         self.root.update()
         if summary:
             self.confirm_summary = summary
@@ -654,17 +778,30 @@ class AppFlows(unittest.TestCase):
         self.root.update()
 
     def test_gate_states_the_action_and_starts_unticked(self):
-        _app, dlg = self._open_gate({"action": "install", "variant": "public", "ota": "ON key 9c1e",
-                                     "duration": "about 20 minutes", "consequence": "This rewrites it.",
-                                     "requires": "The Disc must already run V2.40."})
+        _app, dlg = self._open_gate(
+            {
+                "action": "install",
+                "variant": "public",
+                "ota": "ON key 9c1e",
+                "duration": "about 20 minutes",
+                "consequence": "This rewrites it.",
+                "requires": "The Disc must already run V2.40.",
+            }
+        )
         text = "\n".join(self._texts(dlg))
-        for want in ("Install diskOS (public)", "ON key 9c1e", "about 20 minutes", "This rewrites it.",
-                     "The Disc must already run V2.40.", "Warning."):
+        for want in (
+            "Install diskOS (public)",
+            "ON key 9c1e",
+            "about 20 minutes",
+            "This rewrites it.",
+            "The Disc must already run V2.40.",
+            "Warning.",
+        ):
             self.assertIn(want, text)
         ack = _find(dlg, "TCheckbutton")
         self.assertEqual(len(ack), 1)
         self.assertEqual(str(ack[0].cget("text")), gui.ACK_TEXT)
-        self.assertEqual(str(ack[0].tk.globalgetvar(str(ack[0].cget("variable")))), "0")      # unticked
+        self.assertEqual(str(ack[0].tk.globalgetvar(str(ack[0].cget("variable")))), "0")  # unticked
         self.assertEqual(str(_find(dlg, "TButton", gui.BEGIN_TEXT)[0].cget("state")), "disabled")
         self._answer(False)
         self._finish()
@@ -676,7 +813,7 @@ class AppFlows(unittest.TestCase):
         self.assertEqual(str(begin.cget("state")), "normal")
         ack.invoke()
         self.assertEqual(str(begin.cget("state")), "disabled")
-        begin.invoke()                                  # a disabled ttk button does nothing
+        begin.invoke()  # a disabled ttk button does nothing
         self.root.update()
         self.assertFalse(app.flashing)
         self.assertIsNone(self.calls[0][4])
@@ -687,7 +824,7 @@ class AppFlows(unittest.TestCase):
     def test_gate_cannot_begin_with_the_tick_off_even_if_called_directly(self):
         app, dlg = self._open_gate()
         self._focus(_find(dlg, "TButton", gui.BEGIN_TEXT)[0])
-        dlg.event_generate("<Return>")                  # Enter on a disabled Begin
+        dlg.event_generate("<Return>")  # Enter on a disabled Begin
         self.root.update()
         self.assertFalse(app.flashing)
         self.assertIsNone(self.calls[0][4])
@@ -698,7 +835,7 @@ class AppFlows(unittest.TestCase):
     def test_gate_guard_blocks_a_begin_that_bypasses_the_disabled_button(self):
         app, dlg = self._open_gate()
         begin = _find(dlg, "TButton", gui.BEGIN_TEXT)[0]
-        begin.config(state="normal")                    # something enabled it without the tick
+        begin.config(state="normal")  # something enabled it without the tick
         begin.invoke()
         self.root.update()
         self.assertFalse(app.flashing)
@@ -748,8 +885,9 @@ class AppFlows(unittest.TestCase):
     def test_gate_second_confirm_answers_no_without_releasing_the_first(self):
         app, dlg = self._open_gate()
         answers = []
-        second = threading.Thread(target=lambda: answers.append(app._worker_confirm({"action": "install"})),
-                                  daemon=True)
+        second = threading.Thread(
+            target=lambda: answers.append(app._worker_confirm({"action": "install"})), daemon=True
+        )
         second.start()
         second.join(1)
         self.assertFalse(second.is_alive())
@@ -762,7 +900,9 @@ class AppFlows(unittest.TestCase):
 
     def test_gate_construction_exception_answers_no(self):
         app = self._make()
-        with mock.patch.object(app, "_build_confirm_summary", side_effect=RuntimeError("dialog build")):
+        with mock.patch.object(
+            app, "_build_confirm_summary", side_effect=RuntimeError("dialog build")
+        ):
             self._go("/fw/disc.zip")
             self._finish()
         self.assertIs(self.calls[0][4], False)
@@ -810,10 +950,11 @@ class AppFlows(unittest.TestCase):
     def test_gate_app_destroy_before_the_queue_is_drained_answers_no(self):
         app = self._make()
         answers = []
-        worker = threading.Thread(target=lambda: answers.append(app._worker_confirm({"action": "install"})),
-                                  daemon=True)
+        worker = threading.Thread(
+            target=lambda: answers.append(app._worker_confirm({"action": "install"})), daemon=True
+        )
         worker.start()
-        while app.q.get(timeout=1)[0] != "confirm":      # skip readiness events
+        while app.q.get(timeout=1)[0] != "confirm":  # skip readiness events
             pass
         self.root.destroy()
         worker.join(1)
@@ -838,11 +979,14 @@ class AppFlows(unittest.TestCase):
                 if c.winfo_class() in ("TCheckbutton", "TButton"):
                     order.append(str(c.cget("text")))
                 walk(c)
+
         walk(dlg)
-        self.assertEqual(order, [gui.ACK_TEXT, "Cancel", gui.BEGIN_TEXT])      # tab order = creation order
+        self.assertEqual(
+            order, [gui.ACK_TEXT, "Cancel", gui.BEGIN_TEXT]
+        )  # tab order = creation order
         self.assertEqual(dlg.focus_get(), _find(dlg, "TCheckbutton")[0])
         cancel, begin = _find(dlg, "TButton", "Cancel")[0], _find(dlg, "TButton", gui.BEGIN_TEXT)[0]
-        self.assertLess(cancel.winfo_rootx(), begin.winfo_rootx())              # Cancel sits left of Begin
+        self.assertLess(cancel.winfo_rootx(), begin.winfo_rootx())  # Cancel sits left of Begin
         self._answer(False)
         self._finish()
 
@@ -851,9 +995,10 @@ class AppFlows(unittest.TestCase):
         seen = []
 
         class Rec(threading.Event):
-            def set(ev):                                 # what the worker would observe the instant it wakes
+            def set(ev):  # what the worker would observe the instant it wakes
                 seen.append((app.flashing, app._confirm_result))
                 super().set()
+
         app._confirm_event = Rec()
         self._go("/fw/disc.zip")
         self._answer(True)
@@ -869,6 +1014,7 @@ class AppFlows(unittest.TestCase):
             def set(ev):
                 seen.append((app.flashing, app._confirm_result))
                 super().set()
+
         app._confirm_event = Rec()
         self._go("/fw/disc.zip")
         self._answer(False)
@@ -895,7 +1041,9 @@ class AppFlows(unittest.TestCase):
         self._finish()
         self.root.destroy()
         self.calls.clear()
-        _app, dlg = self._open_gate({"action": "install", "variant": "dev", "duration": "x", "ota": "y"})
+        _app, dlg = self._open_gate(
+            {"action": "install", "variant": "dev", "duration": "x", "ota": "y"}
+        )
         text = "\n".join(self._texts(dlg))
         self.assertIn("Install diskOS (dev)", text)
         self.assertIn(gui.DEV_CONFIRM_NOTE, text)
@@ -910,7 +1058,7 @@ class AppFlows(unittest.TestCase):
         try:
             begin.invoke()
         except Exception:
-            pass                                         # already destroyed: fine
+            pass  # already destroyed: fine
         self._finish()
         self.assertEqual(len(self.calls), 1)
         self.assertIs(self.calls[0][4], True)
@@ -920,7 +1068,9 @@ class AppFlows(unittest.TestCase):
         self.assertEqual(app.warn_banner.winfo_manager(), "")
         _find(dlg, "TCheckbutton")[0].invoke()
         _find(dlg, "TButton", gui.BEGIN_TEXT)[0].invoke()
-        self.assertEqual(app.warn_banner.winfo_manager(), "pack")      # before the engine's first flash event
+        self.assertEqual(
+            app.warn_banner.winfo_manager(), "pack"
+        )  # before the engine's first flash event
         self.assertEqual(str(app.warn_banner.cget("text")), gui.FLASH_KEEP_NOTE)
         self._finish()
 
@@ -948,13 +1098,13 @@ class AppFlows(unittest.TestCase):
         app.start_time = app._stage_start = now - 20
         app._progress = (25, 100)
         self.assertEqual(app._timing_text(now), "elapsed 0m20s - 25% - about 60 s left")
-        app._progress = (10, 1000)                       # under 5%: too little to extrapolate
+        app._progress = (10, 1000)  # under 5%: too little to extrapolate
         self.assertEqual(app._timing_text(now), "elapsed 0m20s - 1%")
         app._progress = (10, 100)
         app._stage_start = now - 1200
         self.assertEqual(app._timing_text(now), "elapsed 0m20s - 10% - about 180 min left")
         app._progress = (50, 100)
-        app._stage_start = now - 1                       # too early to extrapolate: no remaining estimate
+        app._stage_start = now - 1  # too early to extrapolate: no remaining estimate
         self.assertNotIn("left", app._timing_text(now))
 
     def test_flash_elapsed_and_remaining_use_the_engine_expectation(self):
@@ -965,12 +1115,19 @@ class AppFlows(unittest.TestCase):
         self.assertTrue(app.flashing)
         self.assertEqual(str(app.bar["mode"]), "indeterminate")
         self.assertEqual(str(app.status_lbl.cget("text")), "Flashing: scan, erase")
-        self.assertEqual(str(app.phase_lbl.cget("text")), "Writing diskOS to the Disc - about 20 minutes")
+        self.assertEqual(
+            str(app.phase_lbl.cget("text")), "Writing diskOS to the Disc - about 20 minutes"
+        )
         self.assertIn("about 20 min left (estimate)", str(app.elapsed_lbl.cget("text")))
-        self.assertTrue(str(app.elapsed_lbl.cget("text")).startswith("elapsed 0m0"))   # since the flash began
+        self.assertTrue(
+            str(app.elapsed_lbl.cget("text")).startswith("elapsed 0m0")
+        )  # since the flash began
         now = app._flash_start + 1000
         self.assertEqual(app._timing_text(now), "elapsed 16m40s - about 4 min left (estimate)")
-        self.assertIn("longer than the usual 20 minutes; keep waiting", app._timing_text(app._flash_start + 1300))
+        self.assertIn(
+            "longer than the usual 20 minutes; keep waiting",
+            app._timing_text(app._flash_start + 1300),
+        )
 
     def test_flashing_screen_says_do_not_unplug_and_blocks_close(self):
         app = self._make()
@@ -982,21 +1139,26 @@ class AppFlows(unittest.TestCase):
         with mock.patch("tkinter.messagebox.showwarning") as warn:
             app._on_close()
         warn.assert_called_once()
-        self.assertEqual(self.close_answers, [])                     # no "close anyway?" offer either
+        self.assertEqual(self.close_answers, [])  # no "close anyway?" offer either
         self.assertTrue(self.root.winfo_exists())
         self.root.update()
 
     def test_close_is_vetoed_end_to_end_while_the_flash_runs(self):
         app = self._make()
         self.gate = threading.Event()
-        hold = threading.Event()                        # keeps the stub "flashing" until the test says so
-        self.after_confirm = lambda rep: (rep.phase("Flashing", destructive=True),
-                                          rep.indeterminate(True, expect_secs=60), hold.wait(20))
+        hold = threading.Event()  # keeps the stub "flashing" until the test says so
+        self.after_confirm = lambda rep: (
+            rep.phase("Flashing", destructive=True),
+            rep.indeterminate(True, expect_secs=60),
+            hold.wait(20),
+        )
         self._go("/fw/disc.zip")
         self._pump(lambda: self.calls, "service start")
         self.gate.set()
         self._answer(True)
-        self._pump(lambda: app.flashing and str(app.bar["mode"]) == "indeterminate", "flashing", timeout=20)
+        self._pump(
+            lambda: app.flashing and str(app.bar["mode"]) == "indeterminate", "flashing", timeout=20
+        )
         with mock.patch("tkinter.messagebox.showwarning") as warn:
             app._on_close()
         warn.assert_called_once()
@@ -1019,7 +1181,11 @@ class AppFlows(unittest.TestCase):
         self._answer(False)
         self._finish()
         self.root.update()
-        for w in (app.action_btn, app.cfg, app.mode_frame):      # cancel returns to the welcome, in order
+        for w in (
+            app.action_btn,
+            app.cfg,
+            app.mode_frame,
+        ):  # cancel returns to the welcome, in order
             self.assertTrue(w.winfo_ismapped(), w)
         self.assertEqual(self._pack_order(app), before)
 
@@ -1042,15 +1208,20 @@ class AppFlows(unittest.TestCase):
         self._run_to_result()
         self.assertEqual(app.state, gui.SUCCESS)
         text = self._result_text()
-        for want in ("Success", "diskOS is installed", "diskOS was written to the Disc and checked.",
-                     "Next step", "Turn the Disc off and on again. On the first start it finishes setting up diskOS by itself."):
+        for want in (
+            "Success",
+            "diskOS is installed",
+            "diskOS was written to the Disc and checked.",
+            "Next step",
+            "Turn the Disc off and on again. On the first start it finishes setting up diskOS by itself.",
+        ):
             self.assertIn(want, text)
         self.assertEqual(self._buttons(app.foot), ["Close"])
         self.assertEqual(app.foot.winfo_manager(), "pack")
         self.assertEqual(app.bar.winfo_manager(), "")
         self.assertFalse(app._details_open)
         self.assertEqual(str(app.chip.cget("text")), "Success")
-        self.assertTrue(str(app.chip.cget("image")))                 # drawn status dot (STYLE.md: no glyphs)
+        self.assertTrue(str(app.chip.cget("image")))  # drawn status dot (STYLE.md: no glyphs)
         self.assertEqual(self.errors, [])
 
     def test_success_screen_restore_and_remove(self):
@@ -1060,7 +1231,9 @@ class AppFlows(unittest.TestCase):
         self._answer(True)
         self._finish()
         self.assertIn("Stock firmware restored", self._result_text())
-        self.assertIn("Turn the Disc off and on again to start the stock firmware.", self._result_text())
+        self.assertIn(
+            "Turn the Disc off and on again to start the stock firmware.", self._result_text()
+        )
         self.root.destroy()
         self.calls.clear()
         app = self._make()
@@ -1069,8 +1242,14 @@ class AppFlows(unittest.TestCase):
         self._answer(True)
         self._finish()
         self.assertIn("Installer data removed", self._result_text())
-        self.assertIn("Saved firmware, recovery images, installer state and logs were removed from this computer.", self._result_text())
-        self.assertIn("The installer app itself is kept. Delete it if you no longer need it.", self._result_text())
+        self.assertIn(
+            "Saved firmware, recovery images, installer state and logs were removed from this computer.",
+            self._result_text(),
+        )
+        self.assertIn(
+            "The installer app itself is kept. Delete it if you no longer need it.",
+            self._result_text(),
+        )
 
     def test_close_button_on_result_closes_the_window(self):
         app = self._make()
@@ -1082,21 +1261,30 @@ class AppFlows(unittest.TestCase):
 
     def test_error_screen_shows_code_message_and_engine_action(self):
         app = self._make()
-        self.service_error = errors.BuildError("this firmware version is not supported by this installer",
-                                               code="E226", action="download the supported FiiO firmware .zip")
+        self.service_error = errors.BuildError(
+            "this firmware version is not supported by this installer",
+            code="E226",
+            action="download the supported FiiO firmware .zip",
+        )
         self._run_to_result(accept=False)
         self.assertEqual(app.state, gui.FAILED)
         texts = self._texts(app.result_box)
         self.assertIn("Error E226", str(app.chip.cget("text")))
-        self.assertIn("This firmware version is not supported by this installer.", texts)      # display capitalised
+        self.assertIn(
+            "This firmware version is not supported by this installer.", texts
+        )  # display capitalised
         self.assertIn("What to do now.", texts)
-        self.assertIn("Download the supported FiiO firmware .zip.", texts)                 # display only
+        self.assertIn("Download the supported FiiO firmware .zip.", texts)  # display only
         self.assertIn(gui.NOTHING_WRITTEN, texts)
-        self.assertNotIn(errors.WAIT_THEN_RECOVER, "\n".join(texts))                      # not an unknown result
-        self.assertTrue(app._details_open)                                                # Details auto-expanded
+        self.assertNotIn(errors.WAIT_THEN_RECOVER, "\n".join(texts))  # not an unknown result
+        self.assertTrue(app._details_open)  # Details auto-expanded
         self.assertIn("[E226]", app.log.get("1.0", "end"))
-        self.assertIn("this firmware version is not supported by this installer", app.log.get("1.0", "end"))   # log keeps engine text
-        self.assertEqual(str(self.service_error).count("download the supported FiiO firmware .zip"), 1)
+        self.assertIn(
+            "this firmware version is not supported by this installer", app.log.get("1.0", "end")
+        )  # log keeps engine text
+        self.assertEqual(
+            str(self.service_error).count("download the supported FiiO firmware .zip"), 1
+        )
         self.assertEqual(sorted(self._buttons(app.foot)), ["Back", "Close"])
         self.assertEqual(self.errors, [])
 
@@ -1104,11 +1292,18 @@ class AppFlows(unittest.TestCase):
         self.assertEqual(gui.display_sentence("this is wrong"), "This is wrong.")
         self.assertEqual(gui.display_sentence("Already fine."), "Already fine.")
         self.assertEqual(gui.display_sentence("ask?"), "Ask?")
-        self.assertEqual(gui.flash_phase_text("Flashing (mask-ROM) - about 20 minutes", "restore"),
-                         "Writing stock firmware to the Disc - about 20 minutes")
-        self.assertEqual(gui.flash_phase_text("Extracting stock firmware", "install"), "Extracting stock firmware")
-        self.assertEqual(gui.stage_text("flashing (scan -> erase -> program -> verify -> retry)"),
-                         "Flashing: scan, erase, program, verify, retry")
+        self.assertEqual(
+            gui.flash_phase_text("Flashing (mask-ROM) - about 20 minutes", "restore"),
+            "Writing stock firmware to the Disc - about 20 minutes",
+        )
+        self.assertEqual(
+            gui.flash_phase_text("Extracting stock firmware", "install"),
+            "Extracting stock firmware",
+        )
+        self.assertEqual(
+            gui.stage_text("flashing (scan -> erase -> program -> verify -> retry)"),
+            "Flashing: scan, erase, program, verify, retry",
+        )
 
     def test_error_back_returns_to_the_welcome_and_a_new_run_works(self):
         app = self._make()
@@ -1117,8 +1312,9 @@ class AppFlows(unittest.TestCase):
         _find(app.foot, "TButton", "Back")[0].invoke()
         self.assertEqual(app.state, gui.IDLE)
         self.assertFalse(app._run_view)
-        self.assertEqual(app.prog_head.winfo_manager(), "")           # idle again: no empty "Ready." + bar
-        self.root.update(); self.assertTrue(app.action_btn.winfo_ismapped())
+        self.assertEqual(app.prog_head.winfo_manager(), "")  # idle again: no empty "Ready." + bar
+        self.root.update()
+        self.assertTrue(app.action_btn.winfo_ismapped())
         self.assertEqual(app.foot.winfo_manager(), "")
         self.assertEqual(str(app.phase_lbl.cget("text")), "Ready.")
         self.assertEqual(app.result_box.winfo_children(), [])
@@ -1135,27 +1331,34 @@ class AppFlows(unittest.TestCase):
         self._go("/fw/disc.zip")
         self._answer(False)
         self._finish()
-        self.root.update(); self.assertTrue(app.action_btn.winfo_ismapped())
+        self.root.update()
+        self.assertTrue(app.action_btn.winfo_ismapped())
         self.assertEqual(app.foot.winfo_manager(), "")
         self.assertIn("Cancelled - device unchanged.", str(app.phase_lbl.cget("text")))
 
-    UNKNOWN_CASES = (("E301", "flash result UNKNOWN: usbboot lost the device"),
-                     ("E302", "short debug readback (12 bytes) - flash result UNKNOWN"),
-                     ("E303", "flash timed out - the device stopped responding after 33 min. Result UNKNOWN."),
-                     ("E321", "the writer did not report completion"),
-                     ("E310", "flash result UNKNOWN or FAILED (device result [F000] UNKNOWN)"))
+    UNKNOWN_CASES = (
+        ("E301", "flash result UNKNOWN: usbboot lost the device"),
+        ("E302", "short debug readback (12 bytes) - flash result UNKNOWN"),
+        ("E303", "flash timed out - the device stopped responding after 33 min. Result UNKNOWN."),
+        ("E321", "the writer did not report completion"),
+        ("E310", "flash result UNKNOWN or FAILED (device result [F000] UNKNOWN)"),
+    )
 
     def test_windows_validation_refusal_shows_nothing_written_without_wait(self):
         app = self._make()
         error = errors.FlashError(
             "The flash could not start because Windows flash validation failed. "
-            "Nothing was sent by the flash transfer.", code="E304",
+            "Nothing was sent by the flash transfer.",
+            code="E304",
             action="See Details for the validation failure. Correct the reported problem "
-                   "and retry; no flash-recovery wait is needed.")
+            "and retry; no flash-recovery wait is needed.",
+        )
         error.pre_launch = True
+
         def refuse(rep):
             rep.phase("Flashing", destructive=True)
             raise error
+
         self.after_confirm = refuse
         self._go("/fw/disc.zip")
         self._answer(True)
@@ -1176,23 +1379,31 @@ class AppFlows(unittest.TestCase):
             with self.subTest(code=code):
                 self.calls.clear()
                 app = self._make()
-                self.service_error = errors.FlashError(message, code=code, action=errors.WAIT_THEN_RECOVER)
+                self.service_error = errors.FlashError(
+                    message, code=code, action=errors.WAIT_THEN_RECOVER
+                )
                 self.after_confirm = None
                 self._go("/fw/disc.zip")
                 self._finish()
                 self.assertEqual(app.state, gui.FAILED)
                 texts = self._texts(app.result_box)
-                self.assertIn(errors.WAIT_THEN_RECOVER, texts)           # the engine's 25-minute text, verbatim
+                self.assertIn(
+                    errors.WAIT_THEN_RECOVER, texts
+                )  # the engine's 25-minute text, verbatim
                 self.assertIn("25 minutes", errors.WAIT_THEN_RECOVER)
                 self.assertIn(gui.WAIT_NOTE, texts)
                 self.assertIn(gui.display_sentence(message), texts)
                 self.assertIn("Error " + code, str(app.chip.cget("text")))
                 self.assertEqual(str(app.phase_lbl.cget("text")), "The flash result is unknown")
-                self.assertEqual(self._buttons(app.foot), ["Close"])      # no Back / Retry after an unknown result
+                self.assertEqual(
+                    self._buttons(app.foot), ["Close"]
+                )  # no Back / Retry after an unknown result
                 self.assertNotIn(gui.NOTHING_WRITTEN, texts)
                 self.assertTrue(app._details_open)
                 # persistent: a panel in the window with a red border, not a pop-up; it survives time and Details
-                panel = [w for w in app.result_box.winfo_children() if w.winfo_class() == "Frame"][0]
+                panel = [w for w in app.result_box.winfo_children() if w.winfo_class() == "Frame"][
+                    0
+                ]
                 self.assertEqual(str(panel.cget("highlightbackground")), gui_theme_mod.ERR)
                 app._toggle_details(False)
                 app._toggle_details(True)
@@ -1212,17 +1423,22 @@ class AppFlows(unittest.TestCase):
 
     def test_text_only_unknown_failure_is_split_into_message_and_wait_text(self):
         app = self._make()
-        msg = str(errors.FlashError("flash timed out", code="E303", action=errors.WAIT_THEN_RECOVER))
+        msg = str(
+            errors.FlashError("flash timed out", code="E303", action=errors.WAIT_THEN_RECOVER)
+        )
         app._fail(msg)
         texts = self._texts(app.result_box)
         self.assertIn("Flash timed out.", texts)
         self.assertIn(errors.WAIT_THEN_RECOVER, texts)
-        self.assertEqual(sum(errors.WAIT_THEN_RECOVER in t for t in texts), 1)     # not repeated in the message
+        self.assertEqual(
+            sum(errors.WAIT_THEN_RECOVER in t for t in texts), 1
+        )  # not repeated in the message
 
     def test_finished_writer_with_host_error_is_not_an_unknown_result(self):
         app = self._make()
-        self.service_error = errors.FlashError("flash writer finished; host/reporting error: x", code="E301",
-                                               action=errors.RECOVERABLE)
+        self.service_error = errors.FlashError(
+            "flash writer finished; host/reporting error: x", code="E301", action=errors.RECOVERABLE
+        )
         self._go("/fw/disc.zip")
         self._finish()
         texts = self._texts(app.result_box)
@@ -1237,6 +1453,7 @@ class AppFlows(unittest.TestCase):
         def boom(rep):
             rep.phase("Flashing", destructive=True)
             raise RuntimeError("something odd")
+
         self.after_confirm = boom
         self._go("/fw/disc.zip")
         self._answer(True)
@@ -1252,6 +1469,7 @@ class AppFlows(unittest.TestCase):
         def boom(rep):
             rep.phase("Flashing", destructive=True)
             raise errors.FlashError("flash refused", code="F202", action="nothing written")
+
         self.after_confirm = boom
         self._go("/fw/disc.zip")
         self._answer(True)
@@ -1271,19 +1489,29 @@ class AppFlows(unittest.TestCase):
     # ---- height budget ----
     def _budget_states(self, app):
         """Drive the real handlers to each state; yield (name, shown) after the window settles."""
+
         def settle():
             for _ in range(6):
                 self.root.update_idletasks()
                 self.root.update()
+
         app.state, app.start_time = gui.RUNNING, time.monotonic()
         app._enter_run_view()
         app._handle("phase", {"name": "Building diskOS image (public)", "destructive": False})
         app._handle("progress", {"completed": 62, "total": 100})
         settle()
         yield "building"
-        app._handle("phase", {"name": "Flashing (mask-ROM) - about 20 minutes", "destructive": True})
-        app._handle("indeterminate", {"active": True, "note": "flashing (scan -> erase -> program -> verify -> retry)",
-                                      "expect_secs": 1200})
+        app._handle(
+            "phase", {"name": "Flashing (mask-ROM) - about 20 minutes", "destructive": True}
+        )
+        app._handle(
+            "indeterminate",
+            {
+                "active": True,
+                "note": "flashing (scan -> erase -> program -> verify -> retry)",
+                "expect_secs": 1200,
+            },
+        )
         app._toggle_details(True)
         for i in range(60):
             app._log("   detail line %d with some text to fill the log box" % i)
@@ -1296,27 +1524,43 @@ class AppFlows(unittest.TestCase):
         app._back_to_start()
         app._on_action = None
         app._enter_run_view()
-        app._fail("[E226] this firmware version is not supported by this installer - download the supported "
-                  "FiiO firmware .zip", {"code": "E226", "action": "download the supported FiiO firmware .zip",
-                                         "message": "this firmware version is not supported by this installer"})
+        app._fail(
+            "[E226] this firmware version is not supported by this installer - download the supported "
+            "FiiO firmware .zip",
+            {
+                "code": "E226",
+                "action": "download the supported FiiO firmware .zip",
+                "message": "this firmware version is not supported by this installer",
+            },
+        )
         settle()
         yield "error"
         app._back_to_start()
         app._enter_run_view()
         app.flashing = True
-        app._fail(str(errors.FlashError("flash timed out - the device stopped responding after 33 min (it most "
-                                        "likely reset mid-flash). Result UNKNOWN.", code="E303",
-                                        action=errors.WAIT_THEN_RECOVER)),
-                  {"code": "E303", "action": errors.WAIT_THEN_RECOVER,
-                   "message": "flash timed out - the device stopped responding after 33 min (it most likely "
-                              "reset mid-flash). Result UNKNOWN."})
+        app._fail(
+            str(
+                errors.FlashError(
+                    "flash timed out - the device stopped responding after 33 min (it most "
+                    "likely reset mid-flash). Result UNKNOWN.",
+                    code="E303",
+                    action=errors.WAIT_THEN_RECOVER,
+                )
+            ),
+            {
+                "code": "E303",
+                "action": errors.WAIT_THEN_RECOVER,
+                "message": "flash timed out - the device stopped responding after 33 min (it most likely "
+                "reset mid-flash). Result UNKNOWN.",
+            },
+        )
         settle()
         yield "unknown result"
 
     def test_height_budget_at_100_percent(self):
         """At 100% (96 dpi = Tk scaling 4/3) every run/result state fits a 1366x768 laptop: <= 700 px, no scrolling."""
         app = self._make(scaling=96 / 72)
-        for name, in ((n,) for n in self._budget_states(app)):
+        for (name,) in ((n,) for n in self._budget_states(app)):
             h = self.root.winfo_reqheight()
             self.assertLessEqual(h, gui.MAX_WINDOW_H, (name, h))
             self.assertFalse(app._scrolling, name)
@@ -1330,13 +1574,15 @@ class AppFlows(unittest.TestCase):
             h = self.root.winfo_reqheight()
             self.assertLessEqual(h, gui.MAX_WINDOW_H, (name, h))
             inner, view = app.body.winfo_reqheight(), int(app._canvas.cget("height"))
-            if inner > view:                       # content taller than the window allows: it must scroll
+            if inner > view:  # content taller than the window allows: it must scroll
                 self.assertTrue(app._scrolling, name)
                 self.assertEqual(app._vbar.winfo_manager(), "pack", name)
                 scrolled.append(name)
             else:
                 self.assertFalse(app._scrolling, name)
-            self.assertEqual(app.foot.winfo_manager() == "pack", name in ("success", "error", "unknown result"))
+            self.assertEqual(
+                app.foot.winfo_manager() == "pack", name in ("success", "error", "unknown result")
+            )
         self.assertTrue(scrolled, "at 125% at least one state should need the scrollbar")
 
     def test_height_budget_literal_tk_scaling_1_25(self):
@@ -1345,20 +1591,27 @@ class AppFlows(unittest.TestCase):
             self.assertLessEqual(self.root.winfo_reqheight(), gui.MAX_WINDOW_H, name)
 
     def test_confirm_dialog_fits_the_budget_at_both_scales(self):
-        for scaling, action in ((dpi / 72, action) for dpi in (96, 120)
-                                for action in ("install", "restore-stock")):
+        for scaling, action in (
+            (dpi / 72, action) for dpi in (96, 120) for action in ("install", "restore-stock")
+        ):
             with self.subTest(scaling=scaling, action=action):
                 self.calls.clear()
                 app = self._make(scaling=scaling)
                 self.confirm_summary = {
-                    "action": "install", "variant": "dev", "ota": "ON (accepts updates signed by the baked root "
-                    "key, key sha256 9c1e5ab27f40d3e8...)", "duration": "about 20 minutes",
+                    "action": "install",
+                    "variant": "dev",
+                    "ota": "ON (accepts updates signed by the baked root "
+                    "key, key sha256 9c1e5ab27f40d3e8...)",
+                    "duration": "about 20 minutes",
                     "consequence": service.INSTALL_CONSEQUENCE,
                     "requires": "The Disc must already run FiiO's full V2.40 (recovery 17) (kernel + recovery). "
-                                "The writer checks this before changing anything and stops with nothing written "
-                                "if it doesn't match."}
+                    "The writer checks this before changing anything and stops with nothing written "
+                    "if it doesn't match.",
+                }
                 if action == "restore-stock":
-                    self.confirm_summary.update(action=action, consequence=service.RESTORE_CONSEQUENCE)
+                    self.confirm_summary.update(
+                        action=action, consequence=service.RESTORE_CONSEQUENCE
+                    )
                     self.confirm_summary.pop("variant")
                     self.confirm_summary.pop("ota")
                     self._button("Restore stock firmware...").invoke()
@@ -1370,10 +1623,12 @@ class AppFlows(unittest.TestCase):
                 self.assertLessEqual(dlg.winfo_height(), gui.MAX_WINDOW_H)
                 self.assertGreater(dlg.winfo_height(), 200)
                 self.assertIn(self.confirm_summary["consequence"], self._texts(dlg))
-                title = ("Install diskOS (dev)" if action == "install" else "Restore stock firmware")
+                title = "Install diskOS (dev)" if action == "install" else "Restore stock firmware"
                 self.assertTrue(str(_find(dlg, "TLabel", title)[0].cget("image")))
-                for b in _find(dlg, "TButton"):                       # nothing clipped: buttons inside the dialog
-                    self.assertLessEqual(b.winfo_rooty() + b.winfo_height(), dlg.winfo_rooty() + dlg.winfo_height())
+                for b in _find(dlg, "TButton"):  # nothing clipped: buttons inside the dialog
+                    self.assertLessEqual(
+                        b.winfo_rooty() + b.winfo_height(), dlg.winfo_rooty() + dlg.winfo_height()
+                    )
                 self._answer(False)
                 self._finish()
                 self.root.destroy()

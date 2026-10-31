@@ -17,8 +17,20 @@ import sys
 import threading
 import time
 
-from diskos_installer import (__version__, bundle, errors, firmware_catalogue, firmware_download, firmware_resolve,
-                              gui_theme, imagebuild, platform_probe, readiness, service, state, windows_usb)
+from diskos_installer import (
+    __version__,
+    errors,
+    firmware_catalogue,
+    firmware_download,
+    firmware_resolve,
+    gui_theme,
+    imagebuild,
+    platform_probe,
+    readiness,
+    service,
+    state,
+    windows_usb,
+)
 from diskos_installer.reporter import QueueReporter
 
 ACCENT, BG, FG, SUBFG = gui_theme.ACCENT, gui_theme.BG, gui_theme.TEXT, gui_theme.SECONDARY
@@ -29,21 +41,29 @@ IDLE, RUNNING, CONFIRM, SUCCESS, FAILED = "idle", "running", "confirm", "success
 
 # firmware the Disc may run: (catalogue version, dropdown label); the first is preselected
 FW_CHOICES = (("257", "V2.57 (latest)"), ("240", "V2.40"), ("228", "V2.28"), ("209", "V2.09"))
-FW_HINT = ("On the Disc: Settings > System > Device Info > Firmware (diskOS), or "
-           "Settings > System Settings > About device (stock FiiO).")
-MB = 10 ** 6
+FW_HINT = (
+    "On the Disc: Settings > System > Device Info > Firmware (diskOS), or "
+    "Settings > System Settings > About device (stock FiiO)."
+)
+MB = 10**6
 
 # mode -> (title, one-line intro, primary button label)
 MODE_TEXT = {
-    "install": ("Install diskOS",
-                "Uses the official FiiO firmware for your Disc, builds diskOS from it and flashes it over USB.",
-                "Install diskOS..."),
-    "restore": ("Restore stock firmware",
-                "Reflashes bone-stock firmware and removes diskOS from the Disc.",
-                "Restore stock firmware..."),
-    "remove": ("Remove installer data",
-               "Deletes saved firmware, recovery images, installer state and logs from this computer. The Disc is not touched.",
-               "Remove installer data"),
+    "install": (
+        "Install diskOS",
+        "Uses the official FiiO firmware for your Disc, builds diskOS from it and flashes it over USB.",
+        "Install diskOS...",
+    ),
+    "restore": (
+        "Restore stock firmware",
+        "Reflashes bone-stock firmware and removes diskOS from the Disc.",
+        "Restore stock firmware...",
+    ),
+    "remove": (
+        "Remove installer data",
+        "Deletes saved firmware, recovery images, installer state and logs from this computer. The Disc is not touched.",
+        "Remove installer data",
+    ),
 }
 
 # the whole window must fit a 1366x768 laptop (screen minus title bar and taskbar); taller content scrolls
@@ -53,24 +73,39 @@ WRAP = gui_theme.WRAP
 # confirmation dialog
 ACK_TEXT = "I understand and will keep the USB cable connected until it finishes."
 BEGIN_TEXT = "Begin flash (~20 min)"
-CONFIRM_TITLE = {"install": "Install diskOS", "restore-stock": "Restore stock firmware",
-                 "remove-tool": "Remove installer data"}
-DEV_CONFIRM_NOTE = ("Dev build: an always-on passwordless root shell over USB. "
-                    "Development devices only, never an everyday one.")
+CONFIRM_TITLE = {
+    "install": "Install diskOS",
+    "restore-stock": "Restore stock firmware",
+    "remove-tool": "Remove installer data",
+}
+DEV_CONFIRM_NOTE = (
+    "Dev build: an always-on passwordless root shell over USB. "
+    "Development devices only, never an everyday one."
+)
 
 # result screens
-FLASH_LOCK_NOTE = ("Closing this window is blocked until the flash finishes. "
-                   "Nothing else can be changed while the flash runs.")
+FLASH_LOCK_NOTE = (
+    "Closing this window is blocked until the flash finishes. "
+    "Nothing else can be changed while the flash runs."
+)
 # Wording is based on the engine: service.py do_install rep.ok (L230), do_restore rep.ok (L319), do_remove (L328, L347),
 # docs/INSTALL.md L85-86 and INSTALL.md L123/L132 for first boot. Sources per sentence: merge/HANDOFF.md.
 SUCCESS_TEXT = {
-    "install": ("diskOS is installed", "diskOS was written to the Disc and checked.",
-                "Turn the Disc off and on again. On the first start it finishes setting up diskOS by itself."),
-    "restore": ("Stock firmware restored", "The Disc has FiiO's stock firmware again.",
-                "Turn the Disc off and on again to start the stock firmware."),
-    "remove": ("Installer data removed",
-               "Saved firmware, recovery images, installer state and logs were removed from this computer.",
-               "The installer app itself is kept. Delete it if you no longer need it."),
+    "install": (
+        "diskOS is installed",
+        "diskOS was written to the Disc and checked.",
+        "Turn the Disc off and on again. On the first start it finishes setting up diskOS by itself.",
+    ),
+    "restore": (
+        "Stock firmware restored",
+        "The Disc has FiiO's stock firmware again.",
+        "Turn the Disc off and on again to start the stock firmware.",
+    ),
+    "remove": (
+        "Installer data removed",
+        "Saved firmware, recovery images, installer state and logs were removed from this computer.",
+        "The installer app itself is kept. Delete it if you no longer need it.",
+    ),
 }
 FLASH_KEEP_NOTE = "Keep the Disc plugged in and this computer awake until the flash finishes."
 FLASH_PHASE_PREFIX = "Flashing (mask-ROM)"
@@ -101,6 +136,8 @@ def stage_text(note):
         steps = ", ".join(x.strip() for x in m.group(2).split("->") if x.strip())
         t = f"{m.group(1)}: {steps}" if m.group(1) else steps
     return t[:1].upper() + t[1:]
+
+
 NOTHING_WRITTEN = "Nothing was written to the Disc."
 WAIT_NOTE = "Do not retry or disconnect during the wait."
 # codes whose result is UNKNOWN after the writer may have started (errors.WAIT_THEN_RECOVER)
@@ -120,25 +157,40 @@ def error_info(msg, info=None, flashing=False):
         message = m.group(2) if m else (msg or "unknown error")
     action = info.get("action")
     wait = errors.WAIT_THEN_RECOVER
-    if not action and wait in message:          # text-only failure: split the engine's own recovery text off
+    if (
+        not action and wait in message
+    ):  # text-only failure: split the engine's own recovery text off
         message, action = message.replace(" - " + wait, "").rstrip(), wait
     waits = bool(action and wait in action)
     # a writer that FINISHED (RECOVERABLE) is not unknown even under E301; otherwise these codes always are
-    unknown = waits or (code in UNKNOWN_CODES and action != errors.RECOVERABLE) \
-        or (flashing and not code) or ("[F000]" in message and action != errors.RECOVERABLE)
+    unknown = (
+        waits
+        or (code in UNKNOWN_CODES and action != errors.RECOVERABLE)
+        or (flashing and not code)
+        or ("[F000]" in message and action != errors.RECOVERABLE)
+    )
     if unknown and not waits:
         action = wait + (f" {action}" if action else "")
     safe = bool(info.get("pre_launch")) or bool(code and code[0] == "E" and code[1] in "12")
-    return {"code": code, "message": message, "action": action, "unknown": unknown,
-            "nothing_written": safe and not unknown}
+    return {
+        "code": code,
+        "message": message,
+        "action": action,
+        "unknown": unknown,
+        "nothing_written": safe and not unknown,
+    }
 
 
 OTA_LABEL = "Allow diskOS updates over Wi-Fi"
-OTA_HELP = ("diskOS only updates when you tap Update diskOS on the Disc, and only installs releases "
-            "signed by the diskOS release key. Untick to build without updates.")
+OTA_HELP = (
+    "diskOS only updates when you tap Update diskOS on the Disc, and only installs releases "
+    "signed by the diskOS release key. Untick to build without updates."
+)
 OTA_NO_KEY = "This installer has no release key; updates are off"
-WINDOWS_REMOVE_NOTE = ("The boot-mode driver choice stays. To undo: Device Manager > "
-                       "boot-mode device > Uninstall device; leave the driver-package box unticked.")
+WINDOWS_REMOVE_NOTE = (
+    "The boot-mode driver choice stays. To undo: Device Manager > "
+    "boot-mode device > Uninstall device; leave the driver-package box unticked."
+)
 
 
 def ota_key_available():
@@ -157,25 +209,29 @@ def ota_params(ticked, key_available):
 
 class App:
     # firmware acquisition state (see "firmware: pick, download, verify"); class defaults so a bare App is safe
-    _fw_tok, _fw_ctx, _fw_busy = 0, None, False      # run token: events of older runs are dropped
-    _fw_verified = _fw_filled = _fw_row = _restore_why = None   # verified path, path we filled in, checklist note
+    _fw_tok, _fw_ctx, _fw_busy = 0, None, False  # run token: events of older runs are dropped
+    _fw_verified = _fw_filled = _fw_row = _restore_why = (
+        None  # verified path, path we filled in, checklist note
+    )
     _fw_setting = False
     fw_get = fw_browse = fw_entry = fw_combo = fw_state = None
     _fw_bar = _fw_cap = None
 
     def __init__(self, root, run_lock=None):
         self.root = root
-        self.run_lock = run_lock           # the held installer run lock (firmware acquisition borrows it)
-        self._fr = firmware_resolve        # seam: resolve / identify / check_downloads / plan_restore / browser
+        self.run_lock = run_lock  # the held installer run lock (firmware acquisition borrows it)
+        self._fr = (
+            firmware_resolve  # seam: resolve / identify / check_downloads / plan_restore / browser
+        )
         self.q = queue.Queue()
         self.reporter = QueueReporter(self.q)
         self.worker = None
         self.state = IDLE
-        self.flashing = False              # True only during the destructive phase
+        self.flashing = False  # True only during the destructive phase
         self._driver_running = False
         self._inventory_running = False
         self._inventory_worker = None
-        self._ready_probe = None           # last readiness.probe() result (None until the first one lands)
+        self._ready_probe = None  # last readiness.probe() result (None until the first one lands)
         self._ready_running, self._ready_gen = False, 0
         self._ready_cancel = None
         self._ready_view = None
@@ -187,7 +243,7 @@ class App:
         self._confirm_cancel = None
         self._closing = False
         self.start_time = None
-        self._run_view = False             # True while the welcome group is hidden for a run/result
+        self._run_view = False  # True while the welcome group is hidden for a run/result
         self._saved_pack = []
         self._stage_start = self._flash_start = self._expect_secs = self._progress = None
 
@@ -206,9 +262,10 @@ class App:
     # ---- styling -----------------------------------------------------------
     def _build_style(self):
         from tkinter import ttk
+
         self.ttk = ttk
         fonts = gui_theme.make_fonts(self.root)
-        self.fonts = fonts              # keep every Font (incl. brand): Tk fonts die with their Python object
+        self.fonts = fonts  # keep every Font (incl. brand): Tk fonts die with their Python object
         self.f_title, self.f_h, self.f_b = fonts["title"], fonts["h"], fonts["b"]
         self.f_sub, self.f_btn, self.f_mono = fonts["sub"], fonts["btn"], fonts["mono"]
         gui_theme.apply(self.root, fonts)
@@ -218,9 +275,12 @@ class App:
         """All content lives in self.body, inside a canvas that shows a scrollbar only when the content is
         taller than the screen allows (small laptops, 125% scaling). Otherwise the window fits the content."""
         import tkinter as tk
+
         ttk = self.ttk
         self._canvas = tk.Canvas(self.root, bg=BG, highlightthickness=0, bd=0, height=1)
-        self._vbar = ttk.Scrollbar(self._canvas.master, orient="vertical", command=self._canvas.yview)
+        self._vbar = ttk.Scrollbar(
+            self._canvas.master, orient="vertical", command=self._canvas.yview
+        )
         self._canvas.configure(yscrollcommand=self._vbar.set)
         self._canvas.pack(side="left", fill="both", expand=True)
         self.body = ttk.Frame(self._canvas)
@@ -241,7 +301,9 @@ class App:
         foot = getattr(self, "foot", None)
         if foot is not None and foot.winfo_manager():
             pady = foot.pack_info().get("pady", 0)
-            pady = sum(int(float(x)) for x in (pady if isinstance(pady, (tuple, list)) else (pady, pady)))
+            pady = sum(
+                int(float(x)) for x in (pady if isinstance(pady, (tuple, list)) else (pady, pady))
+            )
             limit -= foot.winfo_reqheight() + pady
         return max(360, limit)
 
@@ -251,8 +313,11 @@ class App:
     def _fit_body(self):
         req = self.body.winfo_reqheight()
         limit = self.max_window_height()
-        self._canvas.configure(height=min(req, limit), width=self.body.winfo_reqwidth(),
-                               scrollregion=(0, 0, self.body.winfo_reqwidth(), req))
+        self._canvas.configure(
+            height=min(req, limit),
+            width=self.body.winfo_reqwidth(),
+            scrollregion=(0, 0, self.body.winfo_reqwidth(), req),
+        )
         viewport = self._canvas.winfo_height() if self._canvas.winfo_ismapped() else limit
         self._set_scrolling(req > min(limit, viewport))
 
@@ -301,6 +366,7 @@ class App:
     def _build_widgets(self):
         ttk = self.ttk
         import tkinter as tk
+
         self._make_body()
         sp, sec = gui_theme.SP, gui_theme.SECTION
         pad = {"padx": gui_theme.GUTTER}
@@ -308,7 +374,7 @@ class App:
         brand = ttk.Frame(self.body)
         brand.pack(fill="x", pady=(sp["xl"], 0), **pad)
         self._brand = brand
-        self._wordmark = gui_theme.wordmark(self.root)      # kept: Tk drops unreferenced images
+        self._wordmark = gui_theme.wordmark(self.root)  # kept: Tk drops unreferenced images
         if self._wordmark is not None:
             ttk.Label(brand, image=self._wordmark, style="Brand.TLabel").pack(side="left")
         else:
@@ -317,14 +383,20 @@ class App:
         hero.pack(fill="x", pady=(sp["s"], sec), **pad)
         gui_theme.hero_bleed(self.body, hero, brand)
         txt = ttk.Frame(hero)
-        txt.pack(side="left", fill="x", expand=True, anchor="s", padx=(0, sp["xl"]))   # text sits on the disc's baseline
+        txt.pack(
+            side="left", fill="x", expand=True, anchor="s", padx=(0, sp["xl"])
+        )  # text sits on the disc's baseline
         self.title_lbl = ttk.Label(txt, text="", style="Title.TLabel")
         self.title_lbl.pack(anchor="w")
-        self.intro_lbl = ttk.Label(txt, text="", wraplength=360, justify="left", style="Lede.TLabel")
+        self.intro_lbl = ttk.Label(
+            txt, text="", wraplength=360, justify="left", style="Lede.TLabel"
+        )
         self.intro_lbl.pack(anchor="w", pady=(sp["m"], 0))
         self.driver_lbl = self.driver_btn = None
         if platform_probe.host()[0] == "windows":
-            self.driver_lbl = ttk.Label(txt, text="", style="Sub.TLabel", wraplength=380, justify="left")
+            self.driver_lbl = ttk.Label(
+                txt, text="", style="Sub.TLabel", wraplength=380, justify="left"
+            )
             # Show inventory details here; the checklist offers driver setup when needed.
             self.driver_lbl.pack_forget()
 
@@ -340,16 +412,26 @@ class App:
         self.ready_title = ttk.Label(rhead, text="Checking...", style="Panel.TLabel")
         self.ready_title.pack(side="left")
         gui_theme.set_status(self.ready_title, "Checking...", SUBFG)
-        self.ready_refresh = ttk.Button(rhead, text="Refresh", style="Link.TButton", command=self._on_ready_refresh)
+        self.ready_refresh = ttk.Button(
+            rhead, text="Refresh", style="Link.TButton", command=self._on_ready_refresh
+        )
         self.ready_refresh.pack(side="right")
         self.ready_rows = ttk.Frame(self.ready_frame, style="Panel.TFrame")
         self.ready_rows.pack(fill="x", padx=gui_theme.PANEL_PAD)
         ttk.Frame(self.ready_frame, style="Panel.TFrame", height=sec).pack(side="bottom")
-        self.ready_help = ttk.Frame(self.ready_frame, style="Panel.TFrame")   # packed only with no Disc found
-        ttk.Label(self.ready_help, style="PanelSub.TLabel", wraplength=500, justify="left",
-                  text="Enter flash mode:  " + "  ".join("%d. %s" % (i, step) for i, step in enumerate(readiness.STEPS[:2], 1))
-                  + "\n3. " + readiness.STEPS[2]
-                  ).pack(anchor="w")
+        self.ready_help = ttk.Frame(
+            self.ready_frame, style="Panel.TFrame"
+        )  # packed only with no Disc found
+        ttk.Label(
+            self.ready_help,
+            style="PanelSub.TLabel",
+            wraplength=500,
+            justify="left",
+            text="Enter flash mode:  "
+            + "  ".join("%d. %s" % (i, step) for i, step in enumerate(readiness.STEPS[:2], 1))
+            + "\n3. "
+            + readiness.STEPS[2],
+        ).pack(anchor="w")
 
         # config panel (per-mode)
         self.cfg = ttk.Frame(self.body, style="Panel.TFrame")
@@ -361,39 +443,66 @@ class App:
         gui_theme.rule(self.page_foot).pack(fill="x")
         frow = ttk.Frame(self.page_foot)
         frow.pack(fill="x", pady=(sec - 2, 0))
-        self.action_btn = ttk.Button(frow, text="Install diskOS...",
-                                      style="Accent.TButton", command=self._on_action)
+        self.action_btn = ttk.Button(
+            frow, text="Install diskOS...", style="Accent.TButton", command=self._on_action
+        )
         self.action_btn.pack(side="right", anchor="center")
         self.mode_frame = ttk.Frame(frow)
         self.mode_frame.pack(side="left", fill="x", expand=True, anchor="center")
         gui_theme.kicker(self.mode_frame, "Other actions").pack(anchor="w", pady=(0, sp["xs"]))
         row = ttk.Frame(self.mode_frame)
         row.pack(fill="x")
-        self.back_btn = ttk.Button(row, text="Back to install", style="Link.TButton", command=lambda: self._set_mode("install"))
-        self.restore_btn = ttk.Button(row, text="Restore stock firmware...", style="Link.TButton",
-                                      command=lambda: self._set_mode("restore"))
-        self.remove_btn = ttk.Button(row, text="Remove installer data...", style="Link.TButton",
-                                     command=lambda: self._set_mode("remove"))
-        self._action_btns = {"restore": self.restore_btn, "remove": self.remove_btn, "install": self.back_btn}
+        self.back_btn = ttk.Button(
+            row,
+            text="Back to install",
+            style="Link.TButton",
+            command=lambda: self._set_mode("install"),
+        )
+        self.restore_btn = ttk.Button(
+            row,
+            text="Restore stock firmware...",
+            style="Link.TButton",
+            command=lambda: self._set_mode("restore"),
+        )
+        self.remove_btn = ttk.Button(
+            row,
+            text="Remove installer data...",
+            style="Link.TButton",
+            command=lambda: self._set_mode("remove"),
+        )
+        self._action_btns = {
+            "restore": self.restore_btn,
+            "remove": self.remove_btn,
+            "install": self.back_btn,
+        }
 
         # progress / result block. In a run (see _enter_run_view) it is the only thing in the page body.
         prog = ttk.Frame(self.body)
         prog.pack(fill="both", expand=True, **pad)
         self.prog = prog
-        self.chip = gui_theme.status_word(prog)                  # results only
-        self.warn_banner = gui_theme.banner(prog, WRAP)          # banner, lock note: packed only while flashing
-        self.prog_head = ttk.Frame(prog)             # shown only once something is happening (see _sync_progress)
+        self.chip = gui_theme.status_word(prog)  # results only
+        self.warn_banner = gui_theme.banner(
+            prog, WRAP
+        )  # banner, lock note: packed only while flashing
+        self.prog_head = ttk.Frame(
+            prog
+        )  # shown only once something is happening (see _sync_progress)
         self.phase_lbl = gui_theme.title(self.prog_head, "Ready.", wrap=WRAP)
         self.phase_lbl.pack(anchor="w")
-        self.status_lbl = ttk.Label(self.prog_head, text="", style="Sub.TLabel", wraplength=WRAP, justify="left")
+        self.status_lbl = ttk.Label(
+            self.prog_head, text="", style="Sub.TLabel", wraplength=WRAP, justify="left"
+        )
         self.status_lbl.pack(anchor="w", pady=(0, gui_theme.SP["m"]))
-        self.bar = ttk.Progressbar(self.prog_head, style="diskos.Horizontal.TProgressbar",
-                                   mode="determinate", maximum=100)
+        self.bar = ttk.Progressbar(
+            self.prog_head, style="diskos.Horizontal.TProgressbar", mode="determinate", maximum=100
+        )
         self.bar.pack(fill="x")
         self.elapsed_lbl = ttk.Label(self.prog_head, text="", style="Sub.TLabel")
         self.elapsed_lbl.pack(anchor="w", pady=(gui_theme.SP["xs"], gui_theme.SP["m"]))
-        self.lock_lbl = ttk.Label(prog, text=FLASH_LOCK_NOTE, style="Sub.TLabel", wraplength=WRAP, justify="left")
-        self.result_box = ttk.Frame(prog)           # success card / error text and recovery panel
+        self.lock_lbl = ttk.Label(
+            prog, text=FLASH_LOCK_NOTE, style="Sub.TLabel", wraplength=WRAP, justify="left"
+        )
+        self.result_box = ttk.Frame(prog)  # success card / error text and recovery panel
         # Close/Back live outside the scrolling page so they never scroll away
         self.foot = ttk.Frame(self.root)
 
@@ -404,10 +513,14 @@ class App:
         drow.pack(fill="x")
         self.details_btn = gui_theme.disclosure(drow, "Details", self._toggle_details)
         self.details_btn.pack(side="left")
-        self.host_lbl = ttk.Label(drow, text="", style="Meta.TLabel", justify="right")   # quiet, bottom right
+        self.host_lbl = ttk.Label(
+            drow, text="", style="Meta.TLabel", justify="right"
+        )  # quiet, bottom right
         self.host_lbl.pack(side="right")
         self.logbox = ttk.Frame(self.logwrap)
-        self.log = tk.Text(self.logbox, width=1, height=7, font=self.f_mono, wrap="word", relief="flat")   # width follows the window
+        self.log = tk.Text(
+            self.logbox, width=1, height=7, font=self.f_mono, wrap="word", relief="flat"
+        )  # width follows the window
         gui_theme.style_log(self.log)
         sb = ttk.Scrollbar(self.logbox, command=self.log.yview)
         self.log.configure(yscrollcommand=sb.set, state="disabled")
@@ -422,8 +535,12 @@ class App:
         head = getattr(self, "prog_head", None)
         if head is None:
             return
-        idle = self.state == IDLE and not self._run_view and str(self.phase_lbl.cget("text")) in ("", "Ready.") \
+        idle = (
+            self.state == IDLE
+            and not self._run_view
+            and str(self.phase_lbl.cget("text")) in ("", "Ready.")
             and not str(self.status_lbl.cget("text"))
+        )
         if idle and head.winfo_manager():
             head.pack_forget()
         elif not idle and not head.winfo_manager():
@@ -461,7 +578,7 @@ class App:
         """Tk's radio traversal includes hidden siblings; keep it on the visible choice."""
         if not self._adv.winfo_manager():
             return "break"
-        return None                    # Advanced is open: use Tk's normal radio traversal
+        return None  # Advanced is open: use Tk's normal radio traversal
 
     def _set_mode(self, m):
         self._restore_why = None
@@ -473,8 +590,11 @@ class App:
             w.destroy()
         ttk = self.ttk
         import tkinter as tk
+
         m = self.mode.get()
-        self.fw_get = self.fw_browse = self.fw_entry = self.fw_combo = self.fw_state = None   # destroyed above
+        self.fw_get = self.fw_browse = self.fw_entry = self.fw_combo = self.fw_state = (
+            None  # destroyed above
+        )
         self._fw_stop()
         self._fw_verified = self._fw_filled = None
         self.ota_cb = None
@@ -483,55 +603,87 @@ class App:
         gui_theme.rule(self.cfg).pack(fill="x")
         inner = ttk.Frame(self.cfg, style="Panel.TFrame")
         inner.pack(fill="x", padx=gui_theme.PANEL_PAD, pady=(sec, sec))
-        hang = gui_theme.hang(self.root)                 # text under a checkbox lines up with its label
+        hang = gui_theme.hang(self.root)  # text under a checkbox lines up with its label
         if m == "install":
-            gui_theme.kicker(inner, "Your firmware").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, sp["m"]))
+            gui_theme.kicker(inner, "Your firmware").grid(
+                row=0, column=0, columnspan=2, sticky="w", pady=(0, sp["m"])
+            )
             self.fw_var = tk.StringVar()
             self.fw_var.trace_add("write", lambda *a: self._fw_changed())
             self._build_fw_section(inner, self.fw_var, 1)
             self.variant = tk.StringVar(value="public")
-            gui_theme.kicker(inner, "Variant").grid(row=8, column=0, columnspan=2, sticky="w", pady=(sec + 2, sp["s"]))
+            gui_theme.kicker(inner, "Variant").grid(
+                row=8, column=0, columnspan=2, sticky="w", pady=(sec + 2, sp["s"])
+            )
             vr = ttk.Frame(inner, style="Panel.TFrame")
             vr.grid(row=9, column=0, columnspan=2, sticky="w")
             public_radio = ttk.Radiobutton(
-                vr, text="Public (recommended)", value="public", style="Panel.TRadiobutton",
-                variable=self.variant, command=self._variant_warn)
+                vr,
+                text="Public (recommended)",
+                value="public",
+                style="Panel.TRadiobutton",
+                variable=self.variant,
+                command=self._variant_warn,
+            )
             public_radio.pack(side="left")
             # Dev sits under Advanced: same variable, same warning; it opens by itself whenever Dev is chosen
             self._adv_btn = gui_theme.disclosure(vr, "Advanced", self._toggle_advanced)
             self._adv_btn.pack(side="left", padx=(sp["xl"] + 4, 0))
-            self._adv = ttk.Radiobutton(vr, text="Dev (root shell)", value="dev", style="Panel.TRadiobutton",
-                                        variable=self.variant, command=self._variant_warn)
+            self._adv = ttk.Radiobutton(
+                vr,
+                text="Dev (root shell)",
+                value="dev",
+                style="Panel.TRadiobutton",
+                variable=self.variant,
+                command=self._variant_warn,
+            )
             for radio in (public_radio, self._adv):
                 for key in ("<Up>", "<Down>"):
                     radio.bind(key, self._variant_arrow)
             self.variant_warn_lbl = tk.Label(
-                inner, text="", bg=PANEL, fg=WARN, font=self.f_sub, justify="left", wraplength=540)
-            self.variant_warn_lbl.grid(row=11, column=0, columnspan=2, sticky="w", pady=(sp["s"], 0), padx=(hang, 0))
-            self.variant_warn_lbl.grid_remove()          # no empty gap until Dev is picked
+                inner, text="", bg=PANEL, fg=WARN, font=self.f_sub, justify="left", wraplength=540
+            )
+            self.variant_warn_lbl.grid(
+                row=11, column=0, columnspan=2, sticky="w", pady=(sp["s"], 0), padx=(hang, 0)
+            )
+            self.variant_warn_lbl.grid_remove()  # no empty gap until Dev is picked
             self.ota_key = ota_key_available()
             self.ota_var = tk.BooleanVar(value=self.ota_key)
-            self.ota_cb = ota_cb = ttk.Checkbutton(inner, text=OTA_LABEL, variable=self.ota_var,
-                                                    style="Panel.TCheckbutton")
+            self.ota_cb = ota_cb = ttk.Checkbutton(
+                inner, text=OTA_LABEL, variable=self.ota_var, style="Panel.TCheckbutton"
+            )
             ota_cb.grid(row=12, column=0, columnspan=2, sticky="w", pady=(sp["m"], 0))
             if not self.ota_key:
                 ota_cb.state(["disabled"])
-            tk.Label(inner, text=(OTA_HELP if self.ota_key else OTA_NO_KEY), bg=PANEL, fg=SUBFG,
-                     font=self.f_sub, justify="left", wraplength=500).grid(
-                row=13, column=0, columnspan=2, sticky="w", pady=(0, 0), padx=(hang, 0))
+            tk.Label(
+                inner,
+                text=(OTA_HELP if self.ota_key else OTA_NO_KEY),
+                bg=PANEL,
+                fg=SUBFG,
+                font=self.f_sub,
+                justify="left",
+                wraplength=500,
+            ).grid(row=13, column=0, columnspan=2, sticky="w", pady=(0, 0), padx=(hang, 0))
             inner.columnconfigure(0, weight=1)
         elif m == "restore":
-            have = state.stock_image_exists() and self._restore_why is None   # fast; plan_restore decides at click time
-            msg = ("A saved bone-stock image is available - restore is one click."
-                   if have else
-                   "No saved stock image. The installer rebuilds it from the official FiiO firmware."
-                   if self._restore_why is None else
-                   "The saved stock image cannot be used (%s). The installer rebuilds it from the official FiiO firmware."
-                   % self._restore_why)
-            gui_theme.kicker(inner, "Stock firmware").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, sp["m"]))
+            have = (
+                state.stock_image_exists() and self._restore_why is None
+            )  # fast; plan_restore decides at click time
+            msg = (
+                "A saved bone-stock image is available - restore is one click."
+                if have
+                else "No saved stock image. The installer rebuilds it from the official FiiO firmware."
+                if self._restore_why is None
+                else "The saved stock image cannot be used (%s). The installer rebuilds it from the official FiiO firmware."
+                % self._restore_why
+            )
+            gui_theme.kicker(inner, "Stock firmware").grid(
+                row=0, column=0, columnspan=2, sticky="w", pady=(0, sp["m"])
+            )
             ttk.Label(inner, text=msg, style="Panel.TLabel", wraplength=540).grid(
-                row=1, column=0, columnspan=2, sticky="w", pady=(0, sp["m"] if not have else 0))
-            self.restore_fw_var = None          # only the no-saved-image field below sets this
+                row=1, column=0, columnspan=2, sticky="w", pady=(0, sp["m"] if not have else 0)
+            )
+            self.restore_fw_var = None  # only the no-saved-image field below sets this
             if not have:
                 self.restore_fw_var = tk.StringVar()
                 self.restore_fw_var.trace_add("write", lambda *a: self._fw_changed())
@@ -542,39 +694,62 @@ class App:
                 self._fw_idle()
             inner.columnconfigure(0, weight=1)
         else:  # remove
-            driver_note = (WINDOWS_REMOVE_NOTE + " "
-                           if platform_probe.host()[0] == "windows" else
-                           "Nothing was installed system-wide. ")
+            driver_note = (
+                WINDOWS_REMOVE_NOTE + " "
+                if platform_probe.host()[0] == "windows"
+                else "Nothing was installed system-wide. "
+            )
             gui_theme.kicker(inner, "This computer").pack(anchor="w", pady=(0, sp["m"]))
-            ttk.Label(inner, wraplength=540, style="Panel.TLabel",
-                      text=("Deletes cached firmware, partial downloads, saved recovery images, installer state and owned GUI logs from THIS computer. "
-                            + driver_note + "If diskOS is still on the device, "
-                            "use 'Restore stock firmware' first.")).pack(anchor="w")
+            ttk.Label(
+                inner,
+                wraplength=540,
+                style="Panel.TLabel",
+                text=(
+                    "Deletes cached firmware, partial downloads, saved recovery images, installer state and owned GUI logs from THIS computer. "
+                    + driver_note
+                    + "If diskOS is still on the device, "
+                    "use 'Restore stock firmware' first."
+                ),
+            ).pack(anchor="w")
 
     # ---- firmware: pick, download, verify -------------------------------------
     # Workers never touch Tk: they only call _fw_post(), the main thread applies it in _fw_event().
     # Every run owns a token; _fw_stop() (dropdown/path change, cancel, close) bumps it, so late events are dropped.
     def _build_fw_section(self, inner, var, row):
         import tkinter as tk
+
         ttk, sp = self.ttk, gui_theme.SP
-        tk.Label(inner, text="Which firmware is on your Disc?", bg=PANEL, fg=FG, font=self.f_b).grid(
-            row=row, column=0, columnspan=2, sticky="w")
+        tk.Label(
+            inner, text="Which firmware is on your Disc?", bg=PANEL, fg=FG, font=self.f_b
+        ).grid(row=row, column=0, columnspan=2, sticky="w")
         top = ttk.Frame(inner, style="Panel.TFrame")
         top.grid(row=row + 1, column=0, columnspan=2, sticky="w", pady=(sp["s"], 0))
         self.fw_ver_var = tk.StringVar(value=FW_CHOICES[0][1])
-        self.fw_combo = ttk.Combobox(top, textvariable=self.fw_ver_var, state="readonly", width=14,
-                                     values=[label for _, label in FW_CHOICES])
+        self.fw_combo = ttk.Combobox(
+            top,
+            textvariable=self.fw_ver_var,
+            state="readonly",
+            width=14,
+            values=[label for _, label in FW_CHOICES],
+        )
         self.fw_combo.pack(side="left")
         self.fw_combo.bind("<<ComboboxSelected>>", lambda e: self._fw_dropdown())
-        self.fw_get = ttk.Button(top, text="Get firmware", style="Small.TButton", command=self._fw_get_click)
+        self.fw_get = ttk.Button(
+            top, text="Get firmware", style="Small.TButton", command=self._fw_get_click
+        )
         self.fw_get.pack(side="left", padx=(sp["m"], 0))
-        tk.Label(inner, text=FW_HINT, bg=PANEL, fg=SUBFG, font=self.f_sub, justify="left", wraplength=480).grid(
-            row=row + 2, column=0, columnspan=2, sticky="w", pady=(sp["s"], sp["m"]))
+        tk.Label(
+            inner, text=FW_HINT, bg=PANEL, fg=SUBFG, font=self.f_sub, justify="left", wraplength=480
+        ).grid(row=row + 2, column=0, columnspan=2, sticky="w", pady=(sp["s"], sp["m"]))
         self.fw_entry = ttk.Entry(inner, textvariable=var, width=44)
         self.fw_entry.grid(row=row + 3, column=0, sticky="we")
-        self.fw_browse = ttk.Button(inner, text="Browse...", style="Small.TButton", command=self._pick_firmware)
+        self.fw_browse = ttk.Button(
+            inner, text="Browse...", style="Small.TButton", command=self._pick_firmware
+        )
         self.fw_browse.grid(row=row + 3, column=1, padx=(sp["m"], 0))
-        self.fw_err = tk.Label(inner, text="", bg=PANEL, fg=ERRC, font=self.f_sub, justify="left", anchor="w")
+        self.fw_err = tk.Label(
+            inner, text="", bg=PANEL, fg=ERRC, font=self.f_sub, justify="left", anchor="w"
+        )
         self.fw_err.grid(row=row + 4, column=0, columnspan=2, sticky="w", pady=(sp["s"], 0))
         self.fw_err.grid_remove()
         self.fw_state = ttk.Frame(inner, style="Panel.TFrame")
@@ -591,6 +766,7 @@ class App:
     def _fw_show(self, lines=(), buttons=(), bar=None, url=None, row=None):
         """Redraw the state area. lines: (text, "err"|"ok"|"sub"|"text"); bar: None | ("det"|"ind", caption)."""
         import tkinter as tk
+
         ttk, sp = self.ttk, gui_theme.SP
         f = self.fw_state
         for w in f.winfo_children():
@@ -599,8 +775,16 @@ class App:
         self._fw_row = row
         colours = {"err": ERRC, "ok": OKC, "sub": SUBFG, "text": FG}
         for text, kind in lines:
-            tk.Label(f, text=text, bg=PANEL, fg=colours[kind], font=self.f_sub, justify="left", anchor="w",
-                     wraplength=540).pack(anchor="w", pady=(sp["s"], 0))
+            tk.Label(
+                f,
+                text=text,
+                bg=PANEL,
+                fg=colours[kind],
+                font=self.f_sub,
+                justify="left",
+                anchor="w",
+                wraplength=540,
+            ).pack(anchor="w", pady=(sp["s"], 0))
         if url:
             e = ttk.Entry(f)
             e.insert(0, url)
@@ -609,11 +793,16 @@ class App:
         if bar:
             line = ttk.Frame(f, style="Panel.TFrame")
             line.pack(fill="x", pady=(sp["m"], 0))
-            self._fw_bar = ttk.Progressbar(line, style="diskos.Horizontal.TProgressbar", maximum=100,
-                                           mode="determinate" if bar[0] == "det" else "indeterminate")
+            self._fw_bar = ttk.Progressbar(
+                line,
+                style="diskos.Horizontal.TProgressbar",
+                maximum=100,
+                mode="determinate" if bar[0] == "det" else "indeterminate",
+            )
             self._fw_bar.pack(side="left", fill="x", expand=True)
             ttk.Button(line, text="Cancel", style="Small.TButton", command=self._fw_cancel).pack(
-                side="right", padx=(sp["m"], 0))
+                side="right", padx=(sp["m"], 0)
+            )
             if bar[0] == "ind":
                 self._fw_bar.start(12)
             self._fw_cap = tk.Label(f, text=bar[1], bg=PANEL, fg=SUBFG, font=self.f_sub, anchor="w")
@@ -622,25 +811,45 @@ class App:
             line = ttk.Frame(f, style="Panel.TFrame")
             line.pack(anchor="w", pady=(sp["m"], 0))
             for label, cmd in buttons:
-                ttk.Button(line, text=label, style="Small.TButton", command=cmd).pack(side="left", padx=(0, sp["m"]))
+                ttk.Button(line, text=label, style="Small.TButton", command=cmd).pack(
+                    side="left", padx=(0, sp["m"])
+                )
         self._ready_render()
 
     def _fw_idle(self):
-        if self.fw_get is None:            # restore with a saved image: nothing to choose, nothing to download
+        if (
+            self.fw_get is None
+        ):  # restore with a saved image: nothing to choose, nothing to download
             return self._fw_show([("Nothing is downloaded.", "sub")])
         ver = self._fw_version()
         pin = firmware_catalogue.CATALOGUE[ver]
-        self._fw_show([("Get firmware downloads the official %s firmware (%d MB) and checks it. "
-                        "Nothing is sent about your Disc." % (pin.name, round(pin.size / MB)), "sub")])
+        self._fw_show(
+            [
+                (
+                    "Get firmware downloads the official %s firmware (%d MB) and checks it. "
+                    "Nothing is sent about your Disc." % (pin.name, round(pin.size / MB)),
+                    "sub",
+                )
+            ]
+        )
 
     def _fw_fallbacks(self):
-        return [("Open FiiO download page", self._fw_open_page), ("Check Downloads", self._fw_scan_click)]
+        return [
+            ("Open FiiO download page", self._fw_open_page),
+            ("Check Downloads", self._fw_scan_click),
+        ]
 
     def _fw_lock(self, busy):
         if self.fw_get is None:
             return
         st = "disabled" if busy else "normal"
-        for w in (self.fw_get, self.fw_browse, self.fw_entry, self.action_btn, *self._action_btns.values()):
+        for w in (
+            self.fw_get,
+            self.fw_browse,
+            self.fw_entry,
+            self.action_btn,
+            *self._action_btns.values(),
+        ):
             w.config(state=st)
         self.fw_combo.config(state="disabled" if busy else "readonly")
 
@@ -666,19 +875,19 @@ class App:
         self._fw_show(lines, bar=bar, row=("Getting the firmware...", ""))
         return tok, self._fw_ctx
 
-    def _fw_post(self, tok, ev, **kw):             # the only call a worker makes into the GUI
+    def _fw_post(self, tok, ev, **kw):  # the only call a worker makes into the GUI
         self.q.put(("fw", dict(kw, tok=tok, ev=ev)))
 
     def _fw_changed(self):
         self._fw_error("")
         if self._fw_setting or self.fw_state is None:
             return self._ready_render()
-        self._fw_stop()                    # a typed or browsed path invalidates the old verification
+        self._fw_stop()  # a typed or browsed path invalidates the old verification
         self._fw_idle()
 
     def _fw_dropdown(self):
         if self._fw_filled is not None and self._active_fw_var().get() == self._fw_filled:
-            self._fw_set_path("")                  # the verified file belonged to the old choice
+            self._fw_set_path("")  # the verified file belonged to the old choice
         self._fw_stop()
         self._fw_idle()
 
@@ -688,7 +897,7 @@ class App:
             self._active_fw_var().set(path)
             self._fw_filled = path or None
             if self.fw_entry is not None:
-                self.fw_entry.xview_moveto(1)      # the file name is the end of the path
+                self.fw_entry.xview_moveto(1)  # the file name is the end of the path
         finally:
             self._fw_setting = False
 
@@ -697,22 +906,29 @@ class App:
         if self.fw_get is None:
             return None
         if self._fw_busy:
-            return (True, "", "")          # a run is under way: no warning row
+            return (True, "", "")  # a run is under way: no warning row
         path = self._active_fw_var().get().strip()
         if self._fw_verified and self._fw_verified == path:
             return (True, "", "")
         if self._fw_row is not None:
             return (False,) + tuple(self._fw_row)
         if path:
-            return None                    # typed/browsed but not checked yet: Install checks it first
-        return (False, "%s firmware not downloaded yet" % self._fw_name(self._fw_version()), "Press Get firmware.")
+            return None  # typed/browsed but not checked yet: Install checks it first
+        return (
+            False,
+            "%s firmware not downloaded yet" % self._fw_name(self._fw_version()),
+            "Press Get firmware.",
+        )
 
     def _fw_get_click(self):
         if self._fw_busy:
             return
         ver = self._fw_version()
-        tok, ctx = self._fw_begin("get", [("Downloading %s firmware from FiiO..." % self._fw_name(ver), "text")],
-                                  ("det", "0 of %d MB - 0%%" % round(firmware_catalogue.CATALOGUE[ver].size / MB)))
+        tok, ctx = self._fw_begin(
+            "get",
+            [("Downloading %s firmware from FiiO..." % self._fw_name(ver), "text")],
+            ("det", "0 of %d MB - 0%%" % round(firmware_catalogue.CATALOGUE[ver].size / MB)),
+        )
         post = lambda op, kind, done, total: self._fw_post(tok, kind, done=done, total=total)
 
         def run():
@@ -725,16 +941,33 @@ class App:
                     return res.handle.cancel()
                 self._fw_post(tok, "verified", path=res.handle.wait(), how="download", ver=ver)
             except Exception as exc:
-                kind = ("tls" if isinstance(exc, firmware_download.TlsError)
-                        else "space" if isinstance(exc, (firmware_download.DiskFull, firmware_resolve.InsufficientSpace))
-                        else "cancel" if isinstance(exc, firmware_download.Cancelled) else "other")
-                self._fw_post(tok, "error", kind=kind, ver=ver, exc=exc,
-                              scan=self._fw_scan_now(ver, ctx) if kind == "other" else None)
+                kind = (
+                    "tls"
+                    if isinstance(exc, firmware_download.TlsError)
+                    else "space"
+                    if isinstance(
+                        exc, (firmware_download.DiskFull, firmware_resolve.InsufficientSpace)
+                    )
+                    else "cancel"
+                    if isinstance(exc, firmware_download.Cancelled)
+                    else "other"
+                )
+                self._fw_post(
+                    tok,
+                    "error",
+                    kind=kind,
+                    ver=ver,
+                    exc=exc,
+                    scan=self._fw_scan_now(ver, ctx) if kind == "other" else None,
+                )
+
         threading.Thread(target=run, daemon=True).start()
 
     def _fw_scan_now(self, ver, ctx):
         try:
-            return self._fr.check_downloads(ver, run_lock=self.run_lock, cancel=ctx["cancel"].is_set)
+            return self._fr.check_downloads(
+                ver, run_lock=self.run_lock, cancel=ctx["cancel"].is_set
+            )
         except Exception:
             return None
 
@@ -742,10 +975,15 @@ class App:
         if self._fw_busy:
             return
         ver = self._fw_version()
-        tok, ctx = self._fw_begin("scan", [("Checking Downloads for %s firmware..." % self._fw_name(ver), "text")],
-                                  ("ind", ""))
-        threading.Thread(target=lambda: self._fw_post(tok, "scan", ver=ver, scan=self._fw_scan_now(ver, ctx)),
-                         daemon=True).start()
+        tok, ctx = self._fw_begin(
+            "scan",
+            [("Checking Downloads for %s firmware..." % self._fw_name(ver), "text")],
+            ("ind", ""),
+        )
+        threading.Thread(
+            target=lambda: self._fw_post(tok, "scan", ver=ver, scan=self._fw_scan_now(ver, ctx)),
+            daemon=True,
+        ).start()
 
     def _fw_manual(self, then_install=False):
         """Verify the path in the field (typed or from Browse) against the dropdown's version."""
@@ -758,6 +996,7 @@ class App:
                 self._fw_post(tok, "verified", path=path, how="manual", ver=ver, then=then_install)
             except Exception as exc:
                 self._fw_post(tok, "rejected", ver=ver, exc=exc)
+
         threading.Thread(target=run, daemon=True).start()
 
     def _fw_cancel(self):
@@ -765,45 +1004,83 @@ class App:
         ver = self._fw_version()
         self._fw_stop()
         if kind == "get":
-            self._fw_show([("Firmware download cancelled.", "text")], [("Retry", self._fw_get_click)],
-                          row=("%s firmware not downloaded yet" % self._fw_name(ver), "Press Retry or Get firmware."))
+            self._fw_show(
+                [("Firmware download cancelled.", "text")],
+                [("Retry", self._fw_get_click)],
+                row=(
+                    "%s firmware not downloaded yet" % self._fw_name(ver),
+                    "Press Retry or Get firmware.",
+                ),
+            )
         else:
-            self._fw_show([("Cancelled.", "text")], self._fw_fallbacks(),
-                          row=("%s firmware not downloaded yet" % self._fw_name(ver), "Press Get firmware."))
+            self._fw_show(
+                [("Cancelled.", "text")],
+                self._fw_fallbacks(),
+                row=("%s firmware not downloaded yet" % self._fw_name(ver), "Press Get firmware."),
+            )
 
     def _fw_open_page(self):
         res = self._fr.open_download_page(self._fw_version())
         if not res.ok:
-            self._fw_show([("Could not open a browser. Open this address yourself, then press Check Downloads.", "err")],
-                          self._fw_fallbacks(), url=res.url, row=self._fw_row)
+            self._fw_show(
+                [
+                    (
+                        "Could not open a browser. Open this address yourself, then press Check Downloads.",
+                        "err",
+                    )
+                ],
+                self._fw_fallbacks(),
+                url=res.url,
+                row=self._fw_row,
+            )
 
     def _fw_found(self, ver, scan, first=()):
         self._fw_verified = scan.path
-        self._fw_show(list(first) + [("Found and verified %s firmware in Downloads." % self._fw_name(ver), "ok"),
-                                     ("Copied into the installer's own folder; your original file is untouched.", "sub")])
+        self._fw_show(
+            list(first)
+            + [
+                ("Found and verified %s firmware in Downloads." % self._fw_name(ver), "ok"),
+                ("Copied into the installer's own folder; your original file is untouched.", "sub"),
+            ]
+        )
         self._fw_set_path(scan.path)
 
     def _fw_no_match(self, ver, first, scan):
         detail = scan.detail if scan is not None and scan.kind != "none" else None
-        text = detail or "No verified %s firmware found in Downloads." % self._fw_name(ver).split(" ", 1)[1]
-        self._fw_show(list(first) + [(text, "text")], self._fw_fallbacks(),
-                      row=("%s firmware not downloaded yet" % self._fw_name(ver), "Press Get firmware to retry, or Browse for a ZIP."))
+        text = (
+            detail
+            or "No verified %s firmware found in Downloads." % self._fw_name(ver).split(" ", 1)[1]
+        )
+        self._fw_show(
+            list(first) + [(text, "text")],
+            self._fw_fallbacks(),
+            row=(
+                "%s firmware not downloaded yet" % self._fw_name(ver),
+                "Press Get firmware to retry, or Browse for a ZIP.",
+            ),
+        )
 
     def _fw_event(self, p):
         if threading.current_thread() is not threading.main_thread():
             raise RuntimeError("firmware events are applied on the main thread only")
-        if p["tok"] != self._fw_tok:           # a run that was cancelled, replaced or invalidated
+        if p["tok"] != self._fw_tok:  # a run that was cancelled, replaced or invalidated
             return
         ev, ver = p["ev"], p.get("ver")
         if ev in ("progress", "verifying") and self._fw_bar is not None:
             done, total = p["done"], p["total"] or 1
             if ev == "verifying":
-                self._fw_show([("Verifying firmware...", "text")], bar=("det", "Checking the download against the installer's recorded checksum"),
-                              row=self._fw_row)
+                self._fw_show(
+                    [("Verifying firmware...", "text")],
+                    bar=("det", "Checking the download against the installer's recorded checksum"),
+                    row=self._fw_row,
+                )
                 self._fw_bar.config(value=100)
             else:
                 self._fw_bar.config(value=100 * done / total)
-                self._fw_cap.config(text="%d of %d MB - %d%%" % (done // MB, round(total / MB), round(100 * done / total)))
+                self._fw_cap.config(
+                    text="%d of %d MB - %d%%"
+                    % (done // MB, round(total / MB), round(100 * done / total))
+                )
             return
         if ev in ("progress", "verifying"):
             return
@@ -814,9 +1091,11 @@ class App:
         if ev == "verified":
             self._fw_verified = p["path"]
             name = self._fw_name(ver)
-            tail = {"cache": "Saved on this computer from an earlier run - no download needed.",
-                    "download": "Downloaded from FiiO and saved on this computer for next time.",
-                    "manual": "Using the file you chose."}[p["how"]]
+            tail = {
+                "cache": "Saved on this computer from an earlier run - no download needed.",
+                "download": "Downloaded from FiiO and saved on this computer for next time.",
+                "manual": "Using the file you chose.",
+            }[p["how"]]
             self._fw_show([("%s firmware verified." % name, "ok"), (tail, "sub")])
             if p["how"] != "manual":
                 self._fw_set_path(p["path"])
@@ -826,9 +1105,20 @@ class App:
                 self._fw_install_ticket = (p["tok"], p["path"])
                 self._on_action()
         elif ev == "rejected":
-            self._fw_show([("This file does not match the verified %s download. It cannot be used." % self._fw_name(ver), "err")],
-                          self._fw_fallbacks(), row=("The chosen file is not verified FiiO firmware",
-                                                     "Pick another file, or press Get firmware."))
+            self._fw_show(
+                [
+                    (
+                        "This file does not match the verified %s download. It cannot be used."
+                        % self._fw_name(ver),
+                        "err",
+                    )
+                ],
+                self._fw_fallbacks(),
+                row=(
+                    "The chosen file is not verified FiiO firmware",
+                    "Pick another file, or press Get firmware.",
+                ),
+            )
         elif ev == "scan":
             scan = p["scan"]
             if scan is not None and scan.kind == "found":
@@ -851,15 +1141,22 @@ class App:
         where = getattr(exc, "where", None) or state._state_base()
         if isinstance(exc, firmware_resolve.InsufficientSpace):
             shortfall = -(-max(exc.needed - exc.available, 1) // MB)
-            text = ("Not enough space to save the firmware. "
-                    "Free %d MB in %s, then retry." % (shortfall, where))
+            text = "Not enough space to save the firmware. Free %d MB in %s, then retry." % (
+                shortfall,
+                where,
+            )
         else:
-            text = ("Not enough space to save the firmware in %s. "
-                    "Free some space, then retry." % where)
+            text = (
+                "Not enough space to save the firmware in %s. Free some space, then retry." % where
+            )
         self._fw_show(
-            [(text, "err")], [("Retry", retry)],
-            row=("%s firmware not downloaded yet" % self._fw_name(ver),
-                 "Free some space, then press Retry."))
+            [(text, "err")],
+            [("Retry", retry)],
+            row=(
+                "%s firmware not downloaded yet" % self._fw_name(ver),
+                "Free some space, then press Retry.",
+            ),
+        )
 
     def _fw_cancel_view(self, ver):
         self._fw_show([("Cancelled.", "text")], self._fw_fallbacks())
@@ -870,10 +1167,22 @@ class App:
             return self._fw_cancel_view(ver)
         if kind == "space":
             return self._fw_space(ver, exc, self._fw_get_click)
-        row = ("%s firmware not downloaded yet" % name, "Press Get firmware to retry, or Browse for a ZIP.")
+        row = (
+            "%s firmware not downloaded yet" % name,
+            "Press Get firmware to retry, or Browse for a ZIP.",
+        )
         if kind == "tls":
-            return self._fw_show([("Could not verify FiiO's secure connection. Check this computer's date or use the "
-                                   "browser download.", "err")], self._fw_fallbacks(), row=row)
+            return self._fw_show(
+                [
+                    (
+                        "Could not verify FiiO's secure connection. Check this computer's date or use the "
+                        "browser download.",
+                        "err",
+                    )
+                ],
+                self._fw_fallbacks(),
+                row=row,
+            )
         msg = str(getattr(exc, "message", exc)).rstrip(".")
         first = [("Could not download firmware: %s." % (msg[:1].lower() + msg[1:]), "err")]
         scan = p["scan"]
@@ -886,10 +1195,12 @@ class App:
 
     def _pick_firmware(self):
         from tkinter import filedialog
+
         if self._fw_busy:
             return
-        p = filedialog.askopenfilename(title="Select FiiO firmware .zip",
-                                       filetypes=[("Firmware zip", "*.zip"), ("All", "*")])
+        p = filedialog.askopenfilename(
+            title="Select FiiO firmware .zip", filetypes=[("Firmware zip", "*.zip"), ("All", "*")]
+        )
         if p:
             self._active_fw_var().set(p)
             if self.fw_get is not None:
@@ -913,9 +1224,15 @@ class App:
     # ---- ready check -------------------------------------------------------
     def _ready_pending(self):
         windows = platform_probe.host()[0] == "windows"
-        return {"os": platform_probe.host()[0], "count": None, "access": None, "inv": None,
-                "inv_error": "Windows USB state has not been read yet" if windows else None,
-                "missing_tools": [], "pending": True}
+        return {
+            "os": platform_probe.host()[0],
+            "count": None,
+            "access": None,
+            "inv": None,
+            "inv_error": "Windows USB state has not been read yet" if windows else None,
+            "missing_tools": [],
+            "pending": True,
+        }
 
     def _ready_rows(self):
         fw = getattr(self, "restore_fw_var" if self.mode.get() == "restore" else "fw_var", None)
@@ -923,8 +1240,13 @@ class App:
             have = state.stock_image_exists() if self.mode.get() == "restore" else False
         except Exception:
             have = False
-        return readiness.evaluate(self._ready_probe or self._ready_pending(), self.mode.get(),
-                                  fw.get() if fw is not None else "", have, self._fw_ready())
+        return readiness.evaluate(
+            self._ready_probe or self._ready_pending(),
+            self.mode.get(),
+            fw.get() if fw is not None else "",
+            have,
+            self._fw_ready(),
+        )
 
     def _ready_render(self):
         """Redraw the checklist from the last probe (pure Tk, no USB). Hidden on the Remove screen."""
@@ -936,18 +1258,25 @@ class App:
             return
         if not frame.winfo_manager():
             frame.pack(fill="x", padx=gui_theme.GUTTER, before=self.cfg)
-        import tkinter as tk
+
         ttk = self.ttk
         rows = self._ready_rows()
-        view = (self.mode.get(), self._ready_probe is None, self.state == RUNNING,
-                tuple(tuple(row.items()) for row in rows))
+        view = (
+            self.mode.get(),
+            self._ready_probe is None,
+            self.state == RUNNING,
+            tuple(tuple(row.items()) for row in rows),
+        )
         bad = [r for r in rows if r["ok"] is False]
         if self._ready_probe is None:
             title, colour = "Checking...", SUBFG
         elif bad:
             title, colour = "%d to sort out - you can still continue" % len(bad), WARN
         elif rows[0]["ok"]:
-            title, colour = "Ready - " + rows[0]["text"], OKC       # everything fine: one line, rows collapsed
+            title, colour = (
+                "Ready - " + rows[0]["text"],
+                OKC,
+            )  # everything fine: one line, rows collapsed
         else:
             title, colour = "Checking...", SUBFG
         gui_theme.set_status(self.ready_title, title, colour)
@@ -959,44 +1288,64 @@ class App:
         sp = gui_theme.SP
         # an empty pack master keeps its old size, so the rows frame is only shown while it has rows
         if bad:
-            self.ready_rows.pack(fill="x", padx=gui_theme.PANEL_PAD, pady=(sp["s"], 0), after=self._ready_head)
+            self.ready_rows.pack(
+                fill="x", padx=gui_theme.PANEL_PAD, pady=(sp["s"], 0), after=self._ready_head
+            )
         else:
             self.ready_rows.pack_forget()
-        for r in bad:                                               # only what needs attention, with its fix
+        for r in bad:  # only what needs attention, with its fix
             line = ttk.Frame(self.ready_rows, style="Panel.TFrame")
             line.pack(fill="x", pady=(sp["xs"], 0))
-            ttk.Label(line, image=gui_theme.dot(line, WARN), style="Panel.TLabel").pack(side="left", anchor="n",
-                                                                                    pady=(gui_theme.dot_top(line), 0))
+            ttk.Label(line, image=gui_theme.dot(line, WARN), style="Panel.TLabel").pack(
+                side="left", anchor="n", pady=(gui_theme.dot_top(line), 0)
+            )
             col = ttk.Frame(line, style="Panel.TFrame")
             col.pack(side="left", fill="x", expand=True, anchor="n")
-            short = len(r["text"]) + len(r["fix"]) <= 56           # fix beside the text when both are short
+            short = len(r["text"]) + len(r["fix"]) <= 56  # fix beside the text when both are short
             top = ttk.Frame(col, style="Panel.TFrame")
             top.pack(anchor="w")
-            ttk.Label(top, text=r["text"], style="Panel.TLabel", wraplength=440, justify="left").pack(
-                side="left", anchor="n")
+            ttk.Label(
+                top, text=r["text"], style="Panel.TLabel", wraplength=440, justify="left"
+            ).pack(side="left", anchor="n")
             if r["fix"]:
-                fix = ttk.Label((top if short else col), text=r["fix"], style="PanelSub.TLabel", wraplength=440,
-                                justify="left")
+                fix = ttk.Label(
+                    (top if short else col),
+                    text=r["fix"],
+                    style="PanelSub.TLabel",
+                    wraplength=440,
+                    justify="left",
+                )
                 if short:
                     fix.pack(side="left", anchor="n", padx=(sp["m"], 0))
                 else:
                     fix.pack(anchor="w")
             if r["action"] == "driver":
-                b = ttk.Button(line, text="Set up USB driver...", style="Small.TButton",
-                               command=lambda: self._on_driver_setup())
+                b = ttk.Button(
+                    line,
+                    text="Set up USB driver...",
+                    style="Small.TButton",
+                    command=lambda: self._on_driver_setup(),
+                )
                 b.pack(side="right", anchor="n")
                 if self.state == RUNNING:
                     b.config(state="disabled")
         if readiness.needs_flash_mode_help(rows):
-            self.ready_help.pack(fill="x", padx=(gui_theme.PANEL_PAD + gui_theme.status_indent(self.ready_help), 0),
-                                 pady=(sp["m"], 0))
+            self.ready_help.pack(
+                fill="x",
+                padx=(gui_theme.PANEL_PAD + gui_theme.status_indent(self.ready_help), 0),
+                pady=(sp["m"], 0),
+            )
         else:
             self.ready_help.pack_forget()
 
     def _ready_start(self):
         """One background job; Windows inventory and readiness share the existing worker."""
-        if (getattr(self, "ready_frame", None) is None or self._closing
-                or self.state == RUNNING or self._ready_running):
+        if (
+            getattr(self, "ready_frame", None) is None
+            or self._closing
+            or self.state == RUNNING
+            or self._ready_running
+        ):
             return
         windows = platform_probe.host()[0] == "windows"
         self._ready_running = True
@@ -1022,8 +1371,14 @@ class App:
                 if not cancel.is_set():
                     p = readiness.probe(inventory)
             except Exception as e:
-                p = {"os": platform_probe.host()[0], "count": -1, "access": None, "inv": None,
-                     "inv_error": str(e), "missing_tools": []}
+                p = {
+                    "os": platform_probe.host()[0],
+                    "count": -1,
+                    "access": None,
+                    "inv": None,
+                    "inv_error": str(e),
+                    "missing_tools": [],
+                }
             finally:
                 self.q.put(("ready", {"gen": gen, "probe": None if cancel.is_set() else p}))
 
@@ -1069,10 +1424,12 @@ class App:
             return
         if getattr(self, "ready_frame", None) is not None:
             self.host_lbl.config(text=f"{o}-{a} - v{__version__}")
-            self._ready_start()          # counts devices off the UI thread; the host line follows
+            self._ready_start()  # counts devices off the UI thread; the host line follows
             return
         n = platform_probe.maskrom_count()
-        dev = {0: "no device in flash mode", -1: "USB not enumerable"}.get(n, f"{n} device(s) in flash mode")
+        dev = {0: "no device in flash mode", -1: "USB not enumerable"}.get(
+            n, f"{n} device(s) in flash mode"
+        )
         self.host_lbl.config(text=f"{o}-{a} - v{__version__} - {dev}")
         self.host_lbl.config(foreground=OKC if n == 1 else SUBFG)
 
@@ -1083,7 +1440,7 @@ class App:
         gui_theme.set_display(self.title_lbl, title)
         self.intro_lbl.config(text=intro)
         self.action_btn.config(text=label)
-        for key, btn in self._action_btns.items():      # every screen except the current one
+        for key, btn in self._action_btns.items():  # every screen except the current one
             btn.pack_forget()
             if key != m:
                 btn.pack(side="left", padx=(0, gui_theme.SP["xl"]))
@@ -1108,16 +1465,23 @@ class App:
         self._clear_finish_extra()
         self.phase_lbl.config(text="Checking USB driver...")
         self._sync_progress()
+
         def run():
             try:
                 result = windows_usb.setup_driver(
                     self.reporter.status,
-                    lambda: self._worker_confirm({"action": "Set up USB driver",
-                        "consequence": "Bind only the mask-ROM Disc to Microsoft's WinUSB driver.",
-                        "requires": "Windows administrator approval or credentials. No flash will start."}))
+                    lambda: self._worker_confirm(
+                        {
+                            "action": "Set up USB driver",
+                            "consequence": "Bind only the mask-ROM Disc to Microsoft's WinUSB driver.",
+                            "requires": "Windows administrator approval or credentials. No flash will start.",
+                        }
+                    ),
+                )
                 self.q.put(("driver_done", result))
             except Exception as e:
                 self.q.put(("failed", {"error": str(e)}))
+
         self.worker = threading.Thread(target=run, daemon=True)
         self.worker.start()
 
@@ -1153,9 +1517,11 @@ class App:
             params.update(ota_params(self.ota_var.get(), self.ota_key))
             fn = service.do_install
         elif m == "restore":
-            fw = getattr(self, "restore_fw_var", None)       # never the Install page's field
-            if fw is None:                                   # saved image: plan it off the UI thread
-                tok, _ = self._fw_begin("plan", [("Checking the saved stock image...", "text")], None)
+            fw = getattr(self, "restore_fw_var", None)  # never the Install page's field
+            if fw is None:  # saved image: plan it off the UI thread
+                tok, _ = self._fw_begin(
+                    "plan", [("Checking the saved stock image...", "text")], None
+                )
 
                 def plan():
                     try:
@@ -1163,8 +1529,15 @@ class App:
                         self._fw_post(tok, "plan", ok=True)
                     except Exception as exc:
                         why = str(getattr(exc, "message", exc))
-                        self._fw_post(tok, "plan", ok=False,
-                                      why=why[len("Cannot restore: "):] if why.startswith("Cannot restore: ") else why)
+                        self._fw_post(
+                            tok,
+                            "plan",
+                            ok=False,
+                            why=why[len("Cannot restore: ") :]
+                            if why.startswith("Cannot restore: ")
+                            else why,
+                        )
+
                 threading.Thread(target=plan, daemon=True).start()
                 return
             if not self._fw_gate(fw.get().strip()):
@@ -1179,7 +1552,12 @@ class App:
     def _launch(self, fn, params):
         self.state = RUNNING
         self.start_time = time.monotonic()
-        self._stage_start, self._flash_start, self._expect_secs, self._progress = self.start_time, None, None, None
+        self._stage_start, self._flash_start, self._expect_secs, self._progress = (
+            self.start_time,
+            None,
+            None,
+            None,
+        )
         self._set_controls(False)
         self._clear_finish_extra()
         self.bar.config(mode="determinate", value=0)
@@ -1196,10 +1574,18 @@ class App:
                 self.q.put(("done", r))
             except Exception as e:  # BuildError/FlashError/etc.
                 # the engine's own fields travel with the text so the result screen can show them apart
-                self.q.put(("failed", {"error": str(e), "code": getattr(e, "code", None),
-                                       "message": getattr(e, "message", None),
-                                       "action": getattr(e, "action", None),
-                                       "pre_launch": bool(getattr(e, "pre_launch", False))}))
+                self.q.put(
+                    (
+                        "failed",
+                        {
+                            "error": str(e),
+                            "code": getattr(e, "code", None),
+                            "message": getattr(e, "message", None),
+                            "action": getattr(e, "action", None),
+                            "pre_launch": bool(getattr(e, "pre_launch", False)),
+                        },
+                    )
+                )
 
         self.worker = threading.Thread(target=run, daemon=True)
         self.worker.start()
@@ -1214,20 +1600,29 @@ class App:
         def walk(w):
             for c in w.winfo_children():
                 cls = c.winfo_class()
-                if cls in ("TRadiobutton", "TButton", "TEntry", "TCheckbutton",
-                           "Radiobutton", "Button", "Entry", "Checkbutton"):
+                if cls in (
+                    "TRadiobutton",
+                    "TButton",
+                    "TEntry",
+                    "TCheckbutton",
+                    "Radiobutton",
+                    "Button",
+                    "Entry",
+                    "Checkbutton",
+                ):
                     try:
                         c.config(state=st)
                     except Exception:
                         pass
                 walk(c)
+
         walk(self.mode_frame)
         walk(self.cfg)
         if getattr(self, "ready_frame", None) is not None:
             walk(self.ready_frame)
         cb = getattr(self, "ota_cb", None)
         if cb is not None and not self.ota_key:
-            cb.state(["disabled"])          # no release key: stays off and locked
+            cb.state(["disabled"])  # no release key: stays off and locked
         self.action_btn.config(state=st)
         if self.driver_btn is not None:
             self.driver_btn.config(state=st)
@@ -1372,11 +1767,13 @@ class App:
                 except Exception:
                     _resolve(False)
                     return "break"
+
             return guarded
 
         self._confirm_cancel = lambda: _resolve(False)
         try:
             import tkinter as tk
+
             action = summary.get("action", "confirm")
             destructive = action in ("install", "restore-stock")
             scale = max(1.0, self.root.winfo_fpixels("1i") / 96)
@@ -1390,7 +1787,8 @@ class App:
             ack = tk.BooleanVar(master=dlg, value=not destructive)
             body = self._build_confirm_summary(dlg, summary, destructive, W, scale)
             ack_cb, cancel, begin = self._build_confirm_actions(
-                body, destructive, ack, W, scale, _resolve, guard)
+                body, destructive, ack, W, scale, _resolve, guard
+            )
 
             def _enter(_e):
                 f = dlg.focus_get()
@@ -1428,8 +1826,11 @@ class App:
         if action == "install" and summary.get("variant"):
             text += f" ({summary['variant']})"
         th.title(body, text, level="title", wrap=inner_w).pack(anchor="w", pady=(0, th.SP["l"]))
-        rows = [("Updates over Wi-Fi", summary.get("ota")), ("Duration", summary.get("duration")),
-                ("Firmware base" if destructive else "Needs", summary.get("requires"))]
+        rows = [
+            ("Updates over Wi-Fi", summary.get("ota")),
+            ("Duration", summary.get("duration")),
+            ("Firmware base" if destructive else "Needs", summary.get("requires")),
+        ]
         if action == "install" and summary.get("variant") == "dev":
             rows.insert(0, ("Variant", DEV_CONFIRM_NOTE))
         kv = ttk.Frame(body)
@@ -1438,19 +1839,26 @@ class App:
         for label, value in rows:
             if value:
                 th.kicker(kv, label).grid(row=n, column=0, sticky="nw", pady=th.SP["s"])
-                ttk.Label(kv, text=value, wraplength=inner_w - int(th.KV_LABEL_W * scale), justify="left").grid(
-                    row=n, column=1, sticky="nw", padx=(th.SP["l"], 0), pady=th.SP["s"])
+                ttk.Label(
+                    kv, text=value, wraplength=inner_w - int(th.KV_LABEL_W * scale), justify="left"
+                ).grid(row=n, column=1, sticky="nw", padx=(th.SP["l"], 0), pady=th.SP["s"])
                 n += 1
         kv.columnconfigure(1, weight=1)
         if summary.get("consequence"):
             if destructive:
                 box = th.panel(body, "warn")
                 box.pack(fill="x", pady=(th.SP["l"], 0))
-                th.panel_row(box, head="Warning.", text=summary["consequence"], head_kind="warn",
-                             wrap=inner_w - 2 * th.SP["xs"])
+                th.panel_row(
+                    box,
+                    head="Warning.",
+                    text=summary["consequence"],
+                    head_kind="warn",
+                    wrap=inner_w - 2 * th.SP["xs"],
+                )
             else:
-                ttk.Label(body, text=summary["consequence"], wraplength=inner_w, justify="left").pack(
-                    anchor="w", pady=(th.SP["l"], 0))
+                ttk.Label(
+                    body, text=summary["consequence"], wraplength=inner_w, justify="left"
+                ).pack(anchor="w", pady=(th.SP["l"], 0))
         return body
 
     def _build_confirm_actions(self, body, destructive, ack, W, scale, resolve, guard):
@@ -1461,30 +1869,38 @@ class App:
         begin = None
         if destructive:
             ack_cb = th.acknowledgement(
-                body, ACK_TEXT, ack, guard(lambda: begin.config(state=("normal" if ack.get() else "disabled"))))
+                body,
+                ACK_TEXT,
+                ack,
+                guard(lambda: begin.config(state=("normal" if ack.get() else "disabled"))),
+            )
             ack_cb.pack(anchor="w", pady=(th.SP["xl"], 0))
         th.rule(body).pack(fill="x", pady=(th.SP["xl"], th.SECTION))
         row = ttk.Frame(body)
         row.pack(fill="x")
         cancel = ttk.Button(row, text="Cancel", command=lambda: resolve(False))
-        begin = ttk.Button(row, text=(BEGIN_TEXT if destructive else "Proceed"),
-                           style="Accent.TButton", command=lambda: resolve(True))
+        begin = ttk.Button(
+            row,
+            text=(BEGIN_TEXT if destructive else "Proceed"),
+            style="Accent.TButton",
+            command=lambda: resolve(True),
+        )
         begin.pack(side="right")
-        cancel.pack(side="right", padx=(0, th.SP["l"]))        # Cancel sits left of Begin
+        cancel.pack(side="right", padx=(0, th.SP["l"]))  # Cancel sits left of Begin
         if destructive:
             begin.config(state="disabled")
         return ack_cb, cancel, begin
 
     # ---- queue drain (main thread) ----------------------------------------
     def _drain(self):
-        budget = 200   # bounded per tick so a flood of events can't starve Tk
+        budget = 200  # bounded per tick so a flood of events can't starve Tk
         try:
             while budget > 0:
                 kind, payload = self.q.get_nowait()
                 budget -= 1
                 try:
                     self._handle(kind, payload)
-                except Exception as e:   # one malformed event must not stop the drain
+                except Exception as e:  # one malformed event must not stop the drain
                     self._log(f"[ui error handling {kind}: {e}]")
         except queue.Empty:
             pass
@@ -1511,19 +1927,22 @@ class App:
             self._log("   " + p["line"])
         elif kind == "progress":
             if str(self.bar["mode"]) == "indeterminate":
-                self.bar.stop(); self.bar.config(mode="determinate")
+                self.bar.stop()
+                self.bar.config(mode="determinate")
             total = p["total"] or 1
             self.bar.config(maximum=total, value=p["completed"])
             self._progress = (p["completed"], total)
             self.elapsed_lbl.config(text=self._timing_text(time.monotonic()))
         elif kind == "indeterminate":
             if p["active"]:
-                self.bar.config(mode="indeterminate"); self.bar.start(12)
+                self.bar.config(mode="indeterminate")
+                self.bar.start(12)
                 self.status_lbl.config(text=stage_text(p.get("note", "")))
                 self._expect_secs = p.get("expect_secs")
                 self.elapsed_lbl.config(text=self._timing_text(time.monotonic()))
             else:
-                self.bar.stop(); self.bar.config(mode="determinate")
+                self.bar.stop()
+                self.bar.config(mode="determinate")
         elif kind == "warning":
             self._log("! " + p["message"])
         elif kind == "ok":
@@ -1538,8 +1957,11 @@ class App:
             if p["gen"] != self._ready_gen:
                 return
             self._inventory_running = False
-            if (self._closing or self.state == RUNNING
-                    or (self._ready_cancel is not None and self._ready_cancel.is_set())):
+            if (
+                self._closing
+                or self.state == RUNNING
+                or (self._ready_cancel is not None and self._ready_cancel.is_set())
+            ):
                 return
             self.driver_lbl.config(text=p["text"])
             self.driver_lbl.pack(anchor="w", pady=(6, 2))
@@ -1551,8 +1973,13 @@ class App:
             self._driver_running = False
             self.state = IDLE
             self._set_controls(True)
-            self.phase_lbl.config(text="Restart Windows to finish driver setup." if p.get("reboot_required")
-                                  else "Driver setup cancelled." if p.get("aborted") else "USB check complete.")
+            self.phase_lbl.config(
+                text="Restart Windows to finish driver setup."
+                if p.get("reboot_required")
+                else "Driver setup cancelled."
+                if p.get("aborted")
+                else "USB check complete."
+            )
             self.status_lbl.config(text=p["message"], wraplength=520)
             self._log(p["message"])
             self._refresh_state_labels()
@@ -1571,8 +1998,9 @@ class App:
         self.warn_banner.config(text=FLASH_KEEP_NOTE)
         self._ensure_head()
         if not self.warn_banner.winfo_manager():
-            self.warn_banner.pack(fill="x", pady=(gui_theme.SP["l"], gui_theme.SP["l"]),
-                                  before=self.prog_head)
+            self.warn_banner.pack(
+                fill="x", pady=(gui_theme.SP["l"], gui_theme.SP["l"]), before=self.prog_head
+            )
         if not self.lock_lbl.winfo_manager():
             self.lock_lbl.pack(anchor="w", pady=(0, gui_theme.SP["m"]), before=self.logwrap)
 
@@ -1605,7 +2033,11 @@ class App:
             spent = now - (self._stage_start or self.start_time)
             if c > 0 and 0.05 <= c / t < 1 and spent >= 3:
                 left = int(spent * (t - c) / c)
-                txt += (f" - about {left} s left" if left < 90 else f" - about {math.ceil(left / 60)} min left")
+                txt += (
+                    f" - about {left} s left"
+                    if left < 90
+                    else f" - about {math.ceil(left / 60)} min left"
+                )
         return txt
 
     def _present(self, kind, chip, title, body=None, card=None, panel=None, note=None, back=False):
@@ -1622,7 +2054,9 @@ class App:
         self.status_lbl.config(text="")
         self._build_result_body(self.result_box, body, card, panel, note)
         self.result_box.pack(fill="x", pady=(th.SP["m"], th.SP["m"]), before=self.logwrap)
-        if self._run_view:          # inline (driver setup) results have no footer: the window is still the welcome
+        if (
+            self._run_view
+        ):  # inline (driver setup) results have no footer: the window is still the welcome
             self._build_result_footer(kind, back)
         self._scroll_top()
 
@@ -1631,7 +2065,9 @@ class App:
         ttk = self.ttk
         th = gui_theme
         if body:
-            ttk.Label(rb, text=body, wraplength=WRAP, justify="left").pack(anchor="w", pady=(0, th.SP["m"]))
+            ttk.Label(rb, text=body, wraplength=WRAP, justify="left").pack(
+                anchor="w", pady=(0, th.SP["m"])
+            )
         if card:
             box = th.panel(rb, "quiet")
             box.pack(fill="x", pady=(th.SP["s"], 0))
@@ -1640,10 +2076,13 @@ class App:
             head, text, border = panel
             box = th.panel(rb, "err" if border == "err" else "line")
             box.pack(fill="x", pady=(th.SP["s"], 0))
-            th.panel_row(box, head=head, text=text, head_kind=("err" if border == "err" else "warn"))
+            th.panel_row(
+                box, head=head, text=text, head_kind=("err" if border == "err" else "warn")
+            )
         if note:
             ttk.Label(rb, text=note, style="Sub.TLabel", wraplength=WRAP, justify="left").pack(
-                anchor="w", pady=(th.SP["m"], 0))
+                anchor="w", pady=(th.SP["m"], 0)
+            )
 
     def _build_result_footer(self, kind, back):
         ttk = self.ttk
@@ -1652,15 +2091,29 @@ class App:
         row = ttk.Frame(self.foot)
         row.pack(fill="x")
         # one rose primary per screen: Back when there is a way back to retry, else Close
-        backb = ttk.Button(row, text="Back", command=self._back_to_start, style="Accent.TButton") if back else None
-        close = ttk.Button(row, text="Close", command=self._on_close,
-                           style=("Link.TButton" if backb is not None else "Accent.TButton"))
+        backb = (
+            ttk.Button(row, text="Back", command=self._back_to_start, style="Accent.TButton")
+            if back
+            else None
+        )
+        close = ttk.Button(
+            row,
+            text="Close",
+            command=self._on_close,
+            style=("Link.TButton" if backb is not None else "Accent.TButton"),
+        )
         if backb is not None:
             backb.pack(side="right")
             close.pack(side="left")
         else:
             close.pack(side="right")
-        self.foot.pack(side="bottom", fill="x", padx=th.GUTTER, pady=(th.SP["s"], th.SP["xl"]), before=self._canvas)
+        self.foot.pack(
+            side="bottom",
+            fill="x",
+            padx=th.GUTTER,
+            pady=(th.SP["s"], th.SP["xl"]),
+            before=self._canvas,
+        )
         self.root.update_idletasks()
         self._fit_body()
         close.focus_set()
@@ -1678,12 +2131,16 @@ class App:
             self._leave_run_view()
             self.phase_lbl.config(text="Cancelled - device unchanged.")
             self.elapsed_lbl.config(text="")
-        elif r.get("errors"):        # e.g. uninstall couldn't remove everything
+        elif r.get("errors"):  # e.g. uninstall couldn't remove everything
             self.state = FAILED
             self._toggle_details(True)
-            self._present("err", "Problems", "Finished with problems",
-                          body="Some installer data could not be removed. The Details below list each item.",
-                          back=True)
+            self._present(
+                "err",
+                "Problems",
+                "Finished with problems",
+                body="Some installer data could not be removed. The Details below list each item.",
+                back=True,
+            )
         else:
             self.state = SUCCESS
             self.bar.config(mode="determinate", maximum=100, value=100)
@@ -1711,8 +2168,11 @@ class App:
         elif was_flashing or (code and (code.startswith("E3") or code[0] == "F")):
             title = "The flash did not complete"
         else:
-            title = {"install": "The install stopped", "restore": "The restore stopped",
-                     "remove": "The removal stopped"}.get(mode, "Something went wrong")
+            title = {
+                "install": "The install stopped",
+                "restore": "The restore stopped",
+                "remove": "The removal stopped",
+            }.get(mode, "Something went wrong")
         self._failure_context = None
         panel = note = None
         if e["unknown"]:
@@ -1724,8 +2184,15 @@ class App:
             note = NOTHING_WRITTEN
         self._toggle_details(True)
         self._log("ERROR " + msg)
-        self._present("err", f"Error {code}" if code else "Error", title, body=display_sentence(e["message"]), panel=panel,
-                      note=note, back=not e["unknown"])
+        self._present(
+            "err",
+            f"Error {code}" if code else "Error",
+            title,
+            body=display_sentence(e["message"]),
+            panel=panel,
+            note=note,
+            back=not e["unknown"],
+        )
 
     def _tick_elapsed(self):
         if self.state == RUNNING and self.start_time:
@@ -1740,20 +2207,24 @@ class App:
 
     def _on_close(self):
         from tkinter import messagebox
+
         if self._driver_running:
-            messagebox.showwarning("Driver setup", "Wait for driver setup to finish. "
-                                   "You can cancel the Windows approval prompt.")
+            messagebox.showwarning(
+                "Driver setup",
+                "Wait for driver setup to finish. You can cancel the Windows approval prompt.",
+            )
             return
         if self.flashing:
             messagebox.showwarning(
                 "Flash in progress",
                 "A flash is in progress. Closing now can leave the device needing a "
-                "mask-ROM recovery. Please wait until it finishes.")
+                "mask-ROM recovery. Please wait until it finishes.",
+            )
             return
         if self.state == RUNNING:
             if not messagebox.askokcancel(
-                    "Operation in progress",
-                    "An operation is still running. Close anyway?"):
+                "Operation in progress", "An operation is still running. Close anyway?"
+            ):
                 return
         self._closing = True
         self._fw_stop()
@@ -1766,8 +2237,9 @@ def main(run_lock=None):
     try:
         import tkinter as tk
     except Exception as e:
-        sys.stderr.write(f"diskOS Installer: Tkinter unavailable ({e}). Use the CLI: "
-                         "diskos-installer --help\n")
+        sys.stderr.write(
+            f"diskOS Installer: Tkinter unavailable ({e}). Use the CLI: diskos-installer --help\n"
+        )
         return 2
     try:
         root = tk.Tk()
@@ -1780,6 +2252,7 @@ def main(run_lock=None):
         # A packaged GUI hides early tracebacks - persist one and show a dialog.
         import tempfile
         import traceback
+
         # Unique, 0600 crash log (a fixed name in a world-writable temp dir could be pre-placed as a
         # symlink to truncate an arbitrary target). The exact path is shown in the message below.
         try:
@@ -1788,13 +2261,18 @@ def main(run_lock=None):
                 f.write(traceback.format_exc())
         except OSError:
             logp = "(could not write a log file)"
-        sys.stderr.write(f"diskOS Installer failed to start: {e}\n(log: {logp})\n"
-                         "Try the CLI: diskos-installer doctor\n")
+        sys.stderr.write(
+            f"diskOS Installer failed to start: {e}\n(log: {logp})\n"
+            "Try the CLI: diskos-installer doctor\n"
+        )
         try:
             import tkinter.messagebox as mb
-            mb.showerror("diskOS Installer",
-                         f"Failed to start:\n{e}\n\nDetails: {logp}\n"
-                         "You can still use the command line: diskos-installer doctor")
+
+            mb.showerror(
+                "diskOS Installer",
+                f"Failed to start:\n{e}\n\nDetails: {logp}\n"
+                "You can still use the command line: diskos-installer doctor",
+            )
         except Exception:
             pass
         return 1

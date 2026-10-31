@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """AirPlay artwork encoding and outgoing request; requires GCC and Pillow."""
+
 import io
 import os
 import re
@@ -14,28 +15,31 @@ APP = Path(__file__).resolve().parents[1]
 
 
 def function(text, name):
-    start = re.search(r'^(?:static )?int ' + name + r'\([^;{}]*\)\s*\{',
-                      text, re.M).start()
-    pos = text.index('{', start)
-    tokens = re.finditer(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'
-                         r"'(?:\\.|[^'\\])*'|[{}]", text[pos:], re.S)
+    start = re.search(r"^(?:static )?int " + name + r"\([^;{}]*\)\s*\{", text, re.M).start()
+    pos = text.index("{", start)
+    tokens = re.finditer(
+        r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"|'
+        r"'(?:\\.|[^'\\])*'|[{}]",
+        text[pos:],
+        re.S,
+    )
     depth = 0
     for token in tokens:
-        if token.group() == '{':
+        if token.group() == "{":
             depth += 1
-        elif token.group() == '}':
+        elif token.group() == "}":
             depth -= 1
             if depth == 0:
-                return text[start:pos + token.end()]
-    raise AssertionError('unclosed function: ' + name)
+                return text[start : pos + token.end()]
+    raise AssertionError("unclosed function: " + name)
 
 
 class AirPlayArtTests(unittest.TestCase):
     def test_jpeg_and_png_fallback_requests(self):
-        session = (APP / 'airplay_session.c').read_text()
-        self.assertIn('cast_art_airplay_fd(t->art_fd,',
-                      (APP / 'airplay_worker.c').read_text())
-        probe = r"""
+        session = (APP / "airplay_session.c").read_text()
+        self.assertIn("cast_art_airplay_fd(t->art_fd,", (APP / "airplay_worker.c").read_text())
+        probe = (
+            r"""
 #include <assert.h>
 #include <stdlib.h>
 #include "cast_art.h"
@@ -69,8 +73,9 @@ static int aps_rtsp_request(rtsp *r, const char *method, const char *uri,
     assert(fwrite(p, 1, n, stdout) == n);
     out->status = 200; return 0;
 }
-""" + '\n'.join(function(session, n) for n in
-               ('okay', 'parameter', 'aps_session_art')) + r"""
+"""
+            + "\n".join(function(session, n) for n in ("okay", "parameter", "aps_session_art"))
+            + r"""
 int main(int argc, char **argv) {
     assert(argc == 3);
     unsigned char *guard = malloc(CA_JPEG_MAX + 2), byte = 7;
@@ -103,50 +108,88 @@ int main(int argc, char **argv) {
     free(data); return 0;
 }
 """
+        )
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
-            image = Image.frombytes('RGB', (148, 148), bytes(
-                c for y in range(148) for x in range(148)
-                for c in (x * 255 // 147, y * 255 // 147, 91)))
-            bmp = d / 'cover.bmp'
+            image = Image.frombytes(
+                "RGB",
+                (148, 148),
+                bytes(
+                    c
+                    for y in range(148)
+                    for x in range(148)
+                    for c in (x * 255 // 147, y * 255 // 147, 91)
+                ),
+            )
+            bmp = d / "cover.bmp"
             image.save(bmp)
-            source = d / 'jpeg.c'
+            source = d / "jpeg.c"
             source.write_text(probe)
             for cap in (256 * 1024, 64):
-                exe = d / ('jpeg-' + str(cap))
-                build = subprocess.run([
-                    'gcc', '-std=gnu11', '-Os', '-Wall', '-Wextra', '-Werror',
-                    '-pthread', '-DLV_CONF_INCLUDE_SIMPLE', '-DCA_JPEG_MAX=' + str(cap),
-                    '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
-                    '-fno-omit-frame-pointer', '-ffp-contract=off',
-                    '-I' + str(APP), '-I' + str(APP.parent), str(source), '-lm', '-o', str(exe)
-                ], capture_output=True, text=True)
+                exe = d / ("jpeg-" + str(cap))
+                build = subprocess.run(
+                    [
+                        "gcc",
+                        "-std=gnu11",
+                        "-Os",
+                        "-Wall",
+                        "-Wextra",
+                        "-Werror",
+                        "-pthread",
+                        "-DLV_CONF_INCLUDE_SIMPLE",
+                        "-DCA_JPEG_MAX=" + str(cap),
+                        "-fsanitize=address,undefined",
+                        "-fno-sanitize-recover=all",
+                        "-fno-omit-frame-pointer",
+                        "-ffp-contract=off",
+                        "-I" + str(APP),
+                        "-I" + str(APP.parent),
+                        str(source),
+                        "-lm",
+                        "-o",
+                        str(exe),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
                 self.assertEqual(build.returncode, 0, build.stderr)
-                for mode in ('normal', 'alloc', 'empty', 'cast'):
-                    run = subprocess.run([str(exe), str(bmp), mode], capture_output=True,
-                                         timeout=20, env=dict(os.environ, ASAN_OPTIONS='detect_leaks=1'))
+                for mode in ("normal", "alloc", "empty", "cast"):
+                    run = subprocess.run(
+                        [str(exe), str(bmp), mode],
+                        capture_output=True,
+                        timeout=20,
+                        env=dict(os.environ, ASAN_OPTIONS="detect_leaks=1"),
+                    )
                     self.assertEqual(run.returncode, 0, run.stderr.decode())
-                    headers, body = run.stdout.split(b'\r\n\r\n', 1)
-                    jpeg = cap > 64 and mode == 'normal'
-                    self.assertIn(b'Content-Type: image/' + (b'jpeg' if jpeg else b'png'), headers)
+                    headers, body = run.stdout.split(b"\r\n\r\n", 1)
+                    jpeg = cap > 64 and mode == "normal"
+                    self.assertIn(b"Content-Type: image/" + (b"jpeg" if jpeg else b"png"), headers)
                     self.assertTrue(0 < len(body) <= 256 * 1024)
                     if jpeg:
-                        self.assertEqual(body[:2], b'\xff\xd8')
-                        self.assertEqual(body[-2:], b'\xff\xd9')
+                        self.assertEqual(body[:2], b"\xff\xd8")
+                        self.assertEqual(body[-2:], b"\xff\xd9")
                     else:
-                        self.assertTrue(body.startswith(b'\x89PNG\r\n\x1a\n'))
+                        self.assertTrue(body.startswith(b"\x89PNG\r\n\x1a\n"))
                     decoded = Image.open(io.BytesIO(body))
                     decoded.load()
-                    self.assertEqual(decoded.size, (1, 1) if mode == 'empty' else (600, 600) if jpeg else (148, 148))
-                    if mode == 'empty':
-                        self.assertEqual(decoded.convert('RGBA').getpixel((0, 0))[3], 0)
+                    self.assertEqual(
+                        decoded.size,
+                        (1, 1) if mode == "empty" else (600, 600) if jpeg else (148, 148),
+                    )
+                    if mode == "empty":
+                        self.assertEqual(decoded.convert("RGBA").getpixel((0, 0))[3], 0)
                     elif jpeg:
-                        error = sum(abs(a - b) for a, b in
-                                    zip(decoded.convert('RGB').resize((148, 148), Image.BOX).tobytes(), image.tobytes()))
+                        error = sum(
+                            abs(a - b)
+                            for a, b in zip(
+                                decoded.convert("RGB").resize((148, 148), Image.BOX).tobytes(),
+                                image.tobytes(),
+                            )
+                        )
                         self.assertLess(error / (148 * 148 * 3), 5)
                     else:
-                        self.assertEqual(decoded.convert('RGB').tobytes(), image.tobytes())
+                        self.assertEqual(decoded.convert("RGB").tobytes(), image.tobytes())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

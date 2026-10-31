@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 diskOS contributors
 """GUI OTA checkbox: key detection and the checkbox -> no_ota mapping (no Tk needed)."""
+
 import os
 import unittest
 from unittest import mock
@@ -10,8 +11,7 @@ from diskos_installer import gui, imagebuild
 
 class GuiOtaTests(unittest.TestCase):
     def setUp(self):
-        ota_env = {"DISKOS_OTA_ROOTPUB", "DISKOS_MIN_KEY_EPOCH",
-                   "DISKOS_MIN_UI_EPOCH"}
+        ota_env = {"DISKOS_OTA_ROOTPUB", "DISKOS_MIN_KEY_EPOCH", "DISKOS_MIN_UI_EPOCH"}
         env = {k: v for k, v in os.environ.items() if k not in ota_env}
         p = mock.patch.dict(os.environ, env, clear=True)
         p.start()
@@ -21,8 +21,7 @@ class GuiOtaTests(unittest.TestCase):
         self.assertTrue(gui.ota_key_available())
         cfg = imagebuild.resolve_ota_config(**gui.ota_params(True, True))
         self.assertIsNotNone(cfg)
-        self.assertEqual(cfg["epochs"],
-                         b"MIN_KEY_EPOCH=1\nMIN_UI_EPOCH=7\n")
+        self.assertEqual(cfg["epochs"], b"MIN_KEY_EPOCH=1\nMIN_UI_EPOCH=7\n")
 
     def test_ticked_with_key_means_ota_on(self):
         self.assertEqual(gui.ota_params(True, True), {"no_ota": False})
