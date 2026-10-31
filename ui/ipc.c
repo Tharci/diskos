@@ -888,7 +888,10 @@ static void parse_frame(const char*buf,int n){
     if(buf[0]=='a'&&buf[1]=='8'&&buf[2]=='1'&&buf[3]=='0'){ conv_on_reply(buf,n); return; }
     /* Every aa1f of 8 bytes or more lands here (shorter frames end at the n<8 guard above, like every report). */
     if(!memcmp(buf,"aa1f",4)){ charge_on_frame(buf,n); return; }
-    if(buf[0]==97 && buf[1]==49){ /* "a1<type2><len4><payload>" position, e.g. a1030010 + 8-hex ms */
+    if(buf[0]==97 && buf[1]==49){ /* "a1<type2><len4><payload>"; only a103 is a position, e.g. a1030010 + 8-hex ms */
+        /* a102 is the play-mode ack (a102000C0004 after a book's Single mode) - read as a position it put Now
+         * Playing at 0:00 and made the next skip count from there. */
+        if(buf[2]!='0' || buf[3]!='3') return;
         if(n<8) return;
         char lh[5]={buf[4],buf[5],buf[6],buf[7],0};
         if(!all_hex(lh,4)) return;               /* no valid length field -> reject */
