@@ -55,5 +55,10 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: ${{ matrix.python }}
           enable-cache: true
+      # Host tools the tests use: libusb.h (the usbboot transport tests compile src/usbboot/usbboot.c
+      # against a mock) and mksquashfs/unsquashfs (the image validation tests build real images).
+      - run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends libusb-1.0-0-dev squashfs-tools
       - run: uv sync --locked
       - run: uv run pytest

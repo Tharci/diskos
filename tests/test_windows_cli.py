@@ -405,6 +405,11 @@ class WindowsBuildScriptTests(unittest.TestCase):
             self.script,
         )
 
+    @unittest.skipIf(
+        sys.version_info < (3, 11),
+        "runs the staging code, which only runs on the Windows build's CPython 3.11+ "
+        "(build/windows-build.lock) and uses hashlib.file_digest",
+    )
     def test_stage_requires_and_inventories_both_executables(self):
         code = re.search(r"\$stageCode = @'\n(.*?)\n'@", self.script, re.S).group(1)
         names = ("diskos-installer.exe", "diskos-installer-cli.exe")
