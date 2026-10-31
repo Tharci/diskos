@@ -1,8 +1,9 @@
 #!/bin/sh
 # diskOS installer - one-time setup.
 #
-# Creates a local Python virtual environment (.venv) next to this script and installs the two
-# pip dependencies (pyusb, pycryptodome) into it. After this you run the tool with ./diskos-installer.
+# Creates a local Python virtual environment (.venv) next to this script and installs the pinned
+# dependencies from requirements.txt into it, each checked against its recorded hash. After this you
+# run the tool with ./diskos-installer. (Developers: `uv sync` sets up the same .venv plus the dev tools.)
 #
 # What this does NOT install (they come from your system, not from us):
 #   - Python 3 itself            (install via your OS package manager if missing)
@@ -11,7 +12,7 @@
 # The script checks for these and tells you exactly what to install if any are missing.
 set -eu
 
-HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
+HERE=$(CDPATH='' cd "$(dirname "$0")" && pwd)
 cd "$HERE"
 
 # Do NOT run this as root. The installer keeps per-user state and a saved recovery image under your
@@ -35,14 +36,14 @@ if [ "$(uname -s)" = Darwin ]; then
 else
 for c in python3 python; do
     if command -v "$c" >/dev/null 2>&1; then
-        if "$c" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 8) else 1)' 2>/dev/null; then
+        if "$c" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 10) else 1)' 2>/dev/null; then
             PY=$(command -v "$c"); break
         fi
     fi
 done
 fi
 if [ -z "$PY" ]; then
-    echo "error: Python 3.8+ not found." >&2
+    echo "error: Python 3.10+ not found." >&2
     echo "  Arch/CachyOS:  sudo pacman -S python" >&2
     echo "  Debian/Ubuntu: sudo apt install python3 python3-venv" >&2
     echo "  Fedora:        sudo dnf install python3" >&2
@@ -76,7 +77,9 @@ fi
 # ---- install pinned dependencies ---------------------------------------------
 echo "==> installing dependencies (pyusb, pycryptodome, certifi, platformdirs)"
 "$VENV_PY" -m pip install --upgrade pip >/dev/null 2>&1 || true
-"$VENV_PY" -m pip install -r "$HERE/requirements.txt"
+# requirements.txt is generated from uv.lock (uv export) with every file's hash: a download that does not
+# match is refused.
+"$VENV_PY" -m pip install --require-hashes -r "$HERE/requirements.txt"
 
 # ---- capability checks (warn, do not fail) -----------------------------------
 echo "==> checking optional system components"

@@ -94,13 +94,16 @@ _qtrap='rm -rf /usr/data/mq_player 2>/dev/null; [ -e /usr/data/mq_ui ] && mv -f 
 # Arm the standard signals FIRST - this loop is the first executable statement (only the two var
 # assignments above, which touch no files, precede it), so the boot-relevant signals (TERM/HUP/INT)
 # are covered immediately.
+# shellcheck disable=SC2064  # expanding $_qtrap now is intended: the handler is that fixed text
 for s in $SIGS; do trap "$_qtrap" "$s" 2>/dev/null || true; done
 # THEN arm each real-time signal (SIGRTMIN..SIGRTMAX, 32..127 on MIPS Linux) AND record it in SIGS
 # within the SAME iteration - so no batch list-build ever precedes arming. RT signals are catchable
 # and default-terminate; nothing sends them to a boot init script, armed only for completeness.
 # Per-signal arming skips any number the running kernel doesn't define (a 64-signal host arms
 # 32..64; the MIPS device arms 32..127).
-n=32; while [ "$n" -le 127 ]; do trap "$_qtrap" "$n" 2>/dev/null || true; SIGS="$SIGS $n"; n=$((n+1)); done
+n=32
+# shellcheck disable=SC2064  # as above
+while [ "$n" -le 127 ]; do trap "$_qtrap" "$n" 2>/dev/null || true; SIGS="$SIGS $n"; n=$((n+1)); done
 
 LOG=/usr/data/diskos_install.log
 log() { echo "$(date 2>/dev/null || true) S97: $*" >> "$LOG" 2>/dev/null; }
@@ -266,7 +269,6 @@ OTA_RO=/etc/diskos-ota
 UPD=/usr/data/updates
 OTA_MAXBOOTS=2              # a trial build gets this many boots to write its health marker; the next boot rolls back
 OTA_SRC=; BUILD=flashed; B_EPOCH=0; B_VER=flashed; G_SHA=; G_SIZE=; G_EPOCH=; G_VER=; P_SHA=; P_SIZE=; P_EPOCH=; P_VER=
-FL_MSHA=$MSHA; FL_MSIZE=$MSIZE
 
 kv() { grep "^$2=" "$1" 2>/dev/null | head -n 1 | cut -d= -f2; }
 is_uint() { case "$1" in ''|*[!0-9]*) return 1;; esac; [ "${#1}" -le 18 ]; }

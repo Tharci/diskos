@@ -180,7 +180,7 @@ class DeterministicZipTests(unittest.TestCase):
                 self.subTest(limit=limit, count=count),
                 mock.patch.object(zipfile, "ZIP64_LIMIT", limit),
                 mock.patch.object(zipfile, "ZIP_FILECOUNT_LIMIT", count),
-                mock.patch.object(hashlib, "file_digest") as digest,
+                mock.patch.object(zipper, "sha256_hex") as digest,
             ):
                 with self.assertRaisesRegex(ValueError, "ZIP64"):
                     zipper.archive(self.root, self.output)

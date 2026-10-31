@@ -14,7 +14,7 @@ The installer builds an image locally from an official FiiO firmware archive. Se
   its matching official FiiO `.zip`; **Browse...** accepts a local copy for offline use.
   The installer decrypts and extracts its root filesystem locally.
 - A reliable USB cable and about 20 uninterrupted minutes.
-- **Python 3.8+** and the dependencies installed by `./install.sh` on Linux and source checkouts.
+- **Python 3.10+** and the dependencies installed by `./install.sh` on Linux and source checkouts.
   The macOS app and Windows release ZIP include Python and their tools.
 - USB access to mask-ROM device `a108:eaef`.
 - **Linux x86-64** (Debian, Ubuntu, Arch, CachyOS, Fedora), **macOS**, or
@@ -37,7 +37,7 @@ Build, save, and flash run under your user account.
 These packages and setup commands apply to Linux and source checkouts. For the
 macOS release app, follow [macOS](#macos). On Windows, follow [Windows](#windows).
 
-Install Python 3.8 or newer and the host packages before running setup. `tkinter` is needed for the graphical installer; the command line works without it. The setup script reports anything missing.
+Install Python 3.10 or newer and the host packages before running setup. `tkinter` is needed for the graphical installer; the command line works without it. The setup script reports anything missing.
 
 | Host | Python and GUI | USB and firmware tools |
 |---|---|---|
@@ -95,7 +95,7 @@ inputs; the Apple Silicon release is the packaged path.
 
 For Linux and source checkouts, run these commands from the installer directory.
 
-The installer runs with your own **Python 3.8+**. The setup script creates a local virtual
+The installer runs with your own **Python 3.10+**. The setup script creates a local virtual
 environment and installs four Python dependencies into it; nothing is installed system-wide.
 
 ```bash

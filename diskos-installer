@@ -3,7 +3,7 @@
 # ./install.sh); falls back to the system python3 if no venv is present. Pass any subcommand
 # straight through, e.g.  ./diskos-installer doctor   or   ./diskos-installer gui
 set -eu
-HERE=$(CDPATH= cd "$(dirname "$0")" && pwd)
+HERE=$(CDPATH='' cd "$(dirname "$0")" && pwd)
 
 if   [ -x "$HERE/.venv/bin/python" ];        then PY="$HERE/.venv/bin/python"
 elif [ -x "$HERE/.venv/Scripts/python.exe" ]; then PY="$HERE/.venv/Scripts/python.exe"

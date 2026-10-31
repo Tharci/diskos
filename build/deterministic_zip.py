@@ -98,6 +98,14 @@ def zip32_preflight(files):
         raise ValueError("Package central directory size would require ZIP64")
 
 
+def sha256_hex(stream):
+    """The SHA-256 hex digest of a binary stream: hashlib.file_digest needs Python 3.11."""
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1 << 20), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
 def archive(package, output):
     package, output = Path(package).absolute(), Path(output).absolute()
     # Inspect ancestors before resolving: a link to a tree is still a link.
@@ -113,7 +121,7 @@ def archive(package, output):
     # Finish validation before creating output. Input must stay unchanged throughout.
     for name, path in files.items():
         with path.open("rb") as stream:
-            if hashlib.file_digest(stream, "sha256").hexdigest() != expected[name]:
+            if sha256_hex(stream) != expected[name]:
                 raise ValueError("Inventory hash mismatch: " + name)
     with (
         output.open("xb") as target,
@@ -131,7 +139,7 @@ def archive(package, output):
             info.extra = info.comment = b""
             zipped.writestr(info, data)
     with output.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        return sha256_hex(stream)
 
 
 if __name__ == "__main__":

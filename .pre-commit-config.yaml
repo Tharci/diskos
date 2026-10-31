@@ -1,0 +1,69 @@
+# Fast checks only (seconds): formatting, linting, typing, lock sync and hygiene. Tests, the device
+# build and the deeper analyzers run in CI. Set up once with:  uv sync && uv run pre-commit install
+#
+# Versions are pinned and must match pyproject.toml's dev group (ruff) and the uv you run (uv-*).
+
+# Never touched: vendored and third-party code, licence texts (kept byte-identical to their
+# originals), generated font data, and TSV tables (a trailing tab there is an empty last column).
+exclude: |
+  (?x)^(
+      \.dev/
+    | corresponding-source/
+    | spl-src/
+    | src/usbboot/
+    | ui/lvgl/
+    | ui/third_party/
+    | ui/(jsmn\.h|md5\.[ch]|sqlite3\.[ch])$
+    | ui/font_[^/]*\.c$
+    | (.*/)?licenses/
+    | (.*/)?LICENSE[^/]*$
+    | .*\.tsv$
+  )
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]   # two trailing spaces are a Markdown line break
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-executables-have-shebangs
+      # Not check-shebang-scripts-are-executable: several scripts are run as `python3 x` / `sh x` on
+      # purpose, and payload/ file modes are part of the built image.
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.3
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.13.6
+    hooks:
+      - id: uv-lock          # uv.lock matches pyproject.toml
+      - id: uv-export        # requirements.txt (what end users' pip installs) matches uv.lock
+        args: [--frozen, --no-dev, --no-emit-project, --format=requirements-txt,
+               --output-file=requirements.txt]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]   # info/style notes are reviewed separately, not gated
+
+  - repo: local
+    hooks:
+      - id: ty
+        name: ty check
+        entry: uv run --frozen ty check
+        language: system
+        types: [python]
+        pass_filenames: false   # ty checks the whole project, as configured in pyproject.toml

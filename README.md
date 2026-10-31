@@ -103,7 +103,7 @@
 You need a FiiO Snowsky Disc, a reliable USB cable and about 20 uninterrupted minutes for flashing.
 Choose the firmware version already on your Disc and press **Get firmware**; the installer downloads
 and verifies the matching official FiiO ZIP and fills in its path. A saved verified copy or
-**Browse...** lets you prepare offline. Linux and source checkouts need Python 3.8 or newer;
+**Browse...** lets you prepare offline. Linux and source checkouts need Python 3.10 or newer;
 the macOS app and Windows release ZIP include their runtime and tools. The installer builds the
 root filesystem image on your computer; this project does not distribute FiiO's root filesystem.
 Back up your music, keep a separate copy of the saved stock image, and read the [full requirements](docs/INSTALL.md#requirements).
