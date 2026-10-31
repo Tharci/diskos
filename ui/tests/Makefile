@@ -2,7 +2,7 @@
 # Copyright (C) 2026 diskOS contributors
 # Off-device host tests for diskOS pure-logic modules (arch#5 harness).
 # Native x86-64 build with sanitizers + CFG_* paths pointed at a temp dir. Does NOT touch the
-# device build (separate dir, separate Makefile). Run: make -C tests run
+# device build (separate dir, separate build file). Run: make -C tests run
 CC ?= cc
 CFLAGS := -g -O1 -Wall -Wextra -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
 TDIR := /tmp/diskos_cfgtest

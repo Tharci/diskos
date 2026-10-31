@@ -58,60 +58,52 @@ The embedded stock decoder also needs two external inputs, supplied by the build
   stock libraries. It also requires `mipsel-linux-gnu-gcc` and `mipsel-linux-gnu-strip`
   on PATH (override with `STOCK_CC` and `STOCK_STRIP`).
 
-From the public `ui/` directory, with its bundled `third_party/`, `tools/` and `lvgl/`:
+The build itself needs **CMake 3.25+**, **Ninja** and **Python 3** (all in the Docker builder below).
+
+From this `ui/` directory, with its bundled `third_party/`, `tools/` and `lvgl/`:
 
 ```sh
-make CROSS=/opt/x-tools/mipsel-linux-musl/bin/mipsel-linux-musl- \
-  STOCK_AV_HEADERS=/path/to/ffmpeg-4.2.2.tar.xz \
-  STOCK_SYSROOT=/path/to/stock-v257 DEP_OUT="$PWD/.build-deps" mq_ui
+export STOCK_AV_HEADERS=/path/to/ffmpeg-4.2.2.tar.xz STOCK_SYSROOT=/path/to/stock-v257
+export CROSS=/opt/mipsel-n2008-musl-cross/bin/mipsel-linux-musl-   # if the toolchain is not on PATH
+cmake --preset device
+cmake --build --preset device
 ```
 
-Keep those same overrides for subsequent builds and `make -q mq_ui`. Native
-vendor dependencies are built offline using the included sources and recipes.
+This produces the static, stripped `build/device/mq_ui`, its unstripped twin `mq_ui.debug` for crash
+symbolication, and `mq_ui.manifest`. `build/device/compile_commands.json` describes every compile for
+editors and analyzers. Native vendor dependencies are built offline from the included sources and recipes;
+set `DISKOS_DEP_OUT` to keep them in a directory shared between build directories.
 
-```sh
-# toolchain on PATH as mipsel-linux-musl-gcc, LVGL at ./lvgl;
-# export STOCK_AV_HEADERS and STOCK_SYSROOT before these examples:
-make
-
-# or point at your toolchain / LVGL explicitly:
-make CROSS=/opt/mipsel-n2008-musl-cross/bin/mipsel-linux-musl-  LVGL=/path/to/lvgl
-```
-
-`make` produces the static `mq_ui` binary. For a persistent local setup, put your overrides in a
-`config.mk` (gitignored) instead of passing them each time:
-
-```make
-CROSS := /opt/mipsel-n2008-musl-cross/bin/mipsel-linux-musl-
-LVGL  := /path/to/lvgl
-```
+- **Helpers** installed by the image builder: `cmake --build --preset device -t diskos-bootprobe diskos-artdec`.
+- **Special builds** go in their own build directory, so they never mix with the normal one, e.g.
+  `cmake --preset device -B build/profile -DDISKOS_PROFILE=ON && cmake --build build/profile`.
+  Options: `DISKOS_PROFILE` (the `prof.c` measurement hooks), `DISKOS_TEST_OUTPUTS` (shows SPDIF Output and
+  USB Audio), `DISKOS_TEST_BT_PREPARE` (the Bluetooth preparation experiment).
+- **Checks:** `tools/check_theme.py` (colours and fonts only through theme roles) runs before every link of
+  `mq_ui` and as a pre-commit hook; `tools/check_punct.py` (no punctuation the device fonts lack) runs as a
+  pre-commit hook.
 
 ## Build in Docker (recommended)
 
-The container builds the cross compiler from musl-cross-make at a pinned commit, with
-source-download hashes from that recipe. It also builds FreeType from the in-tree source:
+The container builds the cross compiler from musl-cross-make at a pinned commit, with source-download
+hashes from that recipe, and carries CMake, Ninja, Python and the stock helper's compiler:
 
 ```sh
 docker build -t diskos-ui-builder .                                  # from this ui/ directory
-docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" \
-  -v /path/to/inputs:/inputs:ro -e STOCK_AV_HEADERS=/inputs/ffmpeg-4.2.2.tar.xz \
-  -e STOCK_SYSROOT=/inputs/stock-v257 diskos-ui-builder
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" -v /path/to/inputs:/inputs:ro \
+  -e STOCK_AV_HEADERS=/inputs/ffmpeg-4.2.2.tar.xz -e STOCK_SYSROOT=/inputs/stock-v257 \
+  diskos-ui-builder sh -c 'cmake --preset device && cmake --build --preset device'
 ```
 
-The static `mq_ui` lands in the current directory. Supply the two external inputs above
-and ensure the container also has the stock helper compiler and strip tool. The `-u` flag keeps the build outputs owned by you, not root.
-
-The first `docker build` compiles GCC, so it takes a while; later UI builds reuse the image.
+The `-u` flag keeps the build outputs owned by you, not root. The first `docker build` compiles GCC (about
+ten minutes); later UI builds reuse the image.
 
 ## Troubleshooting
 
-- **`musl` / SQLite `fcntl64` errors:** check the toolchain and compile flags. The
-  SQLite rule uses separate flags without `_GNU_SOURCE`. If your cross-compiler errors on
-  `fcntl64`, check that it uses the pinned musl headers and libraries, or use the Docker
-  builder. Preserve the dedicated SQLite rule when building by hand.
-- **`Makefile:NN: *** missing separator`:** a recipe line (the command under a rule) must start with a
-  real **Tab**, not spaces - an editor or a copy-paste turned the leading Tab into spaces. Re-indent
-  that line with a single Tab.
+- **`musl` / SQLite `fcntl64` errors:** check the toolchain and compile flags. SQLite is built with its own
+  flags, without `_GNU_SOURCE` (the `third_party_sqlite` library in `cmake/third_party.cmake`): keep it separate.
+  If your cross-compiler errors on `fcntl64`, check that it uses the pinned musl headers and libraries, or use
+  the Docker builder.
 
 ## Deploy / flash
 `mq_ui` is normally delivered by the diskOS **installer**, which bakes it into a rootfs image and

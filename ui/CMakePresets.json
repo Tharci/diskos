@@ -1,0 +1,23 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "device",
+      "displayName": "Disc (mipsel musl, static)",
+      "description": "mq_ui for the Disc. Reads STOCK_SYSROOT, STOCK_AV_HEADERS and optionally DISKOS_DEP_OUT from the environment.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/device",
+      "toolchainFile": "${sourceDir}/cmake/mipsel-musl.cmake",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "STOCK_SYSROOT": "$env{STOCK_SYSROOT}",
+        "STOCK_AV_HEADERS": "$env{STOCK_AV_HEADERS}",
+        "DISKOS_DEP_OUT": "$env{DISKOS_DEP_OUT}"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "device", "configurePreset": "device" }
+  ]
+}

@@ -61,6 +61,16 @@ repos:
 
   - repo: local
     hooks:
+      - id: check-theme
+        name: UI colours and fonts only through theme roles
+        entry: python3 ui/tools/check_theme.py
+        language: system
+        files: ^ui/[^/]+\.[ch]$
+      - id: check-punct
+        name: UI sources without punctuation the device fonts lack
+        entry: python3 ui/tools/check_punct.py
+        language: system
+        files: ^ui/[^/]+\.[ch]$
       - id: ty
         name: ty check
         entry: uv run --frozen ty check

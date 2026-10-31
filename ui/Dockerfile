@@ -4,15 +4,18 @@
 # binutils 2.44), targeting the stock firmware's float ABI (MIPS32r2, FP64, NaN2008). musl-cross-make checks every
 # downloaded source tarball against its own pinned hashes, so the toolchain cannot drift silently.
 #
-# Build the image:   docker build -t diskos-ui-builder .        (from this ui/ directory; builds GCC: takes a while)
-# Build the UI:       docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" diskos-ui-builder
-#   The `-u` keeps the built mq_ui/*.o owned by you, not root. LVGL is vendored at ui/lvgl; FreeType 2.13.3 is vendored at ui/third_party.
-#   The static mipsel `mq_ui` lands in the current directory, plus the helpers: make diskos-artdec diskos-bootprobe
+# Build the image:   docker build -t diskos-ui-builder .        (from this ui/ directory; builds GCC: about 10 minutes)
+# Build the UI:       see README.md (CMake preset "device"; needs the stock V2.57 sysroot and FFmpeg headers mounted)
+#   LVGL is vendored at ui/lvgl; FreeType and the other libraries at ui/third_party.
 
 FROM debian:12-slim
 
+# cmake/ninja: the build. python3: tools/build-native-deps.py and tools/embed_audiodec.py. gcc-mipsel-linux-gnu and
+# libc6-dev-mipsel-cross: the dynamically linked diskos-audiodec helper, built against the stock glibc sysroot.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential ca-certificates git wget xz-utils bzip2 patch rsync file \
+        cmake ninja-build python3 \
+        gcc-mipsel-linux-gnu binutils-mipsel-linux-gnu libc6-dev-mipsel-cross \
     && rm -rf /var/lib/apt/lists/*
 
 ARG MCM_URL=https://github.com/richfelker/musl-cross-make.git
@@ -27,6 +30,3 @@ RUN git clone "$MCM_URL" /tmp/mcm \
 ENV CROSS=/opt/mipsel-n2008-musl-cross/bin/mipsel-linux-musl-
 
 WORKDIR /src
-# FreeType is built from the pruned in-tree sources with the same pinned compiler.
-# Default: build mq_ui from the mounted ui/ tree. Fails clearly if the source isn't mounted.
-CMD ["sh", "-c", "test -f Makefile || { echo 'mount the ui/ source at /src (see the Dockerfile header)'; exit 1; }; make CROSS=$CROSS && ls -l mq_ui"]
