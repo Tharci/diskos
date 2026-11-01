@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include "jsmn.h"
+#include "framelog.h"
 
 static mqd_t g_rx=(mqd_t)-1, g_tx=(mqd_t)-1;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -824,6 +825,9 @@ static void receiver_position(const char *buf,int n){
 static void conv_on_reply(const char*buf,int n);   /* still-image conversion (end of file) */
 static void conv_new_generation(unsigned generation);
 static void parse_frame(const char*buf,int n){
+#ifdef DISKOS_FRAME_LOG
+    framelog_rx(buf, n > 0 ? (size_t)n : 0);
+#endif
     if(n<4) return;
     if(!memcmp(buf,"aa05",4)){
         /* STOCK-PARITY (owner decision 55): bind by receipt, not verified item.
@@ -1325,6 +1329,10 @@ static int ipc_send_wire_locked(const char*frame, int policy, unsigned generatio
         g_tx_dev = 0; g_tx_ino = 0;   /* clear first: a failed capture must not leave a stale identity */
         if(g_tx!=(mqd_t)-1) mq_identity(g_tx, &g_tx_dev, &g_tx_ino);
     }
+#ifdef DISKOS_FRAME_LOG
+    const char *policy_name = policy == SEND_USER ? "user" : policy == SEND_PROBE ? "probe" : "automatic";
+    if(g_tx==(mqd_t)-1) framelog_tx(frame, strlen(frame), -1, policy_name);
+#endif
     if(g_tx==(mqd_t)-1){ ipc_note_send_error(policy); return -1; }
     size_t len = strlen(frame);
     /* g_tx is O_NONBLOCK so a full /player queue returns EAGAIN immediately. A user
@@ -1332,11 +1340,19 @@ static int ipc_send_wire_locked(const char*frame, int policy, unsigned generatio
      * (~15ms max) to let the player drain; only EAGAIN is retried, other errors fail. */
     int err = 0;
     for(int a=0;a<5;a++){
-        if(mq_send(g_tx, frame, len, 0) == 0) return 0;
+        if(mq_send(g_tx, frame, len, 0) == 0){
+#ifdef DISKOS_FRAME_LOG
+            framelog_tx(frame, len, 0, policy_name);
+#endif
+            return 0;
+        }
         err = errno;                 /* capture before usleep, which may touch errno */
         if(err != EAGAIN) break;
         usleep(3000);
     }
+#ifdef DISKOS_FRAME_LOG
+    framelog_tx(frame, len, err, policy_name);
+#endif
     /* ANY failure -> drop the fd so the next send re-opens the CURRENT named /player. Covers a
      * non-EAGAIN error (player went away) AND EAGAIN-exhaustion (queue full 5x - an orphaned
      * queue after a restart looks exactly like this; H1). Reopening a merely transiently-full

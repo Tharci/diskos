@@ -16,6 +16,7 @@ if(NOT STOCK_SYSROOT OR NOT STOCK_AV_HEADERS)
 endif()
 
 option(DISKOS_PROFILE "Measurement build: compile in prof.c (never shipped)" OFF)
+option(DISKOS_FRAME_LOG "Capture build: log all player traffic to /tmp (never shipped)" OFF)
 option(DISKOS_TEST_OUTPUTS "Device-test build: show SPDIF Output and USB Audio" OFF)
 option(DISKOS_TEST_BT_PREPARE "Bluetooth preparation experiment (use its own build directory)" OFF)
 

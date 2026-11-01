@@ -212,3 +212,6 @@ set(legacy_sources
 if(DISKOS_PROFILE)
     list(APPEND legacy_sources prof.c)
 endif()
+if(DISKOS_FRAME_LOG)
+    list(APPEND legacy_sources framelog.c)
+endif()
