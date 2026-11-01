@@ -36,9 +36,6 @@ bug patterns) and the warnings in `cmake/cxx.cmake`. What they cannot check:
   member functions.
 - **Small and single-purpose.** Functions stay short and files hold one idea. Split by responsibility,
   not by line count.
-- **Public functions get a comment** saying what they do and what they return on failure, in the
-  header. Implementation comments say why, not what, and only when extra context is required.
-  Compact comments are preferred.
 - **Every module has tests** for its behaviour, through its public interface. No need to test every
   small piece of logic and helper method.
 - **Player quirks carry over.** The legacy C records many reverse-engineered player behaviours in
@@ -46,6 +43,50 @@ bug patterns) and the warnings in `cmake/cxx.cmake`. What they cannot check:
 - **No `std::format` or `std::print` in device code.** They add about 830 KB to the binary.
 - **Silencing clang-tidy** takes `// NOLINT(check-name): reason`. A bare `NOLINT` fails the
   pre-commit hook.
+
+### Classes and names
+
+- **Public first.** A class lists its public interface first and its private members last. When
+  the public part grows, group it under short `//` labels such as `// Properties` and
+  `// Configuration`.
+- **Accessors.** A getter is named after what it returns (`current()`, `loop()`), a setter starts
+  with `set_`. Accessors that cannot fail are `const noexcept`.
+- **Data members** get a default initialiser, and a short trailing comment when the name alone does
+  not say what they hold (`std::vector<MusicItem> queue_;  // The original queue, unsorted`).
+- **Results that must be checked** are `[[nodiscard]]`. When `true` or `false` would not say what
+  happened at the call site, return an `enum class` instead of a `bool`.
+- **Long types** get a name with a `using` alias (`using OptionalMusicItemRef = ...`).
+- **Enums** are `enum class` with an explicit underlying type
+  (`enum class PlaybackMode : std::uint8_t`).
+- **Full words in names.** The accepted abbreviations are `prev`, `idx` and unit suffixes such as
+  `_ms`.
+- **Includes**: the standard library first, then a blank line and the project headers, each included
+  from `src/` (`"services/media/media_item.hpp"`), also from within the same folder.
+
+### Comments
+
+Public types and functions are documented in the header with a `/** ... */` comment. It starts
+with an imperative summary, then states exactly what happens at the edges, as a list when there
+are several outcomes. What a function returns on failure is always part of it. A class comment
+also states who owns what the class hands out and how long references or views stay valid.
+
+```cpp
+/**
+ * Step to the next song in the queue.
+ * After the last song in the queue:
+ *  - Returns nullopt, if loop is false or the queue is empty.
+ *  - Steps to the first one otherwise.
+ */
+[[nodiscard]] OptionalMusicItemRef next();
+
+/** Get the current song, or nullopt if the queue is empty. */
+[[nodiscard]] OptionalMusicItemRef current() const;
+```
+
+Everything else uses `//`: section labels, trailing notes on members and enum values, TODOs
+(`// TODO: ...`, continuation lines indented by one extra space) and implementation comments.
+Implementation comments say why, not what, and only when extra context is required. Compact
+comments are preferred.
 
 ## Building and testing
 

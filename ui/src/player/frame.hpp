@@ -9,12 +9,14 @@
 #include <string>
 #include <string_view>
 
-// The framing of the stock player's message queues.
-//
-// A frame is ASCII text: a 4-hex-digit tag, the total frame length as 4 hex digits (the header
-// included), then the body. "0201000C0000" is tag 0201 with body "0000". Most bodies start with
-// a 4-digit hex value (docs/COMMAND_MAP.md lists them). One family breaks the layout: 0810
-// requests and a810 replies put a value before the length, so they do not go through here.
+/**
+ * The framing of the stock player's message queues.
+ *
+ * A frame is ASCII text: a 4-hex-digit tag, the total frame length as 4 hex digits (the header
+ * included), then the body. "0201000C0000" is tag 0201 with body "0000". Most bodies start with
+ * a 4-digit hex value (docs/COMMAND_MAP.md lists them). Every frame in both directions has this
+ * layout, with the length counted in bytes (Disc capture, 2026-11-01).
+ */
 namespace diskos::player {
 
 inline constexpr std::size_t kTagSize = 4;
@@ -35,20 +37,32 @@ enum class FrameError : std::uint8_t {
     TooLong,         // The frame would not fit the length field.
 };
 
-// Splits a received frame into tag and body, checking the length field against its size.
-std::expected<Frame, FrameError> parse_frame(std::string_view bytes);
+/**
+ * Split a received frame into tag and body, checking the length field against its size.
+ * The views point into `bytes`. Returns the reason as a FrameError when the frame is malformed.
+ */
+[[nodiscard]] std::expected<Frame, FrameError> parse_frame(std::string_view bytes);
 
-// Builds a frame from a tag and a body, filling in the length field.
-std::expected<std::string, FrameError> encode_frame(std::string_view tag, std::string_view body);
+/**
+ * Build a frame from a tag and a body, filling in the length field.
+ * Returns BadTag or TooLong when the tag or the body cannot be framed.
+ */
+[[nodiscard]] std::expected<std::string, FrameError> encode_frame(
+        std::string_view tag, std::string_view body
+);
 
-// Reads 1 to 8 hex digits (case insensitive).
-// Returns:
-//  - uint32_t - for hex digits
-//  - nullopt - for anything else
-std::optional<std::uint32_t> parse_hex(std::string_view digits);
+/**
+ * Read 1 to 8 hex digits (case insensitive).
+ * Returns:
+ *  - uint32_t - for hex digits
+ *  - nullopt - for anything else
+ */
+[[nodiscard]] std::optional<std::uint32_t> parse_hex(std::string_view digits);
 
-// Writes `value` in uppercase hex, zero-padded to at least `width` digits, like printf's %0*X:
-// a value too wide for `width` keeps all its digits.
-std::string format_hex(std::uint64_t value, std::size_t width);
+/**
+ * Write `value` in uppercase hex, zero-padded to at least `width` digits, like printf's %0*X:
+ * a value too wide for `width` keeps all its digits.
+ */
+[[nodiscard]] std::string format_hex(std::uint64_t value, std::size_t width);
 
 }  // namespace diskos::player
