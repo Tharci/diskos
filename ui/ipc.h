@@ -152,12 +152,12 @@ typedef enum { IPC_CONV_IDLE, IPC_CONV_PENDING, IPC_CONV_DONE, IPC_CONV_FAILED, 
 typedef enum { IPC_CONV_START_OK, IPC_CONV_START_BUSY, IPC_CONV_START_PATH, IPC_CONV_START_NOT_READY,
                IPC_CONV_START_SEND } ipc_conv_start_status;
 ipc_conv_start_status ipc_conv_start(const char *src, unsigned *op);
-/* FAILED: *code = the converter's nonzero result (exact for 4-hex-digit codes and 8-digit -1 forms). */
+/* FAILED: *code = the converter's nonzero result, cut to 4 hex digits by the player (-1 arrives as 0xFFFF). */
 ipc_conv_state ipc_conv_poll(unsigned op, unsigned *code);
 int ipc_conv_release(unsigned op);   /* 0 once DONE/FAILED (or UNRESOLVED from a dead player) is consumed, else -1 */
 /* 1 while a conversion is pending, holds an unreleased result, or may still be writing (the start-BUSY rule). */
 int ipc_conv_busy(void);
-/* Stock's GIF selection: pathless 0810 value 5 ("08100005000C", no reply). Refused (BUSY) while a conversion is
+/* Stock's GIF selection: pathless 0810 value 5 ("0810000C0005", no reply). Refused (BUSY) while a conversion is
  * busy, so it cannot interleave with one. OK only means the frame was queued. */
 typedef enum { IPC_GIF_SELECT_OK, IPC_GIF_SELECT_BUSY, IPC_GIF_SELECT_NOT_READY, IPC_GIF_SELECT_SEND } ipc_gif_select_status;
 ipc_gif_select_status ipc_gif_select(void);
