@@ -17,6 +17,7 @@
 #include <time.h>
 #include "jsmn.h"
 #include "framelog.h"
+#include "legacy/player_reports.h"
 
 static mqd_t g_rx=(mqd_t)-1, g_tx=(mqd_t)-1;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -774,11 +775,6 @@ static void screen_new_generation(void){
  * 12-character form is accepted; any other aa1f frame is counted and ignored and never changes the state. Layout pinned
  * by tests/release/test_parity_power.py; docs/COMMAND_MAP.md "aa1f". Live frames UNVERIFIED. [g_recov_mu] */
 static int g_charge_state = -1; static uint64_t g_charge_at_ms; static unsigned g_charge_seq, g_charge_bad;
-/* 0 or 1 for a well-formed report, -1 for anything else. */
-static int charge_parse(const char *buf, int n){
-    if(n != 12 || memcmp(buf, "aa1f000C000", 11)) return -1;
-    return buf[11] == '0' ? 0 : buf[11] == '1' ? 1 : -1;
-}
 /* Called under g_recov_mu with the generation change: the new player's last-sent value starts over, so an older
  * report says nothing about it (it reports only a change from its own start-up value). */
 static void charge_new_generation(void){ g_charge_state = -1; g_charge_at_ms = 0; }
@@ -800,8 +796,8 @@ static void charge_log(const char *buf, int n, int value, unsigned bad){
     fputc('\n', stderr);
     dropped = 0;
 }
-static void charge_on_frame(const char *buf, int n){
-    int v = charge_parse(buf, n);
+/* v: 0 or 1 from a decoded report, -1 for an aa1f frame the decoder refused. */
+static void charge_on_frame(const char *buf, int n, int v){
     pthread_mutex_lock(&g_recov_mu);
     unsigned bad = g_charge_bad;
     if(v >= 0){ g_charge_state = v; g_charge_at_ms = receiver_now_ms(); g_charge_seq++; }
@@ -813,23 +809,28 @@ static void charge_on_frame(const char *buf, int n){
  * position is bound to the item current at receipt (Disc capture 2026-10-16:
  * ms, ~1 Hz while playing, stops on pause, restarts at 0 on a skip). Exactly
  * 8 hex digits within int32; anything else is ignored. Under g_recov_mu. */
-static void receiver_position(const char *buf,int n){
-    if(n!=16 || memcmp(buf,"a1030010",8) || !all_hex(buf+8,8)) return;
-    char h[9]; memcpy(h,buf+8,8); h[8]=0;
-    unsigned long ms=strtoul(h,0,16);
+static void receiver_position(uint32_t ms){
     if(ms>INT32_MAX) return;
     g_receiver_meta.position_ms=(long)ms; g_receiver_meta.progress_valid=1;
     g_receiver_meta.pos_rx_ms=receiver_now_ms();
     g_receiver_meta.pos_item_revision=g_receiver_meta.item_revision; g_receiver_meta.pos_seq++;
 }
-static void conv_on_reply(const char*buf,int n);   /* still-image conversion (end of file) */
+static void conv_on_reply(int ok, unsigned code);   /* still-image conversion (end of file) */
 static void conv_new_generation(unsigned generation);
+/* A frame the decoder refused changes nothing; the two reports that count malformed frames still count them. */
+static void refused_frame(const char *buf, int n){
+    if(n >= 4 && !memcmp(buf, "aa1f", 4)) charge_on_frame(buf, n, -1);
+    else if(n >= 4 && !memcmp(buf, "a810", 4)) conv_on_reply(0, 0);
+}
 static void parse_frame(const char*buf,int n){
 #ifdef DISKOS_FRAME_LOG
     framelog_rx(buf, n > 0 ? (size_t)n : 0);
 #endif
-    if(n<4) return;
-    if(!memcmp(buf,"aa05",4)){
+    /* src/player decodes every report strictly
+     * a202 comes back UNDECODED and is still read below. */
+    const diskos_report report = diskos_decode_report(buf, n > 0 ? (size_t)n : 0);
+    if(report.kind == DISKOS_REPORT_MALFORMED){ refused_frame(buf, n); return; }
+    if(report.kind == DISKOS_REPORT_COVER_ART){
         /* STOCK-PARITY (owner decision 55): bind by receipt, not verified item.
          * V2.40 converter 0x45b69c -> aa05=1 at 0x45b6fc-0x45b710;
          * V2.57 0x4620c4 -> 0x462124-0x462138. Neither checks the return.
@@ -840,18 +841,15 @@ static void parse_frame(const char*buf,int n){
         if(receiver_owned_locked())
             g_receiver_art=(receiver_art_key){g_receiver_meta.generation,g_receiver_meta.session_revision,
                 g_receiver_meta.item_revision,++g_receiver_art_revision,
-                g_receiver_meta.item_revision && n==12 && !memcmp(buf,"aa05000C0001",12)};
+                g_receiver_meta.item_revision && report.value == 1};
         pthread_mutex_unlock(&g_recov_mu);
         return;
     }
-    if(n<8) return;
-    if(buf[0]=='a'&&buf[1]=='a'&&buf[2]=='2'&&buf[3]=='3' && n>=12){
-        char h[5]={buf[8],buf[9],buf[10],buf[11],0};
-        if(!all_hex(h,4)) return;
-        pthread_mutex_lock(&g_recov_mu); g_scr_on=(int)strtol(h,0,16)!=0; g_scr_seq++; pthread_mutex_unlock(&g_recov_mu);
+    if(report.kind == DISKOS_REPORT_SCREEN){
+        pthread_mutex_lock(&g_recov_mu); g_scr_on=report.value!=0; g_scr_seq++; pthread_mutex_unlock(&g_recov_mu);
         return;
     }
-    if(buf[0]=='a'&&buf[1]=='a'&&buf[2]=='0'&&buf[3]=='3'){
+    if(report.kind == DISKOS_REPORT_POWER_OFF){
         pthread_mutex_lock(&g_recov_mu); g_aa03_seq++; pthread_mutex_unlock(&g_recov_mu);
         return;
     }
@@ -883,31 +881,19 @@ static void parse_frame(const char*buf,int n){
             char lh[5]={buf[4],buf[5],buf[6],buf[7],0};
             if(receiver_owned_locked() && !memcmp(buf,"a202",4) && all_hex(lh,4) && (int)strtol(lh,0,16)==n)
                 receiver_parse(buf+8,n-8);
-            else if(receiver_owned_locked() && !memcmp(buf,"a103",4)) receiver_position(buf,n);
+            else if(receiver_owned_locked() && report.kind == DISKOS_REPORT_POSITION) receiver_position(report.value);
             /* No receiver frame may reach local position/track publication. */
             pthread_mutex_unlock(&g_recov_mu); return;
         }
         pthread_mutex_unlock(&g_recov_mu);
     }
-    if(buf[0]=='a'&&buf[1]=='8'&&buf[2]=='1'&&buf[3]=='0'){ conv_on_reply(buf,n); return; }
-    /* Every aa1f of 8 bytes or more lands here (shorter frames end at the n<8 guard above, like every report). */
-    if(!memcmp(buf,"aa1f",4)){ charge_on_frame(buf,n); return; }
-    if(buf[0]==97 && buf[1]==49){ /* "a1<type2><len4><payload>"; only a103 is a position, e.g. a1030010 + 8-hex ms */
+    if(report.kind == DISKOS_REPORT_CONVERSION){ conv_on_reply(1, report.value); return; }
+    if(report.kind == DISKOS_REPORT_CHARGING){ charge_on_frame(buf, n, (int)report.value); return; }
+    if(buf[0]==97 && buf[1]==49){ /* a1: only a103 is a position */
         /* a102 is the play-mode ack (a102000C0004 after a book's Single mode) - read as a position it put Now
-         * Playing at 0:00 and made the next skip count from there. */
-        if(buf[2]!='0' || buf[3]!='3') return;
-        if(n<8) return;
-        char lh[5]={buf[4],buf[5],buf[6],buf[7],0};
-        if(!all_hex(lh,4)) return;               /* no valid length field -> reject */
-        int flen=(int)strtol(lh,0,16);           /* advertised TOTAL frame length (chars) */
-        if(flen<9 || n<flen) return;             /* TRUNCATED (fewer chars than advertised) -> keep last position,
-                                                  * never publish a short/bogus value that could corrupt a bookmark */
-        int pn=flen-8; if(pn>15) return;         /* payload wider than a position value -> not a position frame */
-        char h[16]={0}; memcpy(h,buf+8,pn);
-        if(!all_hex(h,pn)) return;               /* malformed payload -> keep last position */
-        errno=0; long ms=strtol(h,0,16);
-        if(errno==ERANGE || ms<0) return;        /* overflow/negative -> reject, don't publish garbage */
-        pthread_mutex_lock(&g_mu); g_state.position_ms=ms; g_state.seq++; g_state.pos_seq=g_state.seq; pthread_mutex_unlock(&g_mu);
+         * Playing at 0:00 and made the next skip count from there. A position must fit the 32-bit long. */
+        if(report.kind != DISKOS_REPORT_POSITION || report.value > INT32_MAX) return;
+        pthread_mutex_lock(&g_mu); g_state.position_ms=(long)report.value; g_state.seq++; g_state.pos_seq=g_state.seq; pthread_mutex_unlock(&g_mu);
     } else if(buf[0]==97 && buf[1]==50){ /* "a2" state/metadata JSON */
         char lh[5]={buf[4],buf[5],buf[6],buf[7],0};
         int complete=buf[2]=='0' && buf[3]=='2' && all_hex(lh,4) && (int)strtol(lh,0,16)==n;
@@ -937,20 +923,13 @@ static void parse_frame(const char*buf,int n){
             pthread_mutex_unlock(&g_mu);
         }
         pthread_mutex_unlock(&g_recov_mu);
-    } else if(buf[0]=='a'&&buf[1]=='7'&&buf[2]=='1'&&buf[3]=='4' && n>=12){
-        /* "a714000C00<VV><pos16>" - VV (hex chars 10-11) = volume level */
-        char h[3]={buf[10],buf[11],0};
-        if(!all_hex(h,2)) return;    /* malformed -> keep last volume, don't reset to 0 */
-        int v=(int)strtol(h,0,16);
-        pthread_mutex_lock(&g_mu); g_state.volume=v; g_state.volume_seq++; pthread_mutex_unlock(&g_mu);
-    } else if(buf[0]=='a'&&buf[1]=='6'&&buf[2]=='0'&&buf[3]=='7' && n==12 && !memcmp(buf+4,"000C",4)){
+    } else if(report.kind == DISKOS_REPORT_VOLUME){
+        pthread_mutex_lock(&g_mu); g_state.volume=(int)report.value; g_state.volume_seq++; pthread_mutex_unlock(&g_mu);
+    } else if(report.kind == DISKOS_REPORT_SOURCE){
         /* "a607000C<MODE>" - the player's external/input mode, announced to /ui after a 0657 mode CHANGE.
          * (A 0607 query's reply does not arrive here (separate transport, unverified on the Disc), so we do NOT rely on soliciting it - see
-         * g_player_mode.) MODE 0008 = LOCALPLAYER; when this arrives, ==8 confirms LOCALPLAYER is set. VALUE is
-         * the 4 hex chars after the 000C length (buf[8..11]). */
-        char h[5]={buf[8],buf[9],buf[10],buf[11],0};
-        if(!all_hex(h,4)) return;
-        int mode=(int)strtol(h,0,16);
+         * g_player_mode.) MODE 0008 = LOCALPLAYER; when this arrives, ==8 confirms LOCALPLAYER is set. */
+        int mode=(int)report.value;
         pthread_mutex_lock(&g_recov_mu);
         if(!g_rx_reopen){
             if(mode==10 && adopt_ready_locked()){ adopt_begin_locked(); adopt_locked(); }
@@ -1592,10 +1571,9 @@ static void conv_new_generation(unsigned generation){
     (void)generation;
     pthread_mutex_lock(&g_conv_mu); conv_settle(); pthread_mutex_unlock(&g_conv_mu);
 }
-/* RX thread. Malformed or unexpected replies change nothing (the deadline still bounds the operation). */
-static void conv_on_reply(const char *buf, int n){
-    unsigned code = 0; int ok = n == 12 && !memcmp(buf+4, "000C", 4) && all_hex(buf+8, 4);
-    if(ok) code = (unsigned)strtoul((char[5]){buf[8],buf[9],buf[10],buf[11],0}, 0, 16);
+/* RX thread. ok = 0 for an a810 the decoder refused. Malformed or unexpected replies change nothing (the deadline
+ * still bounds the operation). */
+static void conv_on_reply(int ok, unsigned code){
     pthread_mutex_lock(&g_conv_mu);
     conv_settle();
     if(!ok) g_conv_rejected++;

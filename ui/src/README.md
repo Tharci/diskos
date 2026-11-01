@@ -14,6 +14,7 @@ One folder per area. A folder is created with its first module. Every module may
 | `platform/` | The device: message queues, files, input, display, processes | `player/`, `services/` (implements their interfaces) |
 | `ui/`       | Screens and widgets (LVGL)                                  | `player/`, `services/`  |
 | `app/`      | Startup and the main loop: connects the parts               | all of the above        |
+| `legacy/`   | C interfaces (`.h`, `extern "C"`) through which the legacy C uses the modules; shrinks to nothing as the rewrite ends | all of the above |
 
 `player/` and `services/` contain no LVGL and no system calls. They take what they need through small
 interfaces, which `platform/` implements on the device and the tests implement with hand-written fakes.

@@ -27,7 +27,8 @@ target_compile_definitions(diskos_app PRIVATE
     $<$<BOOL:${DISKOS_TEST_BT_PREPARE}>:DISKOS_TEST_BT_PREPARE>
 )
 target_compile_options(diskos_app PRIVATE -pthread -Wall)
-target_link_libraries(diskos_app PRIVATE diskos_size_optimized third_party::mq_ui)
+# diskos::legacy: the C interfaces of the C++ modules, for the legacy sources.
+target_link_libraries(diskos_app PRIVATE diskos_size_optimized third_party::mq_ui diskos::legacy)
 # Only the two objects that start the embedded helper are built for it.
 set_source_files_properties(audio_decode.c airplay_sender.c
     PROPERTIES COMPILE_DEFINITIONS AUDIO_STOCK_EMBEDDED=1
@@ -38,12 +39,12 @@ add_executable(mq_ui
     $<TARGET_OBJECTS:third_party_sqlite>
     $<TARGET_OBJECTS:diskos_audiodec_image>
 )
-set_target_properties(mq_ui PROPERTIES LINKER_LANGUAGE C)
+set_target_properties(mq_ui PROPERTIES LINKER_LANGUAGE CXX)  # the C++ modules need libstdc++
 # --gc-sections drops every provably unreferenced function/data section at link (unused LVGL fonts,
 # widgets, draw backends, SQLite functions) with no behaviour change: only unreachable symbols are
 # removed.
 target_link_options(mq_ui PRIVATE -static -pthread -Wl,--gc-sections)
-target_link_libraries(mq_ui PRIVATE third_party::mq_ui m rt)
+target_link_libraries(mq_ui PRIVATE diskos::legacy third_party::mq_ui m rt)
 
 # Every on-screen colour is a theme role and every font a font role: tools/check_theme.py (also a
 # pre-commit hook) runs before each link, over the app sources and every header outside lvgl/.

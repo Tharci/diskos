@@ -4,3 +4,4 @@
 
 add_subdirectory(utils)
 add_subdirectory(player)
+add_subdirectory(legacy)

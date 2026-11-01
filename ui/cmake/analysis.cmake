@@ -34,9 +34,9 @@ if(RUN_CLANG_TIDY)
 
     add_custom_target(tidy
         COMMAND ${RUN_CLANG_TIDY} -quiet -p ${CMAKE_BINARY_DIR} ${tidy_args}
-                # The modules' headers too. Given here: clang-tidy 19 ignores HeaderFilterRegex in
-                # src/.clang-tidy.
-                -header-filter=${PROJECT_SOURCE_DIR}/src/.*
+                # The modules' headers too (not the C headers in legacy/). Given here: clang-tidy 19
+                # ignores HeaderFilterRegex in src/.clang-tidy.
+                -header-filter=${PROJECT_SOURCE_DIR}/src/.*\\.hpp$
                 "${PROJECT_SOURCE_DIR}/src/.*\\.cpp$"
         COMMENT "clang-tidy over src/"
         VERBATIM
