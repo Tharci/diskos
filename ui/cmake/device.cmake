@@ -27,4 +27,4 @@ include(cmake/audiodec.cmake)        # the stock-library helper embedded in mq_u
 include(cmake/legacy_sources.cmake)  # the C sources, in link order
 include(cmake/mq_ui.cmake)           # the UI binary
 include(cmake/helpers.cmake)         # diskos-bootprobe, diskos-artdec (built on request)
-include(cmake/tidy.cmake)            # clang-tidy over the C++ modules (the tidy target)
+include(cmake/analysis.cmake)        # clang-tidy and cppcheck over the C++ modules

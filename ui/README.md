@@ -88,8 +88,8 @@ set `DISKOS_DEP_OUT` to keep them in a directory shared between build directorie
 ### C++ modules and host tests
 
 The UI is being rewritten in C++23 under [`src/`](src/README.md), module by module. The device build compiles
-the modules too, and `cmake --build --preset device -t tidy` runs clang-tidy on them. Their Catch2 tests run on
-the host, with the host's GCC 14, under sanitizers:
+the modules too, and `cmake --build --preset device -t tidy` (or `-t cppcheck`) analyses them. Their Catch2 tests
+run on the host, with the host's GCC 14, under sanitizers:
 
 ```sh
 cmake --preset host && cmake --build --preset host && ctest --preset host   # ASan + UBSan

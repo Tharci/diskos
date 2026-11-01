@@ -1,0 +1,97 @@
+name: UI
+
+# The UI (ui/): the device build, the C++ modules' host tests and static analysis. Formatting is
+# checked by pre-commit in python.yml.
+on:
+  push:
+    branches: [main, dev]
+    paths: ["ui/**", ".github/workflows/ui.yml"]
+  pull_request:
+    paths: ["ui/**", ".github/workflows/ui.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Every check runs in the toolchain image, with the stock inputs mounted read-only.
+  IN_IMAGE: >-
+    docker run --rm -v ${{ github.workspace }}/ui:/src -v /tmp/stock-inputs:/inputs:ro
+    -e STOCK_AV_HEADERS=/inputs/ffmpeg-4.2.2.tar.xz -e STOCK_SYSROOT=/inputs/stock-v257
+    diskos-ui-builder
+
+jobs:
+  ui:
+    name: Build, tests and analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The toolchain image (ui/Dockerfile) is built here and cached in this repository's private
+      # Actions cache; it is never pushed anywhere. The first run builds GCC (about half an hour),
+      # later runs restore it.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Toolchain image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ui
+          tags: diskos-ui-builder
+          load: true
+          cache-from: type=gha,scope=diskos-ui-builder
+          cache-to: type=gha,scope=diskos-ui-builder,mode=max,ignore-error=true
+
+      # FiiO's V2.57 firmware (the stock libraries the embedded audiodec helper links against) and
+      # the FFmpeg headers, downloaded from their official sources, hash-checked against the pins in
+      # the repository and cached privately. Never uploaded or published.
+      - name: Restore stock inputs
+        id: inputs-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            /tmp/stock-inputs/ffmpeg-4.2.2.tar.xz
+            /tmp/stock-inputs/stock-v257
+          key: stock-inputs-v257-${{ hashFiles('ui/tools/fetch_stock_inputs.py') }}
+      - if: steps.inputs-cache.outputs.cache-hit != 'true'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"   # keep equal to python.yml
+      - name: Fetch stock inputs
+        if: steps.inputs-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends squashfs-tools
+          uv sync --locked
+          uv run python ui/tools/fetch_stock_inputs.py /tmp/stock-inputs
+          # Keep only what the build mounts: the cache holds no firmware image.
+          rm /tmp/stock-inputs/*.zip /tmp/stock-inputs/*.squashfs
+
+      # GCC's sanitizers cannot start with the runner kernel's 32-bit mmap randomisation.
+      - name: Allow the sanitizers' memory layout
+        id: ready
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      # The checks below all run even when an earlier one fails, so one run reports every failure.
+      - name: Host tests (ASan + UBSan)
+        if: ${{ !cancelled() && steps.ready.outcome == 'success' }}
+        run: >-
+          $IN_IMAGE sh -c 'cmake --preset host -DDISKOS_WERROR=ON &&
+          cmake --build --preset host && ctest --preset host'
+      - name: Host tests (TSan)
+        if: ${{ !cancelled() && steps.ready.outcome == 'success' }}
+        run: >-
+          $IN_IMAGE sh -c 'cmake --preset host-tsan -DDISKOS_WERROR=ON &&
+          cmake --build --preset host-tsan && ctest --preset host-tsan'
+      - name: Device build
+        if: ${{ !cancelled() && steps.ready.outcome == 'success' }}
+        run: >-
+          $IN_IMAGE sh -c 'cmake --preset device -DDISKOS_WERROR=ON &&
+          cmake --build --preset device --target all diskos-bootprobe diskos-artdec'
+      - name: clang-tidy
+        if: ${{ !cancelled() && steps.ready.outcome == 'success' }}
+        run: $IN_IMAGE cmake --build --preset device --target tidy
+      - name: cppcheck
+        if: ${{ !cancelled() && steps.ready.outcome == 'success' }}
+        run: $IN_IMAGE cmake --build --preset device --target cppcheck

@@ -50,8 +50,9 @@ bug patterns) and the warnings in `cmake/cxx.cmake`. What they cannot check:
 ## Building and testing
 
 The device build (`cmake --preset device`) compiles the modules with the cross GCC.
-`cmake --build --preset device -t tidy` runs clang-tidy on them with the device's compile
-commands. The host presets build the modules and their tests with the host's GCC 14:
+`cmake --build --preset device -t tidy` and `-t cppcheck` analyse them with the device's
+compile commands. The host presets build the modules and their tests with the host's GCC 14.
+CI (`.github/workflows/ui.yml`) runs all of these.
 
 ```sh
 cmake --preset host && cmake --build --preset host && ctest --preset host           # ASan + UBSan

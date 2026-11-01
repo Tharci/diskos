@@ -1,5 +1,5 @@
 # diskOS C++ static analysis (clang-tidy 19, from the build image). Run it with
-#   cmake --build --preset device -t tidy
+#   cmake --build --preset device -t tidy   (cmake/analysis.cmake)
 # CI turns every finding into an error. Silencing one takes NOLINT(check-name): reason.
 ---
 Checks: >
