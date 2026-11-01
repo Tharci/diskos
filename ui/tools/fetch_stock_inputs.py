@@ -17,6 +17,7 @@ import hashlib
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -25,7 +26,12 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 from diskos_installer import firmware_catalogue, imagebuild  # noqa: E402
 
-FFMPEG_URL = "https://ffmpeg.org/releases/ffmpeg-4.2.2.tar.xz"
+FFMPEG_URLS = (
+    "https://ffmpeg.org/releases/ffmpeg-4.2.2.tar.xz",
+    # The identical file in Debian's archive: ffmpeg.org refuses some cloud addresses,
+    # GitHub's runners among them.
+    "https://snapshot.debian.org/archive/debian/20200126T032723Z/pool/main/f/ffmpeg/ffmpeg_4.2.2.orig.tar.xz",
+)
 FFMPEG_SHA256 = "cb754255ab0ee2ea5f66f8850e1bd6ad5cac1cd855d0a2f4990fb8c668b0d29c"
 FIRMWARE = "257"
 # What the helper links against; their presence proves the extraction.
@@ -46,18 +52,40 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def download(url, target):
-    if target.exists():
-        return
+def fetch(url, target):
+    """Download url to target; False, with the reason printed, if the transfer fails."""
     print(f">> downloading {url}")
     partial = target.with_name(target.name + ".part")
-    urllib.request.urlretrieve(url, partial)  # noqa: S310 - fixed https URLs, hash-checked after
+    try:
+        response = urllib.request.urlopen(url, timeout=60)  # noqa: S310 - fixed URLs
+        with response, partial.open("wb") as file:
+            shutil.copyfileobj(response, file)
+    except OSError as error:
+        print(f"   failed: {error}")
+        return False
     partial.replace(target)
+    return True
+
+
+def download(urls, target, expected_sha256=None, attempts=3):
+    """Fetch target from the first source that delivers it (intact, when a hash is given)."""
+    if target.exists():
+        return
+    for url in urls:
+        for attempt in range(attempts):
+            if fetch(url, target):
+                if expected_sha256 is None or sha256(target) == expected_sha256:
+                    return
+                print("   SHA-256 mismatch")
+                target.unlink()
+                break
+            time.sleep(5 * (attempt + 1))
+    sys.exit(f"could not download {target.name}")
 
 
 def fetch_ffmpeg(inputs):
     archive = inputs / "ffmpeg-4.2.2.tar.xz"
-    download(FFMPEG_URL, archive)
+    download(FFMPEG_URLS, archive, FFMPEG_SHA256)
     if sha256(archive) != FFMPEG_SHA256:
         sys.exit(f"{archive}: SHA-256 mismatch")
 
@@ -78,7 +106,7 @@ def fetch_sysroot(inputs):
         return
     pin = firmware_catalogue.CATALOGUE[FIRMWARE]
     firmware_zip = inputs / Path(pin.url).name
-    download(pin.url, firmware_zip)
+    download([pin.url], firmware_zip)
     firmware_catalogue.verify(str(firmware_zip), FIRMWARE)
     rootfs = inputs / "rootfs-v257.squashfs"
     if not rootfs.exists():
