@@ -51,18 +51,4 @@ enum class FrameError : std::uint8_t {
         std::string_view tag, std::string_view body
 );
 
-/**
- * Read 1 to 8 hex digits (case insensitive).
- * Returns:
- *  - uint32_t - for hex digits
- *  - nullopt - for anything else
- */
-[[nodiscard]] std::optional<std::uint32_t> parse_hex(std::string_view digits);
-
-/**
- * Write `value` in uppercase hex, zero-padded to at least `width` digits, like printf's %0*X:
- * a value too wide for `width` keeps all its digits.
- */
-[[nodiscard]] std::string format_hex(std::uint64_t value, std::size_t width);
-
 }  // namespace diskos::player

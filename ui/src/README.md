@@ -4,11 +4,12 @@ The UI is being rewritten from the C in `ui/` into C++23 here, one module at a t
 
 ## Layout
 
-One folder per area. A folder is created with its first module.
+One folder per area. A folder is created with its first module. Every module may use `utils/`.
 
 | Folder      | Holds                                                       | May use                 |
 |-------------|-------------------------------------------------------------|-------------------------|
-| `player/`   | The stock player's protocol: frames, messages, its state    | no other module         |
+| `utils/`    | Small general helpers with no diskOS knowledge (number parsing) | no other module     |
+| `player/`   | The stock player's protocol: frames, messages, its state    | `utils/`                |
 | `services/` | Playback, library, books, Bluetooth, Wi-Fi: logic and state | `player/`               |
 | `platform/` | The device: message queues, files, input, display, processes | `player/`, `services/` (implements their interfaces) |
 | `ui/`       | Screens and widgets (LVGL)                                  | `player/`, `services/`  |

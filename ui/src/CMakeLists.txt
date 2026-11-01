@@ -2,4 +2,5 @@
 # Copyright (C) 2026 diskOS contributors
 # The C++ modules, one folder each (see README.md).
 
+add_subdirectory(utils)
 add_subdirectory(player)

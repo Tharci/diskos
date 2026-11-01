@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 diskOS contributors
-#include "player/report.hpp"
+#include "player/reports.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <optional>
+#include <utility>
 
 #include "player/frame.hpp"
+#include "player/track_report.hpp"
+#include "utils/numbers.hpp"
 
 namespace diskos::player {
 namespace {
@@ -20,7 +23,7 @@ constexpr std::size_t kPositionDigits = 8;
 
 /** Read a body that is exactly `digits` hex digits; BadBody for anything else. */
 Value read_digits(std::string_view body, std::size_t digits) {
-    const std::optional<std::uint32_t> value = parse_hex(body);
+    const std::optional<std::uint32_t> value = utils::parse_hex(body);
     if (body.size() != digits || !value) {
         return std::unexpected(ReportError::BadBody);
     }
@@ -56,7 +59,7 @@ bool is_source(std::uint32_t value) {
 
 Decoded position(std::string_view body) {
     return read_digits(body, kPositionDigits).transform([](std::uint32_t ms) -> Report {
-        return Position{.position_ms = ms};
+        return PositionReport{.position_ms = ms};
     });
 }
 
@@ -69,7 +72,7 @@ Decoded play_mode(std::string_view body) {
 
 Decoded volume(std::string_view body) {
     return read_value(body, kMaxVolume).transform([](std::uint32_t value) -> Report {
-        return Volume{.level = static_cast<std::uint8_t>(value)};
+        return VolumeReport{.level = static_cast<std::uint8_t>(value)};
     });
 }
 
@@ -84,23 +87,23 @@ Decoded source(std::string_view body) {
 
 Decoded charging(std::string_view body) {
     return read_value(body, 1).transform([](std::uint32_t value) -> Report {
-        return Charging{.charging = value == 1};
+        return ChargingReport{.charging = value == 1};
     });
 }
 
 Decoded screen(std::string_view body) {
     return read_value(body, 1).transform([](std::uint32_t value) -> Report {
-        return Screen{.on = value == 1};
+        return ScreenReport{.on = value == 1};
     });
 }
 
 Decoded power_off(std::string_view /*body*/) {
-    return PowerOff{};
+    return PowerOffReport{};
 }
 
 Decoded cover_art(std::string_view body) {
     return read_value(body, 1).transform([](std::uint32_t value) -> Report {
-        return CoverArt{.ready = value == 1};
+        return CoverArtReport{.ready = value == 1};
     });
 }
 
@@ -112,14 +115,43 @@ Decoded favourite_ack(std::string_view body) {
 
 Decoded battery(std::string_view body) {
     return read_value(body, kMaxBattery).transform([](std::uint32_t value) -> Report {
-        return Battery{.percent = static_cast<std::uint8_t>(value)};
+        return BatteryReport{.percent = static_cast<std::uint8_t>(value)};
     });
 }
 
 Decoded conversion_result(std::string_view body) {
     return read_value(body).transform([](std::uint32_t value) -> Report {
-        return ConversionResult{.code = static_cast<std::uint16_t>(value)};
+        return ConversionReport{.code = static_cast<std::uint16_t>(value)};
     });
+}
+
+/** a202's state-only form: exactly {"state":N}. */
+Decoded play_state(std::string_view body) {
+    constexpr std::string_view kHead = R"({"state":)";
+    constexpr std::string_view kTail = "}";
+    if (!body.starts_with(kHead) || !body.ends_with(kTail)) {
+        return std::unexpected(ReportError::BadBody);
+    }
+    const std::optional<std::int64_t> value = utils::parse_decimal(
+            body.substr(kHead.size(), body.size() - kHead.size() - kTail.size())
+    );
+    if (!value) {
+        return std::unexpected(ReportError::BadBody);
+    }
+    if (*value < 0 || *value > static_cast<std::int64_t>(PlayState::Stopped)) {
+        return std::unexpected(ReportError::BadValue);
+    }
+    return PlayStateReport{.state = static_cast<PlayState>(*value)};
+}
+
+/** a202 covers both player state report and track report */
+Decoded state_and_track(std::string_view body) {
+    if (body.starts_with(R"({"song":)")) {
+        return decode_track_report(body).transform([](TrackReport&& track) -> Report {
+            return std::move(track);
+        });
+    }
+    return play_state(body);
 }
 
 struct Decoder {
@@ -139,6 +171,7 @@ constexpr std::array kDecoders{
         Decoder{.tag = "aa01", .decode = favourite_ack},
         Decoder{.tag = "aa1d", .decode = battery},
         Decoder{.tag = "a810", .decode = conversion_result},
+        Decoder{.tag = "a202", .decode = state_and_track},
 };
 
 }  // namespace
@@ -150,7 +183,7 @@ std::expected<Report, ReportError> decode_report(std::string_view bytes) {
     }
     const auto* const decoder = std::ranges::find(kDecoders, frame->tag, &Decoder::tag);
     if (decoder == kDecoders.end()) {
-        return Unknown{.tag = frame->tag, .body = frame->body};
+        return UnknownReport{.tag = frame->tag, .body = frame->body};
     }
     return decoder->decode(frame->body);
 }
