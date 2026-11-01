@@ -43,8 +43,8 @@ std::expected<std::string, FrameError> encode_frame(std::string_view tag, std::s
 
 // Reads 1 to 8 hex digits (case insensitive).
 // Returns:
-//  - uint32_t - for hex digits
-//  - nullopt - for anything else
+//  uint32_t - for hex digits
+//  nullopt - for anything else
 std::optional<std::uint32_t> parse_hex(std::string_view digits);
 
 // Writes `value` in uppercase hex, zero-padded to at least `width` digits, like printf's %0*X:
