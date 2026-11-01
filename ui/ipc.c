@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include "jsmn.h"
+#include "framelog.h"
 
 static mqd_t g_rx=(mqd_t)-1, g_tx=(mqd_t)-1;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -824,6 +825,9 @@ static void receiver_position(const char *buf,int n){
 static void conv_on_reply(const char*buf,int n);   /* still-image conversion (end of file) */
 static void conv_new_generation(unsigned generation);
 static void parse_frame(const char*buf,int n){
+#ifdef DISKOS_FRAME_LOG
+    framelog_rx(buf, n > 0 ? (size_t)n : 0);
+#endif
     if(n<4) return;
     if(!memcmp(buf,"aa05",4)){
         /* STOCK-PARITY (owner decision 55): bind by receipt, not verified item.
@@ -1325,6 +1329,10 @@ static int ipc_send_wire_locked(const char*frame, int policy, unsigned generatio
         g_tx_dev = 0; g_tx_ino = 0;   /* clear first: a failed capture must not leave a stale identity */
         if(g_tx!=(mqd_t)-1) mq_identity(g_tx, &g_tx_dev, &g_tx_ino);
     }
+#ifdef DISKOS_FRAME_LOG
+    const char *policy_name = policy == SEND_USER ? "user" : policy == SEND_PROBE ? "probe" : "automatic";
+    if(g_tx==(mqd_t)-1) framelog_tx(frame, strlen(frame), -1, policy_name);
+#endif
     if(g_tx==(mqd_t)-1){ ipc_note_send_error(policy); return -1; }
     size_t len = strlen(frame);
     /* g_tx is O_NONBLOCK so a full /player queue returns EAGAIN immediately. A user
@@ -1332,11 +1340,19 @@ static int ipc_send_wire_locked(const char*frame, int policy, unsigned generatio
      * (~15ms max) to let the player drain; only EAGAIN is retried, other errors fail. */
     int err = 0;
     for(int a=0;a<5;a++){
-        if(mq_send(g_tx, frame, len, 0) == 0) return 0;
+        if(mq_send(g_tx, frame, len, 0) == 0){
+#ifdef DISKOS_FRAME_LOG
+            framelog_tx(frame, len, 0, policy_name);
+#endif
+            return 0;
+        }
         err = errno;                 /* capture before usleep, which may touch errno */
         if(err != EAGAIN) break;
         usleep(3000);
     }
+#ifdef DISKOS_FRAME_LOG
+    framelog_tx(frame, len, err, policy_name);
+#endif
     /* ANY failure -> drop the fd so the next send re-opens the CURRENT named /player. Covers a
      * non-EAGAIN error (player went away) AND EAGAIN-exhaustion (queue full 5x - an orphaned
      * queue after a restart looks exactly like this; H1). Reopening a merely transiently-full
@@ -1528,13 +1544,15 @@ uint64_t ipc_library_epoch(void){
 }
 
 /* ---- stock still-image conversion (0810 value 5 + source path -> a810 result) ----
- * mq_ui@0x48b28c frames a request as "%s%04X%04X%s" (tag, value, strlen+12, string); mq_player@0x4f169c
- * (V2.57) handles 0810: value 5 with a non-NULL string at +0x18 runs set_custom_cover_by_file(path)
- * (0x4812c8) and replies a810 through 0x4ddaec(1, "a810", code, NULL): queue index 1 is the /ui queue
- * (0x4dc944 stores the name), the NULL-string form is snprintf(buf, 13, "%s%04X%04X") sent as 12 bytes
- * (0x4ddc54..0x4ddc88). So the reply is exactly 12 chars: "a810" + %04X(code) + "000C", and a code that
- * needs more than 4 hex digits (the converter returns -1) pushes the length field out: "a810FFFFFFFF".
- * The reply has no operation id, so correlation is one pending operation + player generation + deadline.
+ * Like every other frame, both put the length before the value: the request is "0810" + %04X(strlen+12) + "0005" +
+ * path, the reply "a810000C" + %04X(code), 0 = done. Disc capture 2026-11-01: "081000310005" +
+ * "/tmp/sdcard/CustomCover/spongebob.png" was answered "a810000C0000" in 0.5 s. (An earlier reading put the value
+ * first, which the player ignores, so every conversion timed out.) mq_player@0x4f169c (V2.57) handles 0810: value 5
+ * with a non-NULL string at +0x18 runs set_custom_cover_by_file(path) (0x4812c8) and replies a810 through
+ * 0x4ddaec(1, "a810", code, NULL): queue index 1 is the /ui queue (0x4dc944 stores the name), and the NULL-string
+ * form is snprintf(buf, 13, ...) sent as 12 bytes (0x4ddc54..0x4ddc88), so a code wider than 4 hex digits keeps its
+ * first 4: the converter's -1 arrives as FFFF. The reply has no operation id, so correlation is one pending
+ * operation + player generation + deadline.
  * Value 5 with a NULL path is the GIF case: no conversion, no reply (mq_player@0x4f16dc: NULL string -> straight to
  * the LOCK_THEME store at 0x4f16b4); see ipc_gif_select. */
 #define CONV_PREFIX "/tmp/sdcard/CustomCover/"   /* mq_ui picker folder, same path it sends (0x6a077c) */
@@ -1576,14 +1594,8 @@ static void conv_new_generation(unsigned generation){
 }
 /* RX thread. Malformed or unexpected replies change nothing (the deadline still bounds the operation). */
 static void conv_on_reply(const char *buf, int n){
-    unsigned code = 0; int ok = n == 12 && all_hex(buf+4, 8);
-    if(ok){
-        if(!strncasecmp(buf+8, "000C", 4)) code = (unsigned)strtoul((char[5]){buf[4],buf[5],buf[6],buf[7],0}, 0, 16);
-        else { code = (unsigned)strtoul((char[9]){buf[4],buf[5],buf[6],buf[7],buf[8],buf[9],buf[10],buf[11],0}, 0, 16);
-               /* %04X adds no leading zero once the value exceeds four digits.
-                * A zero-leading body with no 000C suffix is malformed. */
-               ok = buf[4] != '0' && code != 0; }
-    }
+    unsigned code = 0; int ok = n == 12 && !memcmp(buf+4, "000C", 4) && all_hex(buf+8, 4);
+    if(ok) code = (unsigned)strtoul((char[5]){buf[8],buf[9],buf[10],buf[11],0}, 0, 16);
     pthread_mutex_lock(&g_conv_mu);
     conv_settle();
     if(!ok) g_conv_rejected++;
@@ -1620,17 +1632,17 @@ void ipc_apply_release(void){
  * mq_player@0x4f16ac-0x4f16e0: both routes store config id 37. Live effect unverified. */
 int ipc_saver_reselect(unsigned style){
     if(style > 5 || !ipc_is_ready()) return -1;
-    char frame[13]; snprintf(frame, sizeof frame, "0810%04X000C", style);
+    char frame[13]; snprintf(frame, sizeof frame, "0810000C%04X", style);
     return ipc_send_internal(frame, SEND_PROBE, ipc_generation());
 }
-/* Stock's GIF selection: mq_ui@0x47c628 calls 0x48b28c("0810", 5, NULL), whose NULL-string form is
- * snprintf(buf, 13, "%s%04X%04X", tag, 5, 12) (format 0x6a38e0, 0x48b3bc..0x48b3dc). The lock must be held through
- * the send so a conversion cannot start between the check and the frame. */
+/* Stock's GIF selection: mq_ui@0x47c628 calls 0x48b28c("0810", 5, NULL), whose NULL-string form is the 12-byte
+ * "0810000C0005" (format 0x6a38e0, 0x48b3bc..0x48b3dc; length first, see the conversion above). The lock must be
+ * held through the send so a conversion cannot start between the check and the frame. */
 ipc_gif_select_status ipc_gif_select(void){
     if(!ipc_is_ready()) return IPC_GIF_SELECT_NOT_READY;
     pthread_mutex_lock(&g_conv_mu); conv_settle();
     ipc_gif_select_status st = conv_blocked(ipc_generation()) ? IPC_GIF_SELECT_BUSY :
-        ipc_send_internal("08100005000C", SEND_PROBE, ipc_generation()) ? IPC_GIF_SELECT_SEND : IPC_GIF_SELECT_OK;
+        ipc_send_internal("0810000C0005", SEND_PROBE, ipc_generation()) ? IPC_GIF_SELECT_SEND : IPC_GIF_SELECT_OK;
     pthread_mutex_unlock(&g_conv_mu);
     return st;
 }
@@ -1638,7 +1650,7 @@ ipc_conv_start_status ipc_conv_start(const char *src, unsigned *op){
     if(!conv_path_ok(src)) return IPC_CONV_START_PATH;
     if(!ipc_is_ready()) return IPC_CONV_START_NOT_READY;
     char frame[CONV_PATH_MAX + 13];
-    snprintf(frame, sizeof frame, "08100005%04X%s", (unsigned)(strlen(src) + 12), src);
+    snprintf(frame, sizeof frame, "0810%04X0005%s", (unsigned)(strlen(src) + 12), src);
     unsigned gen = ipc_generation();
     pthread_mutex_lock(&g_conv_mu);
     conv_settle();

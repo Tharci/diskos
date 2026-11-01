@@ -11,11 +11,14 @@ Use the pinned Docker builder (Linux and macOS, Intel or Apple Silicon):
 ```sh
 cd ui
 docker build -t diskos-ui-builder .
-docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" diskos-ui-builder
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" -v /path/to/inputs:/inputs:ro \
+  -e STOCK_AV_HEADERS=/inputs/ffmpeg-4.2.2.tar.xz -e STOCK_SYSROOT=/inputs/stock-v257 \
+  diskos-ui-builder sh -c 'cmake --preset device && cmake --build --preset device'
 ```
 
-This produces a static `mq_ui` for `mipsel-linux-musl`. LVGL is vendored, so nothing else is needed.
-See [`ui/README.md`](../ui/README.md) for the toolchain details and a from-scratch (non-Docker) build.
+This produces a static `build/device/mq_ui` for `mipsel-linux-musl`. LVGL is vendored; the two inputs (the
+FFmpeg header archive and your own stock V2.57 root filesystem) are described in
+[`ui/README.md`](../ui/README.md), with the toolchain details and a non-Docker build.
 
 ## 2. Get a shell on the device
 
@@ -28,7 +31,7 @@ ssh root@<device-ip>      # password from Debug Mode
 
 ## 3. Push the binary
 
-Stream the freshly built `mq_ui` to a staging path, verify it, then move it into place:
+From `ui/build/device`, stream the freshly built `mq_ui` to a staging path, verify it, then move it into place:
 
 ```sh
 ssh root@<device-ip> 'cat > /usr/data/mq_ui.new && chmod 755 /usr/data/mq_ui.new && md5sum /usr/data/mq_ui.new' < mq_ui

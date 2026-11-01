@@ -8,9 +8,10 @@
 # floating-point instruction in software, which is many times slower.
 TARGET = mipsel-linux-musl
 OUTPUT = /opt/mipsel-n2008-musl-cross
-GCC_VER = 11.2.0
+GCC_VER = 14.3.0
 MUSL_VER = 1.2.6
 BINUTILS_VER = 2.44
 GCC_CONFIG += --with-arch=mips32r2 --with-nan=2008 --with-fp-32=64 --with-odd-spreg-32
-GCC_CONFIG += --disable-libquadmath --disable-libsanitizer --enable-languages=c
+# C and C++: the UI is moving to C++23 module by module (libstdc++ is built for this ABI too).
+GCC_CONFIG += --disable-libquadmath --disable-libsanitizer --enable-languages=c,c++
 COMMON_CONFIG += MAKEINFO=true

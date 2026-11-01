@@ -1,0 +1,217 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 diskOS contributors
+# The C sources of mq_ui, which the C++ rewrite replaces module by module. The order is the
+# link order, so it decides the binary's layout: keep it stable and add new files at the end.
+
+set(legacy_sources
+    # Entry point, network speaker discovery and the audio pipeline
+    main.c
+    remote_discovery.c
+    remote_browse.c
+    audio_decode.c
+    audio_convert.c
+    audio_feed.c
+    audio_timeline.c
+
+    # AirPlay
+    airplay_crypto.c
+    airplay_tlv.c
+    airplay_store.c
+    airplay_pair.c
+    airplay_rtsp.c
+    airplay_rtp.c
+    airplay_raop.c
+    airplay_plist.c
+    airplay_ipc.c
+    airplay_session.c
+    airplay_remote.c
+    airplay_events.c
+    airplay_mrp.c
+    airplay_worker.c
+    airplay_queue.c
+    airplay_sender.c
+    airplay_pin.c
+    remote_tls.c
+
+    # Google Cast, with its protocol buffers runtime (nanopb)
+    cast_wire.c
+    cast_messages.c
+    cast_session.c
+    cast_discovery.c
+    cast_http.c
+    cast_handoff.c
+    cast_bridge.c
+    cast_art.c
+    cast_queue.c
+    cast_ctl.c
+    cast_ctlw.c
+    cast_format.c
+    cast_ui.c
+    third_party/cast/cast_channel.pb.c
+    third_party/nanopb-0.4.9.1/pb_encode.c
+    third_party/nanopb-0.4.9.1/pb_decode.c
+    third_party/nanopb-0.4.9.1/pb_common.c
+
+    # Screens, services and drivers
+    sdio.c
+    fontft.c
+    font_cjk_extra_16.c
+    playstate.c
+    playback.c
+    fb_pan.c
+    ipc.c
+    receiver.c
+    receiver_progress.c
+    ui.c
+    art.c
+    screenmgr.c
+    home.c
+    library.c
+    musicdb.c
+    custom_saver_db.c
+    custom_saver_apply.c
+    custom_saver_picker.c
+    custom_picker_ui.c
+    custom_preview.c
+    custom_saver_overlay.c
+    settings.c
+    power.c
+    controls.c
+    volkeys_hold.c
+    volkeys.c
+    config.c
+    anim.c
+    search.c
+    saver.c
+    quicksettings.c
+    songinfo.c
+    npmenus.c
+    eqcustom.c
+    apps.c
+    kbinput.c
+    playlistview.c
+    folderbrowser.c
+    folderscope.c
+    books.c
+    upnext.c
+    datetime.c
+    i18n.c
+    i18n_tables.c
+    theme.c
+    theme_kit.c
+    theme_defs.c
+    theme_kits.c
+    theme_validate.c
+    theme_store.c
+    artcache.c
+    colorpick.c
+    albumwall.c
+    debug_ui.c
+    modes.c
+    wifi.c
+    bt.c
+    btstore.c
+    bt_codec_observe.c
+    bt_prepare.c
+    weather.c
+    lyrics.c
+    netart.c
+    toast.c
+    lastfm.c
+    lastfm_ui.c
+    splash.c
+    shutdown_anim.c
+    md5.c
+    scanner.c
+    opustitle.c
+    opustitle_worker.c
+    system.c
+    ota.c
+    fwcaps.c
+
+    # Generated fonts
+    font_icons_28.c
+    font_icons_20.c
+    font_weather16.c
+    font_intl_14.c
+    font_intl_16.c
+    font_intl_18.c
+    font_intl_20.c
+    font_mono_14.c
+    font_mono_16.c
+    font_mono_18.c
+    font_mono_20.c
+    font_mono_24.c
+    font_mono_bold_12.c
+    font_dot_18.c
+    font_dot_28.c
+    font_bauh_bold_22.c
+    font_bauh_bold_32.c
+    font_bauh_clk_140.c
+    font_bauh_clk_96.c
+    font_bauh_ui_12.c
+    font_bauh_ui_14.c
+    font_bauh_ui_16.c
+    font_bauh_ui_18.c
+    font_bauh_ui_20.c
+    font_bauh_ui_24.c
+    font_blue_clk_56.c
+    font_blue_sans_14.c
+    font_blue_sans_16.c
+    font_blue_sans_18.c
+    font_blue_sans_20.c
+    font_hifi_seg_20.c
+    font_hifi_seg_64.c
+    font_hifi_ui_12.c
+    font_hifi_ui_14.c
+    font_hifi_ui_16.c
+    font_hifi_ui_18.c
+    font_hifi_ui_20.c
+    font_hifi_ui_24.c
+    font_stone_clk_64.c
+    font_stone_ui_12.c
+    font_stone_ui_14.c
+    font_stone_ui_16.c
+    font_stone_ui_18.c
+    font_stone_ui_20.c
+    font_stone_ui_24.c
+    font_term_clk_72.c
+    font_term_ui_12.c
+    font_term_ui_14.c
+    font_term_ui_16.c
+    font_term_ui_18.c
+    font_term_ui_20.c
+    font_term_ui_24.c
+    font_zine_bold_16.c
+    font_zine_bold_20.c
+    font_zine_clk_50.c
+    font_zine_glitch_26.c
+    font_zine_ui_12.c
+    font_zine_ui_14.c
+    font_zine_ui_16.c
+    font_zine_ui_18.c
+    font_zine_ui_20.c
+    font_zine_ui_24.c
+    font_brand_disk_32.c
+    font_brand_os_32.c
+
+    # Later additions
+    bookmeta.c
+    ota_policy.c
+    procrun.c
+    names.c
+    btalias.c
+    device_names.c
+    device_names_ui.c
+    names_reset.c
+    radio_cfg.c
+    radio_bt.c
+    radio_wifi.c
+    ui_dialog.c
+)
+if(DISKOS_PROFILE)
+    list(APPEND legacy_sources prof.c)
+endif()
+if(DISKOS_FRAME_LOG)
+    list(APPEND legacy_sources framelog.c)
+endif()
