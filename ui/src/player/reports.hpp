@@ -20,7 +20,6 @@
  */
 namespace diskos::player {
 
-inline constexpr std::uint8_t kMaxVolume = 120;  // The device's MAX_VOL; a714 uses the same scale.
 inline constexpr std::uint8_t kMaxBattery = 100;
 
 /** a103: the playing position, about once a second while playing, never while paused. */

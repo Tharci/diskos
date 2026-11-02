@@ -6,6 +6,9 @@
 
 namespace diskos::player {
 
+// The device's MAX_VOL: volumes in 0715 and a714 are on a 0..kMaxVolume scale.
+inline constexpr std::uint8_t kMaxVolume = 120;
+
 /**
  * How the player moves through its queue: the value of the 0102 command and its a102 report.
  * The stock UI cycles through them in this order.
