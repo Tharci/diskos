@@ -24,19 +24,17 @@ TEST_CASE("diskos_decode_report reduces each report to its kind and value", "[le
     };
 
     const std::array cases{
-            Expected{
-                    .frame = "a103001000C9174D", .kind = DISKOS_REPORT_POSITION, .value = 0x00C9174D
-            },
-            Expected{.frame = "a102000C0004", .kind = DISKOS_REPORT_PLAY_MODE, .value = 4},
-            Expected{.frame = "a714000C003F", .kind = DISKOS_REPORT_VOLUME, .value = 63},
-            Expected{.frame = "a607000C000A", .kind = DISKOS_REPORT_SOURCE, .value = 10},
-            Expected{.frame = "aa1f000C0001", .kind = DISKOS_REPORT_CHARGING, .value = 1},
-            Expected{.frame = "aa23000C0000", .kind = DISKOS_REPORT_SCREEN, .value = 0},
-            Expected{.frame = "aa030008", .kind = DISKOS_REPORT_POWER_OFF, .value = 0},
-            Expected{.frame = "aa05000C0001", .kind = DISKOS_REPORT_COVER_ART, .value = 1},
-            Expected{.frame = "aa01000C0001", .kind = DISKOS_REPORT_FAVOURITE, .value = 1},
-            Expected{.frame = "aa1d000C0057", .kind = DISKOS_REPORT_BATTERY, .value = 87},
-            Expected{.frame = "a810000C0000", .kind = DISKOS_REPORT_CONVERSION, .value = 0},
+            Expected{"a103001000C9174D", DISKOS_REPORT_POSITION, 0x00C9174D},
+            Expected{"a102000C0004", DISKOS_REPORT_PLAY_MODE, 4},
+            Expected{"a714000C003F", DISKOS_REPORT_VOLUME, 63},
+            Expected{"a607000C000A", DISKOS_REPORT_SOURCE, 10},
+            Expected{"aa1f000C0001", DISKOS_REPORT_CHARGING, 1},
+            Expected{"aa23000C0000", DISKOS_REPORT_SCREEN, 0},
+            Expected{"aa030008", DISKOS_REPORT_POWER_OFF, 0},
+            Expected{"aa05000C0001", DISKOS_REPORT_COVER_ART, 1},
+            Expected{"aa01000C0001", DISKOS_REPORT_FAVOURITE, 1},
+            Expected{"aa1d000C0057", DISKOS_REPORT_BATTERY, 87},
+            Expected{"a810000C0000", DISKOS_REPORT_CONVERSION, 0},
     };
     for (const Expected& expected : cases) {
         const diskos_report report = decode(expected.frame);

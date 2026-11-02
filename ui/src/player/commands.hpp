@@ -2,19 +2,25 @@
 // Copyright (C) 2026 diskOS contributors
 #pragma once
 
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <expected>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
 #include <variant>
 
+#include "player/frame.hpp"
 #include "player/modes.hpp"
 
 /**
  * What diskOS asks the stock player to do on the /player queue, as typed values, and their
  * frames.
  *
- * Most commands carry one 4-hex-digit value after the header. The meanings and frames come from
+ * Each command is a struct with its tag (kTag) and its body(); CommandBase turns the two into
+ * the frame. Most bodies are one 4-hex-digit value. The meanings and frames come from
  * docs/COMMAND_MAP.md, the frame capture of 2026-11-01 and the legacy code that sends them.
  */
 namespace diskos::player {
@@ -52,65 +58,134 @@ enum class ListType : std::uint8_t {
 // The longest play-list name the legacy sender allows (its frame buffer).
 inline constexpr std::size_t kMaxListNameSize = 379;
 
+/** A play-list name short enough to send (see ListType for what it holds); empty by default. */
+class ListName {
+public:
+    ListName() = default;
+
+    /** Get the name, or nullopt if it is longer than kMaxListNameSize bytes. */
+    [[nodiscard]] static std::optional<ListName> from(std::string name) {
+        if (name.size() > kMaxListNameSize) {
+            return std::nullopt;
+        }
+        return ListName{std::move(name)};
+    }
+
+    [[nodiscard]] const std::string& value() const noexcept {
+        return name_;
+    }
+
+private:
+    explicit ListName(std::string name) : name_(std::move(name)) {}
+
+    std::string name_;
+};
+
+/** What every command provides: its tag (checked at compile time), and its body. */
+template <typename T>
+concept IsCommand = is_tag(T::kTag) && requires(const T& command) {
+    { command.body() } -> std::convertible_to<std::string>;
+};
+
+/** The parent of every command: builds its frame from the command's kTag and body(). */
+struct CommandBase {
+    /** Get the command's frame, ready to send on /player. */
+    [[nodiscard]] std::string frame(this const IsCommand auto& self) {
+        using Self = std::remove_cvref_t<decltype(self)>;
+        return build_frame(Self::kTag, self.body());
+    }
+};
+
 /** 0201 0000: pause if playing, play if paused. */
-struct PlayPauseCommand {};
+struct PlayPauseCommand : CommandBase {
+    static constexpr std::string_view kTag = "0201";
+    [[nodiscard]] static std::string body();
+};
 
 /** 0201 0001: the next track in the queue. */
-struct NextTrackCommand {};
+struct NextTrackCommand : CommandBase {
+    static constexpr std::string_view kTag = "0201";
+    [[nodiscard]] static std::string body();
+};
 
 /** 0201 0002: the previous track in the queue. */
-struct PreviousTrackCommand {};
+struct PreviousTrackCommand : CommandBase {
+    static constexpr std::string_view kTag = "0201";
+    [[nodiscard]] static std::string body();
+};
 
 /** 0202: report the full state (an a202 track report). */
-struct RequestStateCommand {};
+struct RequestStateCommand : CommandBase {
+    static constexpr std::string_view kTag = "0202";
+    [[nodiscard]] static std::string body();
+};
 
 /** 0103: jump to a position in the current track. */
-struct SeekCommand {
+struct SeekCommand : CommandBase {
+    static constexpr std::string_view kTag = "0103";
     std::uint32_t position_ms;
+    [[nodiscard]] std::string body() const;
 };
 
 /** 0715: set the volume. */
-struct SetVolumeCommand {
-    std::uint8_t level;  // 0..kMaxVolume
+struct SetVolumeCommand : CommandBase {
+    static constexpr std::string_view kTag = "0715";
+    VolumeLevel level;
+    [[nodiscard]] std::string body() const;
 };
 
 /** 0102: set how the player moves through its queue. */
-struct SetPlayModeCommand {
+struct SetPlayModeCommand : CommandBase {
+    static constexpr std::string_view kTag = "0102";
     PlayMode mode;
+    [[nodiscard]] std::string body() const;
 };
 
 /** 0104: set/unset the current track as favourite. */
-struct SetFavouriteCommand {
+struct SetFavouriteCommand : CommandBase {
+    static constexpr std::string_view kTag = "0104";
     bool favourite;
+    [[nodiscard]] std::string body() const;
 };
 
 /** 0100: build a queue and start playing it at `position`. */
-struct PlayListCommand {
+struct PlayListCommand : CommandBase {
+    static constexpr std::string_view kTag = "0100";
     ListType type;
     std::uint16_t position;  // 0-based, in the player's order for the list
-    std::string name;        // See ListType; at most kMaxListNameSize bytes
+    ListName name{};
+    [[nodiscard]] std::string body() const;
 };
 
 /** 0657: switch the player's source. */
-struct SwitchSourceCommand {
+struct SwitchSourceCommand : CommandBase {
+    static constexpr std::string_view kTag = "0657";
     Source source;
+    [[nodiscard]] std::string body() const;
 };
 
 /** 0666: route the audio output. */
-struct RouteOutputCommand {
+struct RouteOutputCommand : CommandBase {
+    static constexpr std::string_view kTag = "0666";
     OutputRoute route;
+    [[nodiscard]] std::string body() const;
 };
 
 /** 0642: set what the USB port offers. */
-struct SelectUsbGadgetCommand {
+struct SelectUsbGadgetCommand : CommandBase {
+    static constexpr std::string_view kTag = "0642";
     UsbGadget gadget;
+    [[nodiscard]] std::string body() const;
 };
 
 /**
  * 0818 0000: sent before switching the source to the Bluetooth sink, as the stock sequence does.
  * What the player does with it is not known.
  */
-struct PrepareBluetoothSinkCommand {};
+struct PrepareBluetoothSinkCommand : CommandBase {
+    static constexpr std::string_view kTag = "0818";
+    [[nodiscard]] static std::string body();
+};
 
 using Command = std::variant<
         PlayPauseCommand,
@@ -127,18 +202,7 @@ using Command = std::variant<
         SelectUsbGadgetCommand,
         PrepareBluetoothSinkCommand>;
 
-enum class CommandError : std::uint8_t {
-    BadValue,  // A value outside what the command allows.
-    TooLong,   // A name too long to send.
-};
-
-/**
- * Encode a command as the frame to send on /player.
- * Returns:
- *  - the frame
- *  - BadValue for a volume above kMaxVolume
- *  - TooLong for a play-list name longer than kMaxListNameSize
- */
-[[nodiscard]] std::expected<std::string, CommandError> encode_command(const Command& command);
+/** Get the frame of whichever command `command` holds. */
+[[nodiscard]] std::string frame(const Command& command);
 
 }  // namespace diskos::player

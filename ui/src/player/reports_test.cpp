@@ -3,6 +3,8 @@
 #include "player/reports.hpp"
 
 #include <expected>
+#include <optional>
+#include <string_view>
 #include <variant>
 
 #include <catch2/catch_test_macros.hpp>
@@ -10,113 +12,111 @@
 namespace diskos::player {
 namespace {
 
-// The report decoded from `frame` if it is a T, else nullptr.
+// The report decoded from `frame` if it is a T, else nullopt.
 template <typename T>
-const T* decode_as(std::string_view frame, std::expected<Report, ReportError>& storage) {
-    storage = decode_report(frame);
-    return storage ? std::get_if<T>(&*storage) : nullptr;
+std::optional<T> decode_as(std::string_view frame) {
+    const Decoded<Report> report = decode_report(frame);
+    const T* typed = report ? std::get_if<T>(&*report) : nullptr;
+    return typed != nullptr ? std::optional<T>{*typed} : std::nullopt;
 }
 
 // Every frame below was received from the player on the Disc (capture of 2026-11-01).
 
 TEST_CASE("decode_report reads positions", "[player][report]") {
-    std::expected<Report, ReportError> report;
-    const auto* position = decode_as<PositionReport>("a103001000C9174D", report);
-    REQUIRE(position != nullptr);
+    const auto position = decode_as<PositionReport>("a103001000C9174D");
+
+    REQUIRE(position.has_value());
     CHECK(position->position_ms == 0x00C9174D);
 }
 
 TEST_CASE("decode_report reads play modes, volume, source and battery", "[player][report]") {
-    std::expected<Report, ReportError> report;
-    const auto* mode = decode_as<PlayModeReport>("a102000C0004", report);
-    REQUIRE(mode != nullptr);
+    const auto mode = decode_as<PlayModeReport>("a102000C0004");
+    const auto volume = decode_as<VolumeReport>("a714000C003F");
+    const auto source = decode_as<SourceReport>("a607000C000A");
+    const auto battery = decode_as<BatteryReport>("aa1d000C0057");
+
+    REQUIRE(mode.has_value());
+    REQUIRE(volume.has_value());
+    REQUIRE(source.has_value());
+    REQUIRE(battery.has_value());
     CHECK(mode->mode == PlayMode::Single);
-
-    const auto* volume = decode_as<VolumeReport>("a714000C003F", report);
-    REQUIRE(volume != nullptr);
-    CHECK(volume->level == 63);
-
-    const auto* source = decode_as<SourceReport>("a607000C000A", report);
-    REQUIRE(source != nullptr);
+    CHECK(volume->level.value() == 63);
     CHECK(source->source == Source::AirPlay);
-
-    const auto* battery = decode_as<BatteryReport>("aa1d000C0057", report);
-    REQUIRE(battery != nullptr);
     CHECK(battery->percent == 87);
 }
 
 TEST_CASE("decode_report reads the on/off reports", "[player][report]") {
-    std::expected<Report, ReportError> report;
-    const auto* charging = decode_as<ChargingReport>("aa1f000C0001", report);
-    REQUIRE(charging != nullptr);
+    const auto charging = decode_as<ChargingReport>("aa1f000C0001");
+    const auto screen = decode_as<ScreenReport>("aa23000C0000");
+    const auto cover = decode_as<CoverArtReport>("aa05000C0001");
+
+    REQUIRE(charging.has_value());
+    REQUIRE(screen.has_value());
+    REQUIRE(cover.has_value());
     CHECK(charging->charging);
-
-    const auto* screen = decode_as<ScreenReport>("aa23000C0000", report);
-    REQUIRE(screen != nullptr);
     CHECK_FALSE(screen->on);
-
-    const auto* cover = decode_as<CoverArtReport>("aa05000C0001", report);
-    REQUIRE(cover != nullptr);
     CHECK(cover->ready);
 }
 
 TEST_CASE("decode_report reads acknowledgements and results", "[player][report]") {
-    std::expected<Report, ReportError> report;
-    const auto* favourite = decode_as<FavouriteReport>("aa01000C0001", report);
-    REQUIRE(favourite != nullptr);
-    CHECK(favourite->value == 1);
+    const auto favourite = decode_as<FavouriteReport>("aa01000C0001");
+    const auto conversion = decode_as<ConversionReport>("a810000C0000");
 
-    const auto* conversion = decode_as<ConversionReport>("a810000C0000", report);
-    REQUIRE(conversion != nullptr);
+    REQUIRE(favourite.has_value());
+    REQUIRE(conversion.has_value());
+    CHECK(favourite->value == 1);
     CHECK(conversion->code == 0);
 }
 
 TEST_CASE("decode_report ignores the power-off body", "[player][report]") {
     // Never captured, so the body is unknown: any well-formed frame counts.
-    std::expected<Report, ReportError> report;
-    CHECK(decode_as<PowerOffReport>("aa030008", report) != nullptr);
-    CHECK(decode_as<PowerOffReport>("aa03000C0001", report) != nullptr);
+    CHECK(decode_as<PowerOffReport>("aa030008").has_value());
+    CHECK(decode_as<PowerOffReport>("aa03000C0001").has_value());
 }
 
 TEST_CASE("decode_report passes other reports through as UnknownReport", "[player][report]") {
-    std::expected<Report, ReportError> report;
-    const auto* unknown = decode_as<UnknownReport>("a60a000C0213", report);
-    REQUIRE(unknown != nullptr);
+    const auto unknown = decode_as<UnknownReport>("a60a000C0213");
+
+    REQUIRE(unknown.has_value());
     CHECK(unknown->tag == "a60a");
     CHECK(unknown->body == "0213");
 }
 
 TEST_CASE("decode_report rejects malformed frames and bodies", "[player][report]") {
+    using enum ReportError;
     // A wrong length field: the frame itself is broken.
-    CHECK(decode_report("a103000F000003E8") == std::unexpected(ReportError::BadFrame));
+    CHECK(decode_report("a103000F000003E8") == std::unexpected(BadFrame));
     // A well-formed frame whose body has the wrong size or is not hex.
-    CHECK(decode_report("a103000C03E8") == std::unexpected(ReportError::BadBody));
-    CHECK(decode_report("a714000E000023") == std::unexpected(ReportError::BadBody));
-    CHECK(decode_report("aa1f000C000x") == std::unexpected(ReportError::BadBody));
+    CHECK(decode_report("a103000C03E8") == std::unexpected(BadBody));
+    CHECK(decode_report("a714000E000023") == std::unexpected(BadBody));
+    CHECK(decode_report("aa1f000C000x") == std::unexpected(BadBody));
 }
 
 TEST_CASE("decode_report rejects values outside the report's range", "[player][report]") {
-    CHECK(decode_report("a102000C0005") == std::unexpected(ReportError::BadValue));
-    CHECK(decode_report("a714000C0079") == std::unexpected(ReportError::BadValue));
-    CHECK(decode_report("a607000C0003") == std::unexpected(ReportError::BadValue));
-    CHECK(decode_report("aa1f000C0002") == std::unexpected(ReportError::BadValue));
-    CHECK(decode_report("aa1d000C0065") == std::unexpected(ReportError::BadValue));
+    using enum ReportError;
+    CHECK(decode_report("a102000C0005") == std::unexpected(BadValue));
+    CHECK(decode_report("a714000C0079") == std::unexpected(BadValue));
+    CHECK(decode_report("a607000C0003") == std::unexpected(BadValue));
+    CHECK(decode_report("aa1f000C0002") == std::unexpected(BadValue));
+    CHECK(decode_report("aa1d000C0065") == std::unexpected(BadValue));
 }
 
 TEST_CASE("decode_report reads exactly the state-only a202 form", "[player][report]") {
-    std::expected<Report, ReportError> report;
-    const auto* paused = decode_as<PlayStateReport>(R"(a2020013{"state":1})", report);
-    REQUIRE(paused != nullptr);
-    CHECK(paused->state == PlayState::Paused);
-    CHECK(decode_as<PlayStateReport>(R"(a2020013{"state":0})", report)->state
-          == PlayState::Playing);
-    CHECK(decode_as<PlayStateReport>(R"(a2020013{"state":2})", report)->state
-          == PlayState::Stopped);
+    using enum ReportError;
+    const auto playing = decode_as<PlayStateReport>(R"(a2020013{"state":0})");
+    const auto paused = decode_as<PlayStateReport>(R"(a2020013{"state":1})");
+    const auto stopped = decode_as<PlayStateReport>(R"(a2020013{"state":2})");
 
-    CHECK(decode_report(R"(a2020013{"state":3})") == std::unexpected(ReportError::BadValue));
-    CHECK(decode_report(R"(a2020014{"state":01})") == std::unexpected(ReportError::BadBody));
-    CHECK(decode_report(R"(a2020014{"state": 1})") == std::unexpected(ReportError::BadBody));
-    CHECK(decode_report(R"(a2020014{"state":1,})") == std::unexpected(ReportError::BadBody));
+    REQUIRE(playing.has_value());
+    REQUIRE(paused.has_value());
+    REQUIRE(stopped.has_value());
+    CHECK(playing->state == PlayState::Playing);
+    CHECK(paused->state == PlayState::Paused);
+    CHECK(stopped->state == PlayState::Stopped);
+    CHECK(decode_report(R"(a2020013{"state":3})") == std::unexpected(BadValue));
+    CHECK(decode_report(R"(a2020014{"state":01})") == std::unexpected(BadBody));
+    CHECK(decode_report(R"(a2020014{"state": 1})") == std::unexpected(BadBody));
+    CHECK(decode_report(R"(a2020014{"state":1,})") == std::unexpected(BadBody));
 }
 
 }  // namespace

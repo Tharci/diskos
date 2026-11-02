@@ -2,6 +2,7 @@
 // Copyright (C) 2026 diskOS contributors
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -23,6 +24,16 @@ inline constexpr std::size_t kTagSize = 4;
 inline constexpr std::size_t kLengthSize = 4;
 inline constexpr std::size_t kHeaderSize = kTagSize + kLengthSize;
 inline constexpr std::size_t kMaxFrameSize = 0xFFFF;
+inline constexpr std::size_t kMaxBodySize = kMaxFrameSize - kHeaderSize;
+
+[[nodiscard]] constexpr bool is_hex_digit(char c) noexcept {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+/** Check that `tag` is a frame tag: exactly 4 hex digits. Usable at compile time. */
+[[nodiscard]] constexpr bool is_tag(std::string_view tag) noexcept {
+    return tag.size() == kTagSize && std::ranges::all_of(tag, is_hex_digit);
+}
 
 struct Frame {
     std::string_view tag;
@@ -50,5 +61,11 @@ enum class FrameError : std::uint8_t {
 [[nodiscard]] std::expected<std::string, FrameError> encode_frame(
         std::string_view tag, std::string_view body
 );
+
+/**
+ * Build a frame from a tag and a body that are known to fit: `is_tag(tag)` and at most
+ * kMaxBodySize bytes of body. For callers whose types guarantee both, such as the commands.
+ */
+[[nodiscard]] std::string build_frame(std::string_view tag, std::string_view body);
 
 }  // namespace diskos::player

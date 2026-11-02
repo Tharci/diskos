@@ -11,7 +11,7 @@ std::expected<Frame, FrameError> parse_frame(std::string_view bytes) {
         return std::unexpected(FrameError::TooShort);
     }
     const std::string_view tag = bytes.substr(0, kTagSize);
-    if (!utils::parse_hex(tag)) {
+    if (!is_tag(tag)) {
         return std::unexpected(FrameError::BadTag);
     }
     const std::optional<std::uint32_t> length =
@@ -26,15 +26,18 @@ std::expected<Frame, FrameError> parse_frame(std::string_view bytes) {
 }
 
 std::expected<std::string, FrameError> encode_frame(std::string_view tag, std::string_view body) {
-    if (tag.size() != kTagSize || !utils::parse_hex(tag)) {
+    if (!is_tag(tag)) {
         return std::unexpected(FrameError::BadTag);
     }
-    const std::size_t size = kHeaderSize + body.size();
-    if (size > kMaxFrameSize) {
+    if (body.size() > kMaxBodySize) {
         return std::unexpected(FrameError::TooLong);
     }
+    return build_frame(tag, body);
+}
+
+std::string build_frame(std::string_view tag, std::string_view body) {
     std::string frame{tag};
-    frame += utils::format_hex(size, kLengthSize);
+    frame += utils::format_hex(kHeaderSize + body.size(), kLengthSize);
     frame += body;
     return frame;
 }

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 diskOS contributors
-#include "player/track_report.hpp"
-
+// TrackReport::decode: reads the full a202 form by the V2.57 snprintf template (see reports.hpp).
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <span>
 #include <vector>
 
+#include "player/reports.hpp"
 #include "utils/numbers.hpp"
 
 namespace diskos::player {
@@ -310,7 +310,11 @@ Song read_song(FieldReader& fields) {
 
 }  // namespace
 
-std::expected<TrackReport, ReportError> decode_track_report(std::string_view body) {
+bool TrackReport::claims(std::string_view body) {
+    return body.starts_with(kPrefix);
+}
+
+Decoded<TrackReport> TrackReport::decode(std::string_view body) {
     const std::optional<std::vector<std::string_view>> values = TemplateReader{body}.read();
     if (!values) {
         return std::unexpected(ReportError::BadBody);

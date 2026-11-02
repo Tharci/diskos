@@ -3,11 +3,35 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
 namespace diskos::player {
 
 // The device's MAX_VOL: volumes in 0715 and a714 are on a 0..kMaxVolume scale.
 inline constexpr std::uint8_t kMaxVolume = 120;
+
+/** A volume on the player's 0..kMaxVolume scale; holding one means it is in range. */
+class VolumeLevel {
+public:
+    /** Get the volume for `level`, or nullopt above kMaxVolume. */
+    [[nodiscard]] static constexpr std::optional<VolumeLevel> from(std::uint32_t level) noexcept {
+        if (level > kMaxVolume) {
+            return std::nullopt;
+        }
+        return VolumeLevel{static_cast<std::uint8_t>(level)};
+    }
+
+    [[nodiscard]] constexpr std::uint8_t value() const noexcept {
+        return level_;
+    }
+
+    friend constexpr bool operator==(VolumeLevel, VolumeLevel) = default;
+
+private:
+    explicit constexpr VolumeLevel(std::uint8_t level) noexcept : level_(level) {}
+
+    std::uint8_t level_;
+};
 
 /**
  * How the player moves through its queue: the value of the 0102 command and its a102 report.

@@ -21,7 +21,7 @@ diskos_report to_c(const PlayModeReport& report) {
 }
 
 diskos_report to_c(const VolumeReport& report) {
-    return {.kind = DISKOS_REPORT_VOLUME, .value = report.level};
+    return {.kind = DISKOS_REPORT_VOLUME, .value = report.level.value()};
 }
 
 diskos_report to_c(const SourceReport& report) {

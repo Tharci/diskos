@@ -9,14 +9,12 @@
 #include <utility>
 
 #include "player/frame.hpp"
-#include "player/track_report.hpp"
 #include "utils/numbers.hpp"
 
 namespace diskos::player {
 namespace {
 
-using Decoded = std::expected<Report, ReportError>;
-using Value = std::expected<std::uint32_t, ReportError>;
+using Value = Decoded<std::uint32_t>;
 
 constexpr std::size_t kValueDigits = 4;
 constexpr std::size_t kPositionDigits = 8;
@@ -57,27 +55,79 @@ bool is_source(std::uint32_t value) {
     });
 }
 
-Decoded position(std::string_view body) {
-    return read_digits(body, kPositionDigits).transform([](std::uint32_t ms) -> Report {
+/** Read a 0/1 flag. */
+Decoded<bool> read_flag(std::string_view body) {
+    return read_value(body, 1).transform([](std::uint32_t value) { return value == 1; });
+}
+
+template <IsReport T>
+Decoded<Report> decode_as(std::string_view body) {
+    return T::decode(body).transform([](T&& report) -> Report { return std::move(report); });
+}
+
+/** a202 has two forms; the full track report starts with its song. */
+Decoded<Report> decode_state(std::string_view body) {
+    return TrackReport::claims(body) ? decode_as<TrackReport>(body)
+                                     : decode_as<PlayStateReport>(body);
+}
+
+/** One entry of the tag table: the tag and how to decode its body. */
+struct Decoder {
+    std::string_view tag;
+    Decoded<Report> (*decode)(std::string_view body);
+};
+
+template <IsReport T>
+constexpr Decoder decoder_for() {
+    return {.tag = T::kTag, .decode = decode_as<T>};
+}
+
+constexpr std::array kDecoders{
+        decoder_for<PositionReport>(),
+        decoder_for<PlayModeReport>(),
+        decoder_for<VolumeReport>(),
+        decoder_for<SourceReport>(),
+        decoder_for<ChargingReport>(),
+        decoder_for<ScreenReport>(),
+        decoder_for<PowerOffReport>(),
+        decoder_for<CoverArtReport>(),
+        decoder_for<FavouriteReport>(),
+        decoder_for<BatteryReport>(),
+        decoder_for<ConversionReport>(),
+        Decoder{.tag = "a202", .decode = decode_state},
+};
+
+// Every report has an entry, except UnknownReport; a202's two forms share one.
+constexpr std::size_t kReportTypes = std::variant_size_v<Report>;
+static_assert(kDecoders.size() == kReportTypes - 2);
+
+}  // namespace
+
+Decoded<PositionReport> PositionReport::decode(std::string_view body) {
+    return read_digits(body, kPositionDigits).transform([](std::uint32_t ms) {
         return PositionReport{.position_ms = ms};
     });
 }
 
-Decoded play_mode(std::string_view body) {
+Decoded<PlayModeReport> PlayModeReport::decode(std::string_view body) {
     return read_value(body, static_cast<std::uint32_t>(PlayMode::Single))
-            .transform([](std::uint32_t value) -> Report {
+            .transform([](std::uint32_t value) {
                 return PlayModeReport{.mode = static_cast<PlayMode>(value)};
             });
 }
 
-Decoded volume(std::string_view body) {
-    return read_value(body, kMaxVolume).transform([](std::uint32_t value) -> Report {
-        return VolumeReport{.level = static_cast<std::uint8_t>(value)};
+Decoded<VolumeReport> VolumeReport::decode(std::string_view body) {
+    return read_value(body).and_then([](std::uint32_t value) -> Decoded<VolumeReport> {
+        const std::optional<VolumeLevel> level = VolumeLevel::from(value);
+        if (!level) {
+            return std::unexpected(ReportError::BadValue);
+        }
+        return VolumeReport{.level = *level};
     });
 }
 
-Decoded source(std::string_view body) {
-    return read_value(body).and_then([](std::uint32_t value) -> Decoded {
+Decoded<SourceReport> SourceReport::decode(std::string_view body) {
+    return read_value(body).and_then([](std::uint32_t value) -> Decoded<SourceReport> {
         if (!is_source(value)) {
             return std::unexpected(ReportError::BadValue);
         }
@@ -85,48 +135,41 @@ Decoded source(std::string_view body) {
     });
 }
 
-Decoded charging(std::string_view body) {
-    return read_value(body, 1).transform([](std::uint32_t value) -> Report {
-        return ChargingReport{.charging = value == 1};
-    });
+Decoded<ChargingReport> ChargingReport::decode(std::string_view body) {
+    return read_flag(body).transform([](bool on) { return ChargingReport{.charging = on}; });
 }
 
-Decoded screen(std::string_view body) {
-    return read_value(body, 1).transform([](std::uint32_t value) -> Report {
-        return ScreenReport{.on = value == 1};
-    });
+Decoded<ScreenReport> ScreenReport::decode(std::string_view body) {
+    return read_flag(body).transform([](bool on) { return ScreenReport{.on = on}; });
 }
 
-Decoded power_off(std::string_view /*body*/) {
+Decoded<PowerOffReport> PowerOffReport::decode(std::string_view /*body*/) {
     return PowerOffReport{};
 }
 
-Decoded cover_art(std::string_view body) {
-    return read_value(body, 1).transform([](std::uint32_t value) -> Report {
-        return CoverArtReport{.ready = value == 1};
-    });
+Decoded<CoverArtReport> CoverArtReport::decode(std::string_view body) {
+    return read_flag(body).transform([](bool ready) { return CoverArtReport{.ready = ready}; });
 }
 
-Decoded favourite_ack(std::string_view body) {
-    return read_value(body).transform([](std::uint32_t value) -> Report {
+Decoded<FavouriteReport> FavouriteReport::decode(std::string_view body) {
+    return read_value(body).transform([](std::uint32_t value) {
         return FavouriteReport{.value = static_cast<std::uint16_t>(value)};
     });
 }
 
-Decoded battery(std::string_view body) {
-    return read_value(body, kMaxBattery).transform([](std::uint32_t value) -> Report {
+Decoded<BatteryReport> BatteryReport::decode(std::string_view body) {
+    return read_value(body, kMaxBattery).transform([](std::uint32_t value) {
         return BatteryReport{.percent = static_cast<std::uint8_t>(value)};
     });
 }
 
-Decoded conversion_result(std::string_view body) {
-    return read_value(body).transform([](std::uint32_t value) -> Report {
+Decoded<ConversionReport> ConversionReport::decode(std::string_view body) {
+    return read_value(body).transform([](std::uint32_t value) {
         return ConversionReport{.code = static_cast<std::uint16_t>(value)};
     });
 }
 
-/** a202's state-only form: exactly {"state":N}. */
-Decoded play_state(std::string_view body) {
+Decoded<PlayStateReport> PlayStateReport::decode(std::string_view body) {
     constexpr std::string_view kHead = R"({"state":)";
     constexpr std::string_view kTail = "}";
     if (!body.starts_with(kHead) || !body.ends_with(kTail)) {
@@ -144,48 +187,16 @@ Decoded play_state(std::string_view body) {
     return PlayStateReport{.state = static_cast<PlayState>(*value)};
 }
 
-/** a202 covers both player state report and track report */
-Decoded state_and_track(std::string_view body) {
-    if (body.starts_with(R"({"song":)")) {
-        return decode_track_report(body).transform([](TrackReport&& track) -> Report {
-            return std::move(track);
-        });
-    }
-    return play_state(body);
-}
-
-struct Decoder {
-    std::string_view tag;
-    Decoded (*decode)(std::string_view body);
-};
-
-constexpr std::array kDecoders{
-        Decoder{.tag = "a103", .decode = position},
-        Decoder{.tag = "a102", .decode = play_mode},
-        Decoder{.tag = "a714", .decode = volume},
-        Decoder{.tag = "a607", .decode = source},
-        Decoder{.tag = "aa1f", .decode = charging},
-        Decoder{.tag = "aa23", .decode = screen},
-        Decoder{.tag = "aa03", .decode = power_off},
-        Decoder{.tag = "aa05", .decode = cover_art},
-        Decoder{.tag = "aa01", .decode = favourite_ack},
-        Decoder{.tag = "aa1d", .decode = battery},
-        Decoder{.tag = "a810", .decode = conversion_result},
-        Decoder{.tag = "a202", .decode = state_and_track},
-};
-
-}  // namespace
-
-std::expected<Report, ReportError> decode_report(std::string_view bytes) {
+Decoded<Report> decode_report(std::string_view bytes) {
     const std::expected<Frame, FrameError> frame = parse_frame(bytes);
     if (!frame) {
         return std::unexpected(ReportError::BadFrame);
     }
     const auto* const decoder = std::ranges::find(kDecoders, frame->tag, &Decoder::tag);
-    if (decoder == kDecoders.end()) {
-        return UnknownReport{.tag = frame->tag, .body = frame->body};
+    if (decoder != kDecoders.end()) {
+        return decoder->decode(frame->body);
     }
-    return decoder->decode(frame->body);
+    return UnknownReport{.tag = frame->tag, .body = frame->body};
 }
 
 }  // namespace diskos::player

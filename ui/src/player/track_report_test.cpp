@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 diskOS contributors
-#include "player/track_report.hpp"
-
 #include <cstddef>
 #include <expected>
 #include <string>
@@ -19,12 +17,11 @@ namespace {
 // titles, names and paths replaced and the length fields recomputed. Non-ASCII bytes are kept.
 // One line per template field.
 
+// clang-format off: one template field per line.
 constexpr std::string_view kTrack =
-        R"f(a2020275{"song":"{\"id\":1415)f"
+        R"f(a2020272{"song":"{\"id\":1415)f"
         R"f(,\"pos_id\":1)f"
-        R"f(,\"song_name\":\"First Song / Part)f"
-        "\xE2\x80\x99"
-        R"f(s Two\")f"
+        R"f(,\"song_name\":\"First Song / Café Two\")f"
         R"f(,\"song_duration_time\":475000)f"
         R"f(,\"song_file_path\":\"\\\/tmp\\\/sdcard\\\/Some Artist\\\/)f"
         R"f(2020 - Some Album\\\/Disc - 01\\\/01 - First Song.flac\")f"
@@ -99,59 +96,56 @@ constexpr std::string_view kEmptyFile =
         R"f(,"playing_num":"1/2302")f"
         R"f(,"work_mode":"LOCAL"})f";
 
-constexpr std::string_view kAirPlayPlaceholder = R"f(a20201FE{"song":"{\"id\":0)f"
-                                                 R"f(,\"pos_id\":0)f"
-                                                 R"f(,\"song_name\":\"Airplay Playing\")f"
-                                                 R"f(,\"song_duration_time\":0)f"
-                                                 R"f(,\"song_file_path\":\"(null)\")f"
-                                                 R"f(,\"song_sample_rate\":44100)f"
-                                                 R"f(,\"song_encoding_rate\":16)f"
-                                                 R"f(,\"song_bit_rate\":1411)f"
-                                                 R"f(,\"song_artist_name\":\" \")f"
-                                                 R"f(,\"song_album_name\":\" \")f"
-                                                 R"f(,\"song_style_name\":\"(null)\")f"
-                                                 R"f(,\"song_track\":0)f"
-                                                 R"f(,\"song_channel\":2)f"
-                                                 R"f(,\"is_sacd\":false)f"
-                                                 R"f(,\"is_cue\":false)f"
-                                                 R"f(,\"is_dsd\":false)f"
-                                                 R"f(,\"is_m3u\":false)f"
-                                                 R"f(,\"m3u_file_path\":\"(null)\"}")f"
-                                                 R"f(,"love":false)f"
-                                                 R"f(,"playerflag":255)f"
-                                                 R"f(,"state":0)f"
-                                                 R"f(,"playing_num":"(null)")f"
-                                                 R"f(,"work_mode":"AIRPLAY"})f";
+constexpr std::string_view kAirPlayPlaceholder =
+        R"f(a20201FE{"song":"{\"id\":0)f"
+        R"f(,\"pos_id\":0)f"
+        R"f(,\"song_name\":\"Airplay Playing\")f"
+        R"f(,\"song_duration_time\":0)f"
+        R"f(,\"song_file_path\":\"(null)\")f"
+        R"f(,\"song_sample_rate\":44100)f"
+        R"f(,\"song_encoding_rate\":16)f"
+        R"f(,\"song_bit_rate\":1411)f"
+        R"f(,\"song_artist_name\":\" \")f"
+        R"f(,\"song_album_name\":\" \")f"
+        R"f(,\"song_style_name\":\"(null)\")f"
+        R"f(,\"song_track\":0)f"
+        R"f(,\"song_channel\":2)f"
+        R"f(,\"is_sacd\":false)f"
+        R"f(,\"is_cue\":false)f"
+        R"f(,\"is_dsd\":false)f"
+        R"f(,\"is_m3u\":false)f"
+        R"f(,\"m3u_file_path\":\"(null)\"}")f"
+        R"f(,"love":false)f"
+        R"f(,"playerflag":255)f"
+        R"f(,"state":0)f"
+        R"f(,"playing_num":"(null)")f"
+        R"f(,"work_mode":"AIRPLAY"})f";
 
-constexpr std::string_view kAirPlay = R"f(a202021E{"song":"{\"id\":0)f"
-                                      R"f(,\"pos_id\":0)f"
-                                      R"f(,\"song_name\":\"Some Song\")f"
-                                      R"f(,\"song_duration_time\":248000)f"
-                                      R"f(,\"song_file_path\":\"(null)\")f"
-                                      R"f(,\"song_sample_rate\":44100)f"
-                                      R"f(,\"song_encoding_rate\":16)f"
-                                      R"f(,\"song_bit_rate\":1411)f"
-                                      R"f(,\"song_artist_name\":\"Some Artist )f"
-                                      "\xE2\x80\xA2"
-                                      R"f( )f"
-                                      "\xC3\x9C"
-                                      R"f(n)f"
-                                      "\xC3\xAF"
-                                      R"f(code\")f"
-                                      R"f(,\"song_album_name\":\"Some Album\")f"
-                                      R"f(,\"song_style_name\":\"(null)\")f"
-                                      R"f(,\"song_track\":0)f"
-                                      R"f(,\"song_channel\":2)f"
-                                      R"f(,\"is_sacd\":false)f"
-                                      R"f(,\"is_cue\":false)f"
-                                      R"f(,\"is_dsd\":false)f"
-                                      R"f(,\"is_m3u\":false)f"
-                                      R"f(,\"m3u_file_path\":\"(null)\"}")f"
-                                      R"f(,"love":false)f"
-                                      R"f(,"playerflag":255)f"
-                                      R"f(,"state":0)f"
-                                      R"f(,"playing_num":"(null)")f"
-                                      R"f(,"work_mode":"AIRPLAY"})f";
+constexpr std::string_view kAirPlay =
+        R"f(a202021E{"song":"{\"id\":0)f"
+        R"f(,\"pos_id\":0)f"
+        R"f(,\"song_name\":\"Some Song\")f"
+        R"f(,\"song_duration_time\":248000)f"
+        R"f(,\"song_file_path\":\"(null)\")f"
+        R"f(,\"song_sample_rate\":44100)f"
+        R"f(,\"song_encoding_rate\":16)f"
+        R"f(,\"song_bit_rate\":1411)f"
+        R"f(,\"song_artist_name\":\"Some Artist • Ünïcode\")f"
+        R"f(,\"song_album_name\":\"Some Album\")f"
+        R"f(,\"song_style_name\":\"(null)\")f"
+        R"f(,\"song_track\":0)f"
+        R"f(,\"song_channel\":2)f"
+        R"f(,\"is_sacd\":false)f"
+        R"f(,\"is_cue\":false)f"
+        R"f(,\"is_dsd\":false)f"
+        R"f(,\"is_m3u\":false)f"
+        R"f(,\"m3u_file_path\":\"(null)\"}")f"
+        R"f(,"love":false)f"
+        R"f(,"playerflag":255)f"
+        R"f(,"state":0)f"
+        R"f(,"playing_num":"(null)")f"
+        R"f(,"work_mode":"AIRPLAY"})f";
+// clang-format on
 
 std::string_view body_of(std::string_view frame) {
     return frame.substr(kHeaderSize);
@@ -166,13 +160,13 @@ std::string replaced(std::string_view text, std::string_view from, std::string_v
     return result;
 }
 
-TEST_CASE("decode_track_report reads a local track", "[player][track]") {
-    const auto report = decode_track_report(body_of(kTrack));
+TEST_CASE("TrackReport::decode reads a local track", "[player][track]") {
+    const auto report = TrackReport::decode(body_of(kTrack));
     REQUIRE(report.has_value());
     const Song& song = report->song;
     CHECK(song.id == 1415);
     CHECK(song.pos_id == 1);
-    CHECK(song.title == "First Song / Part\xE2\x80\x99s Two");
+    CHECK(song.title == "First Song / Café Two");
     CHECK(song.artist == "Some Artist");
     CHECK(song.album == "Some Album");
     CHECK(song.genre == "Some Genre");
@@ -197,15 +191,15 @@ TEST_CASE("decode_track_report reads a local track", "[player][track]") {
     CHECK(report->work_mode == "LOCAL");
 }
 
-TEST_CASE("decode_track_report reads a favourite", "[player][track]") {
-    const auto report = decode_track_report(body_of(kFavourite));
+TEST_CASE("TrackReport::decode reads a favourite", "[player][track]") {
+    const auto report = TrackReport::decode(body_of(kFavourite));
     REQUIRE(report.has_value());
     CHECK(report->favourite);
     CHECK(report->song.title == "Second Song");
 }
 
-TEST_CASE("decode_track_report reads a file the player could not open", "[player][track]") {
-    const auto report = decode_track_report(body_of(kEmptyFile));
+TEST_CASE("TrackReport::decode reads a file the player could not open", "[player][track]") {
+    const auto report = TrackReport::decode(body_of(kEmptyFile));
     REQUIRE(report.has_value());
     CHECK(report->song.title == "01 - Some File.flac");
     CHECK(report->song.artist == "Unknown Artist");
@@ -214,8 +208,8 @@ TEST_CASE("decode_track_report reads a file the player could not open", "[player
     CHECK(report->state == PlayState::Stopped);
 }
 
-TEST_CASE("decode_track_report reads AirPlay tracks", "[player][track]") {
-    const auto placeholder = decode_track_report(body_of(kAirPlayPlaceholder));
+TEST_CASE("TrackReport::decode reads AirPlay tracks", "[player][track]") {
+    const auto placeholder = TrackReport::decode(body_of(kAirPlayPlaceholder));
     REQUIRE(placeholder.has_value());
     CHECK(placeholder->song.id == 0);
     CHECK(placeholder->song.title == "Airplay Playing");
@@ -227,57 +221,66 @@ TEST_CASE("decode_track_report reads AirPlay tracks", "[player][track]") {
     CHECK(placeholder->state == PlayState::Playing);
     CHECK(placeholder->work_mode == "AIRPLAY");
 
-    const auto track = decode_track_report(body_of(kAirPlay));
+    const auto track = TrackReport::decode(body_of(kAirPlay));
     REQUIRE(track.has_value());
-    CHECK(track->song.artist == "Some Artist \xE2\x80\xA2 \xC3\x9Cn\xC3\xAF" "code");
+    CHECK(track->song.artist == "Some Artist • Ünïcode");
     CHECK(track->song.duration_ms == 248000);
 }
 
-TEST_CASE("decode_track_report keeps raw quotes in a text", "[player][track]") {
-    const std::string body = replaced(body_of(kTrack), R"(First Song / Part)", R"(Say "Hi" to)");
-    const auto report = decode_track_report(body);
+TEST_CASE("TrackReport::decode keeps raw quotes in a text", "[player][track]") {
+    const std::string body = replaced(body_of(kTrack), "First Song", R"(Say "Hi")");
+
+    const auto report = TrackReport::decode(body);
     REQUIRE(report.has_value());
-    CHECK(report->song.title == "Say \"Hi\" to\xE2\x80\x99s Two");
+    CHECK(report->song.title == R"(Say "Hi" / Café Two)");
 }
 
-TEST_CASE("decode_track_report refuses a text whose end is ambiguous", "[player][track]") {
-    const std::string body =
-            replaced(body_of(kTrack), R"(First Song)", R"(First\",\"song_duration_time\":1 Song)");
-    CHECK(decode_track_report(body) == std::unexpected(ReportError::BadBody));
+TEST_CASE("TrackReport::decode refuses a text whose end is ambiguous", "[player][track]") {
+    // The title holds the exact text that follows it in the template.
+    const std::string_view trap = R"(First\",\"song_duration_time\":1 Song)";
+    const std::string body = replaced(body_of(kTrack), "First Song", trap);
+
+    CHECK(TrackReport::decode(body) == std::unexpected(ReportError::BadBody));
 }
 
-TEST_CASE("decode_track_report undoes the path's double escaping", "[player][track]") {
-    const std::string body =
-            replaced(body_of(kTrack), R"(\\\/tmp\\\/sdcard)", R"(\\\/a\\\\b\\\"c)");
-    const auto report = decode_track_report(body);
+TEST_CASE("TrackReport::decode undoes the path's double escaping", "[player][track]") {
+    const std::string_view track = body_of(kTrack);
+    // \\\/ is '/', \\\" is '"' and four backslashes are one; a single \/ is not V2.57's.
+    const std::string escaped = replaced(track, R"(\\\/tmp\\\/sdcard)", R"(\\\/a\\\\b\\\"c)");
+    const std::string single = replaced(track, R"(\\\/tmp)", R"(\/tmp)");
+
+    const auto report = TrackReport::decode(escaped);
     REQUIRE(report.has_value());
     CHECK(report->song.path.starts_with(R"(/a\b"c/)"));
-
-    const std::string single = replaced(body_of(kTrack), R"(\\\/tmp)", R"(\/tmp)");
-    CHECK(decode_track_report(single) == std::unexpected(ReportError::BadValue));
+    CHECK(TrackReport::decode(single) == std::unexpected(ReportError::BadValue));
 }
 
-TEST_CASE("decode_track_report refuses anything off the template", "[player][track]") {
-    const std::string_view body = body_of(kTrack);
-    CHECK(decode_track_report(std::string{body} + " ") == std::unexpected(ReportError::BadBody));
-    CHECK(decode_track_report(replaced(body, R"(,\"is_cue\":false)", ""))
-          == std::unexpected(ReportError::BadBody));
-    CHECK(decode_track_report(replaced(body, R"("playerflag":5)", R"("playerflag":05)"))
-          == std::unexpected(ReportError::BadBody));
-    CHECK(decode_track_report(replaced(body, R"("love":false)", R"("love":0)"))
-          == std::unexpected(ReportError::BadBody));
-    CHECK(decode_track_report(replaced(body, R"("LOCAL")", R"("LO\CAL")"))
-          == std::unexpected(ReportError::BadBody));
+TEST_CASE("TrackReport::decode refuses anything off the template", "[player][track]") {
+    using enum ReportError;
+    const std::string_view track = body_of(kTrack);
+    const std::string trailing_space = std::string{track} + " ";
+    const std::string missing_key = replaced(track, R"(,\"is_cue\":false)", "");
+    const std::string leading_zero = replaced(track, R"("playerflag":5)", R"("playerflag":05)");
+    const std::string numeric_bool = replaced(track, R"("love":false)", R"("love":0)");
+    const std::string escaped_mode = replaced(track, R"("LOCAL")", R"("LO\CAL")");
+
+    CHECK(TrackReport::decode(trailing_space) == std::unexpected(BadBody));
+    CHECK(TrackReport::decode(missing_key) == std::unexpected(BadBody));
+    CHECK(TrackReport::decode(leading_zero) == std::unexpected(BadBody));
+    CHECK(TrackReport::decode(numeric_bool) == std::unexpected(BadBody));
+    CHECK(TrackReport::decode(escaped_mode) == std::unexpected(BadBody));
 }
 
-TEST_CASE("decode_track_report refuses values out of range", "[player][track]") {
-    const std::string_view body = body_of(kTrack);
-    CHECK(decode_track_report(replaced(body, R"("state":2)", R"("state":3)"))
-          == std::unexpected(ReportError::BadValue));
-    CHECK(decode_track_report(replaced(body, R"("1/33")", R"("1-33")"))
-          == std::unexpected(ReportError::BadValue));
-    CHECK(decode_track_report(replaced(body, R"("1/33")", R"("1/")"))
-          == std::unexpected(ReportError::BadValue));
+TEST_CASE("TrackReport::decode refuses values out of range", "[player][track]") {
+    using enum ReportError;
+    const std::string_view track = body_of(kTrack);
+    const std::string unknown_state = replaced(track, R"("state":2)", R"("state":3)");
+    const std::string no_slash = replaced(track, R"("1/33")", R"("1-33")");
+    const std::string no_count = replaced(track, R"("1/33")", R"("1/")");
+
+    CHECK(TrackReport::decode(unknown_state) == std::unexpected(BadValue));
+    CHECK(TrackReport::decode(no_slash) == std::unexpected(BadValue));
+    CHECK(TrackReport::decode(no_count) == std::unexpected(BadValue));
 }
 
 TEST_CASE("decode_report decodes the full a202 form", "[player][track]") {

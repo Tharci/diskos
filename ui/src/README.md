@@ -40,6 +40,8 @@ bug patterns) and the warnings in `cmake/cxx.cmake`. What they cannot check:
   not by line count.
 - **Every module has tests** for its behaviour, through its public interface. No need to test every
   small piece of logic and helper method.
+- **Tests read like a table.** Build the values under test first, each with a name, then check
+  them: one `CHECK` compares two short operands and fits on one line.
 - **Player quirks carry over.** The legacy C records many reverse-engineered player behaviours in
   its comments. When a module replaces legacy code, keep that knowledge, with its evidence.
 - **No `std::format` or `std::print` in device code.** They add about 830 KB to the binary.
@@ -58,6 +60,11 @@ bug patterns) and the warnings in `cmake/cxx.cmake`. What they cannot check:
 - **Results that must be checked** are `[[nodiscard]]`. When `true` or `false` would not say what
   happened at the call site, return an `enum class` instead of a `bool`.
 - **Long types** get a name with a `using` alias (`using OptionalMusicItemRef = ...`).
+- **Check a value once, where it enters.** A value with a real limit that travels between modules gets a small class whose only way in is a `from()`: `std::optional` when there is one way to fail (`VolumeLevel`, `ListName`), std::expected when the caller needs the reason. Code that takes one never repeats the check.
+- **Families of message types** (commands, reports) are structs that each carry their own tag and
+  encode or decode themselves, held in a `std::variant`. A concept states what every member
+  provides (`IsCommand`, `IsReport`). Shared behaviour without virtual functions goes in a base
+  struct using C++23's explicit object parameter (`CommandBase::frame(this const auto& self)`).
 - **Enums** are `enum class` with an explicit underlying type
   (`enum class PlaybackMode : std::uint8_t`).
 - **Full words in names.** The accepted abbreviations are `prev`, `idx` and unit suffixes such as
