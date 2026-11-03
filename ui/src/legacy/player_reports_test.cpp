@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <string_view>
 
+#include "legacy/test_frames.hpp"
 #include <catch2/catch_test_macros.hpp>
 
 namespace diskos::legacy {
@@ -44,8 +45,20 @@ TEST_CASE("diskos_decode_report reduces each report to its kind and value", "[le
     }
 }
 
-TEST_CASE("diskos_decode_report leaves a202 and unknown reports to the caller", "[legacy]") {
-    CHECK(decode(R"(a2020013{"state":1})").kind == DISKOS_REPORT_UNDECODED);
+TEST_CASE("diskos_decode_report tells the a202 forms apart", "[legacy]") {
+    const diskos_report state = decode(R"(a2020013{"state":1})");
+    const diskos_report track = decode(track_frame("Some Song", "/tmp/sdcard/Some Song.flac", 2));
+    const diskos_report airplay = decode(airplay_frame("Some Song", 0));
+
+    CHECK(state.kind == DISKOS_REPORT_PLAY_STATE);
+    CHECK(state.value == 1);
+    CHECK(track.kind == DISKOS_REPORT_TRACK);
+    CHECK(track.value == 2);
+    CHECK(airplay.kind == DISKOS_REPORT_AIRPLAY_TRACK);
+    CHECK(airplay.value == 0);
+}
+
+TEST_CASE("diskos_decode_report leaves reports without a decoder to the caller", "[legacy]") {
     CHECK(decode("aa1c000C0000").kind == DISKOS_REPORT_UNDECODED);
 }
 

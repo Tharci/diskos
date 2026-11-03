@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
-/* The playback state (services/playback/player_state.hpp) for the legacy C code. It holds one
- * PlayerState, used from the /ui receive thread only: ipc.c applies the local a103 and a202 frames
- * to it and copies the track into its track_state_t. */
+/* The playback state (services/playback/player_state.hpp) for the legacy C code. It holds two
+ * PlayerStates, as ipc.c keeps local playback and the AirPlay receiver apart: it applies the a103
+ * and a202 frames to the one they belong to and copies its track into track_state_t or
+ * ipc_receiver_meta. */
 #ifndef DISKOS_LEGACY_PLAYER_STATE_H
 #define DISKOS_LEGACY_PLAYER_STATE_H
 
@@ -15,6 +16,12 @@ extern "C" {
 
 /* The longest title or path that fits the legacy buffers (track_state_t), without their NUL. */
 #define DISKOS_PLAYER_TEXT_MAX 255
+
+/* Which PlayerState a call is about. */
+typedef enum {
+    DISKOS_PLAYER_LOCAL,    /* Used from the /ui receive thread only */
+    DISKOS_PLAYER_RECEIVER, /* Used under one lock the caller holds for every call */
+} diskos_player_slot;
 
 /* What one frame did. */
 typedef struct {
@@ -35,21 +42,21 @@ typedef struct {
     int64_t queue_position, queue_count; /* "3/12" is 3 and 12; both 0 when not reported */
 } diskos_player_track;
 
-/* Apply one frame received on /ui: `size` bytes at `bytes`.
+/* Apply one frame received on /ui to `slot`: `size` bytes at `bytes`.
  *  - A malformed frame, or any report but a103 and a202, changes nothing and is not accepted.
- *  - A track whose title or path does not fit DISKOS_PLAYER_TEXT_MAX (or holds a NUL) clears the
- *    track and is not accepted: a cut path can name another file, and a cut title is no evidence.
- */
-diskos_player_update diskos_player_apply(const char* bytes, size_t size);
+ *  - LOCAL: a track whose title or path does not fit DISKOS_PLAYER_TEXT_MAX (or holds a NUL)
+ *    clears the track and is not accepted: a cut path can name another file, and a cut title is
+ *    no evidence. The receiver's texts have no limit: they are only shown. */
+diskos_player_update diskos_player_apply(diskos_player_slot slot, const char* bytes, size_t size);
 
-/* Get the current track into *track: 1, or 0 when there is none. */
-int diskos_player_get_track(diskos_player_track* track);
+/* Get the current track of `slot` into *track: 1, or 0 when there is none. */
+int diskos_player_get_track(diskos_player_slot slot, diskos_player_track* track);
 
-/* Get the position in ms, or -1 when none was reported since the track changed. */
-int64_t diskos_player_position(void);
+/* Get the position of `slot` in ms, or -1 when none was reported since the track changed. */
+int64_t diskos_player_position(diskos_player_slot slot);
 
-/* Forget everything, for a player restart. */
-void diskos_player_reset(void);
+/* Forget everything in `slot`: the player restarted, or the receiver session ended. */
+void diskos_player_reset(diskos_player_slot slot);
 
 #ifdef __cplusplus
 }

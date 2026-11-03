@@ -22,18 +22,25 @@ constexpr PlayState activity_of(ReportedPlayState state) {
     std::unreachable();
 }
 
-/** Check whether two tracks are the same file at the same queue row (or both none). */
+/**
+ * Check whether two tracks are the same file at the same queue row (or both none). An AirPlay
+ * song has no path and its ids are 0, so it is told apart by its texts.
+ */
 bool same_track(const std::optional<Track>& first, const std::optional<Track>& second) {
     if (!first || !second) {
         return first.has_value() == second.has_value();
     }
     const player::Song& one = first->song;
     const player::Song& other = second->song;
-    return one.path == other.path && one.id == other.id && one.pos_id == other.pos_id;
+    const bool same_texts =
+            one.title == other.title && one.artist == other.artist && one.album == other.album;
+    return one.path == other.path && one.id == other.id && one.pos_id == other.pos_id
+           && (!one.path.empty() || same_texts);
 }
 
 std::optional<Track> track_of(const player::TrackReport& report) {
-    if (report.song.path.empty()) {
+    // Only AirPlay songs have no path.
+    if (report.song.path.empty() && report.work_mode != player::TrackReport::kAirPlay) {
         return std::nullopt;
     }
     return Track{

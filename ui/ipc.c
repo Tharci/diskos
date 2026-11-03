@@ -15,7 +15,6 @@
 #include <mqueue.h>
 #include <sys/stat.h>
 #include <time.h>
-#include "jsmn.h"
 #include "framelog.h"
 #include "legacy/player_reports.h"
 #include "legacy/player_state.h"
@@ -88,39 +87,12 @@ static track_state_t g_a2_candidate;
 static char g_stock_title[IPC_TITLE_CAPACITY];
 static int g_title_frozen, g_title_stock;
 static uint64_t g_title_revision;
-/* Strict unsigned raw identifiers, including zero; display pos_id is separate. */
-static int raw_id(const char *js, const jsmntok_t *t, uint64_t *out){
-    uint64_t n=0;
-    if(t->type!=JSMN_PRIMITIVE || t->end==t->start) return 0;
-    for(int i=t->start;i<t->end;i++){
-        unsigned d=(unsigned)(js[i]-'0');
-        if(d>9 || n>(UINT64_MAX-d)/10) return 0;
-        n=n*10+d;
-    }
-    *out=n; return 1;
-}
 static int title_pending(const char *path, const char *title){
     const char *base=strrchr(path,'/'); base=base ? base+1 : path;
     const char *ext=strrchr(base,'.');
     return path[0]=='/' && ext && (!strcasecmp(ext,".opus") ||
         !strcasecmp(ext,".oga") || !strcasecmp(ext,".ogg")) &&
         (!title[0] || !strcmp(base,title));
-}
-static int tok_eq(const char*js, jsmntok_t*t, const char*s){
-    int n=t->end-t->start;
-    return t->type==JSMN_STRING && (int)strlen(s)==n && strncmp(js+t->start,s,n)==0;
-}
-static int find_val(const char*js, jsmntok_t*tk, int ntok, const char*key){
-    /* Match only OBJECT KEYS, not string values: in jsmn a key string has size!=0
-     * (it owns its value), a plain value string has size==0 (same test jsmn itself
-     * uses at parse time). Without this, a value like a song titled "seq"/"state"
-     * could be mistaken for the key and return the wrong following token. */
-    for(int i=0;i+1<ntok;i++) if(tk[i].size!=0 && tok_eq(js,&tk[i],key)) return i+1;
-    return -1;
-}
-static void copy_tok(const char*js, jsmntok_t*t, char*dst, int dstsz){
-    int n=t->end-t->start; if(n>=dstsz) n=dstsz-1;
-    memcpy(dst, js+t->start, n); dst[n]=0;
 }
 /* Zero the current-track fields. Caller must hold g_mu. */
 static void clear_track(void){
@@ -136,159 +108,10 @@ static void clear_track(void){
     g_state.sample_rate=0; g_state.is_dsd=0;
 }
 
-/* Stock snprintf metadata can be RAW text or transport-escaped strings.
- * Verified mq_player format VAs: V2.09 0x64f3bc/0x650200/0x65057c/0x66006c,
- * V2.28 0x6bb2b4, V2.40 0x6ccfc8, V2.57 0x6d7c78 (call 0x4d87b4).
- * Normalize before JSON decoding; refuse duplicate boundaries rather than guess. */
-static int stock_a2_space(char c){ return c==' ' || c=='\t' || c=='\r' || c=='\n'; }
-/* Whitespace between fields is present in the older firmware formats. */
-static int stock_a2_match(const char *src, int len, int at, const char *pattern){
-    for(int i=0;pattern[i];i++){
-        if(at>=len || src[at++]!=pattern[i]) return -1;
-        if(pattern[i]==',') while(at<len && stock_a2_space(src[at])) at++;
-    }
-    return at;
-}
-static int stock_a2_scalar(const char *src, int n, int boolean){
-    if(boolean) return (n==4 && !memcmp(src,"true",4)) || (n==5 && !memcmp(src,"false",5));
-    int i=(n>0 && src[0]=='-') ? 1 : 0;
-    if(i==n || (src[i]=='0' && n-i>1)) return 0;
-    for(;i<n;i++) if(src[i]<'0' || src[i]>'9') return 0;
-    return 1;
-}
-/* jsmn tokenizes primitives without validating their JSON type. Validate every
- * suffix field here, including the closing brace and exact end of input. */
-static int stock_a2_suffix(const char *src, int len, int at){
-    static const char *keys[]={"love","playerflag","state","playing_num","work_mode"};
-    for(int k=0;k<5;k++){
-        char head[32]; snprintf(head,sizeof head,",\"%s\":",keys[k]);
-        at=stock_a2_match(src,len,at,head);
-        if(at<0) return 0;
-        int start=at;
-        if(k>=3){
-            if(at>=len || src[at++]!='"') return 0;
-            while(at<len && src[at]!='"'){
-                if((unsigned char)src[at]<32 || src[at]=='\\') return 0;
-                at++;
-            }
-            if(at>=len) return 0;
-            at++;
-        } else {
-            while(at<len && src[at]!=',' && src[at]!='}') at++;
-            if(!stock_a2_scalar(src+start,at-start,k==0)) return 0;
-        }
-    }
-    return at<len && src[at]=='}' && at+1==len;
-}
-static int stock_a2_append(char *out, int *used, int cap, const char *s, int n){
-    if(n<0 || n>=cap-*used) return 0;
-    memcpy(out+*used,s,n); *used+=n; out[*used]=0; return 1;
-}
-/* The leading path slash distinguishes raw, one-layer and two-layer paths. */
-static int stock_a2_depth(const char *s, int n){
-    int i=0;
-    while(i<n && s[i]=='\\') i++;
-    if(i==0) return 0;   /* raw path bytes stay unchanged */
-    if(i>=n || s[i]!='/') return -1;
-    return i==1 ? 1 : i==3 ? 2 : -1;
-}
-/* Decode only stock's slash, quote and backslash escapes, then protect the real
- * bytes for the two JSON decoders. Unknown escapes are never interpreted. */
-static int stock_a2_string(const char *s, int n, int depth, int path,
-                           char *out, int *used, int cap){
-    int unit=1<<depth, bytes=0;
-    for(int i=0;i<n;){
-        unsigned char c=(unsigned char)s[i++];
-        int slashes=0;
-        if(c=='\\'){
-            slashes=1;
-            while(i<n && s[i]=='\\'){ slashes++; i++; }
-            int tail=slashes%unit;
-            if(depth && i<n && (s[i]=='/' || s[i]=='"') && tail==unit-1){
-                slashes/=unit; c=(unsigned char)s[i++];
-            } else {
-                if(depth && tail && path) return 0;
-                if(!tail) slashes/=unit;
-                c=0;   /* leave the following byte for the next iteration */
-            }
-        }
-        bytes+=slashes+(c!=0);
-        if(path==1 && bytes>(int)sizeof g_state.path-4) return 0;
-        while(slashes--){
-            if(!stock_a2_append(out,used,cap,"\\\\\\\\",4)) return 0;
-        }
-        if(c=='"'){
-            if(!stock_a2_append(out,used,cap,"\\\\\\\"",4)) return 0;
-        } else if(c && c<32){
-            char esc[8]; int en=snprintf(esc,sizeof esc,"\\\\u%04x",c);
-            if(!stock_a2_append(out,used,cap,esc,en)) return 0;
-        } else if(c && !stock_a2_append(out,used,cap,(const char *)&c,1)) return 0;
-    }
-    return 1;
-}
-static int stock_a2_normalize(const char *src, int len, char *out, int cap){
-    static const char *keys[]={"id","pos_id","song_name","song_duration_time",
-        "song_file_path","song_sample_rate","song_encoding_rate","song_bit_rate",
-        "song_artist_name","song_album_name","song_style_name","song_track",
-        "song_channel","is_sacd","is_cue","is_dsd","is_m3u","m3u_file_path"};
-    /* 0 = integer, 1 = raw string, 2 = boolean. */
-    static const unsigned char types[]={0,0,1,0,1,0,0,0,1,1,1,0,0,2,2,2,2,1};
-    const char *prefix="{\"song\":\"{";
-    int used=0, at=(int)strlen(prefix), starts[18], ends[18], count=0, depth=0;
-    if(len<at || memcmp(src,prefix,at)) return 0;
-    for(int k=0;k<18;k++){
-        char head[64], boundary[64];
-        snprintf(head,sizeof head,"%s\\\"%s\\\":%s",k ? "," : "",keys[k],types[k]==1 ? "\\\"" : "");
-        int next=stock_a2_match(src,len,at,head);
-        if(next<0) return 0;
-        at=next;
-        /* V2.09 ends immediately after is_dsd; newer layouts carry m3u. */
-        int last=(k==17 || (k==15 &&
-            (stock_a2_match(src,len,at,"true}\"")>=0 ||
-             stock_a2_match(src,len,at,"false}\"")>=0)));
-        int bn;
-        if(last) bn=snprintf(boundary,sizeof boundary,"%s}\"",types[k]==1 ? "\\\"" : "");
-        else bn=snprintf(boundary,sizeof boundary,"%s,\\\"%s\\\":",types[k]==1 ? "\\\"" : "",keys[k+1]);
-        int end=-1;
-        for(int i=at;i+bn<=len;i++){
-            if(stock_a2_match(src,len,i,boundary)>=0){
-                if(end>=0) return 0;   /* ambiguous raw data: refuse to invent an identity */
-                end=i;
-            }
-        }
-        if(end<0) return 0;
-        if(types[k]==1){
-            starts[count]=at; ends[count++]=end;
-            if(k==4){
-                depth=stock_a2_depth(src+at,end-at);
-                if(depth<0) return 0;
-            }
-            at=end+2;
-        } else {
-            int n=end-at;
-            if(!stock_a2_scalar(src+at,n,types[k]==2)) return 0;
-            at=end;
-        }
-        if(last) break;
-    }
-    if(stock_a2_match(src,len,at,"}\"")<0 || !stock_a2_suffix(src,len,at+2)) return 0;
-    int copied=0;
-    for(int k=0;k<count;k++){
-        if(!stock_a2_append(out,&used,cap,src+copied,starts[k]-copied) ||
-           !stock_a2_string(src+starts[k],ends[k]-starts[k],k==1 ? depth : 0,k==1,
-                            out,&used,cap)) return 0;
-        copied=ends[k];
-    }
-    if(!stock_a2_append(out,&used,cap,src+copied,len-copied)) return 0;
-    return used;
-}
-
 /* Receiver publication is serialized with source/generation evidence, never g_mu. */
 static ipc_receiver_meta g_receiver_meta;
 static receiver_art_key g_receiver_art;
 static uint64_t g_receiver_art_revision;
-static char g_receiver_ids[2][32];
-static uint64_t g_receiver_fields[3];
 static uint64_t g_receiver_arm, g_receiver_session;
 static unsigned g_receiver_generation;
 static int g_receiver_selected;
@@ -313,7 +136,7 @@ static int receiver_owned_locked(void){
 static void receiver_clear_locked(void){
     g_receiver_arm=0; g_receiver_selected=0;
     memset(&g_receiver_meta,0,sizeof g_receiver_meta);
-    memset(g_receiver_ids,0,sizeof g_receiver_ids); memset(g_receiver_fields,0,sizeof g_receiver_fields);
+    diskos_player_reset(DISKOS_PLAYER_RECEIVER);
     g_receiver_meta.generation=g_generation;
 }
 void ipc_receiver_begin(unsigned generation, uint64_t arm){
@@ -356,14 +179,12 @@ void ipc_receiver_metadata(ipc_receiver_meta *out){
     pthread_mutex_lock(&g_recov_mu);
     if(g_rx_reopen || g_receiver_meta.generation!=g_generation){
         memset(&g_receiver_meta,0,sizeof g_receiver_meta);
-        memset(g_receiver_ids,0,sizeof g_receiver_ids); memset(g_receiver_fields,0,sizeof g_receiver_fields);
+        diskos_player_reset(DISKOS_PLAYER_RECEIVER);
         g_receiver_meta.generation=g_generation; g_receiver_arm=0;
     }
     *out=g_receiver_meta;
     pthread_mutex_unlock(&g_recov_mu);
 }
-/* Strict JSON string decoder. Validate all input, even after the bounded prefix
- * fills. Never split a codepoint; reject invalid UTF-8, NUL and lone surrogates. */
 /* Receipt-order art key shares the locked metadata snapshot, not file provenance. */
 void receiver_art_get(receiver_art_key *out){
     pthread_mutex_lock(&g_recov_mu);
@@ -380,179 +201,42 @@ static uint64_t receiver_now_ms(void){
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts);
     return (uint64_t)ts.tv_sec*1000+(uint64_t)ts.tv_nsec/1000000;
 }
-static int receiver_decode(const char *s,int n,char *out,int cap,uint64_t *identity){
-    int used=0, full=0;
-    uint64_t hash=UINT64_C(14695981039346656037);
-    for(int i=0;i<n;){
-        unsigned cp=(unsigned char)s[i++], min=0; int more=0;
-        if(cp=='\\'){
-            if(i==n) return -1;
-            cp=(unsigned char)s[i++];
-            if(cp=='u'){
-                cp=0;
-                for(int k=0;k<4;k++){
-                    if(i==n) return -1;
-                    unsigned c=(unsigned char)s[i++], d=c>='0'&&c<='9' ? c-'0' :
-                        c>='a'&&c<='f' ? c-'a'+10 : c>='A'&&c<='F' ? c-'A'+10 : 16;
-                    if(d==16) return -1;
-                    cp=cp*16+d;
-                }
-                /* Supplementary characters may arrive as raw UTF-8. Refuse
-                 * surrogate escapes rather than publish an invalid scalar. */
-                if(cp>=0xd800 && cp<=0xdfff) return -1;
-            } else if(cp=='n') cp='\n'; else if(cp=='r') cp='\r';
-            else if(cp=='t') cp='\t'; else if(cp=='b') cp='\b'; else if(cp=='f') cp='\f';
-            else if(cp!='"' && cp!='/' && cp!='\\') return -1;
-        } else {
-            if(cp<32 || cp=='"') return -1;
-            if(cp>=0xc2 && cp<=0xdf){ cp&=31; more=1; min=0x80; }
-            else if(cp>=0xe0 && cp<=0xef){ cp&=15; more=2; min=0x800; }
-            else if(cp>=0xf0 && cp<=0xf4){ cp&=7; more=3; min=0x10000; }
-            else if(cp>=0x80) return -1;
-            for(int k=0;k<more;k++){
-                if(i==n || ((unsigned char)s[i]&0xc0)!=0x80) return -1;
-                cp=(cp<<6)|((unsigned char)s[i++]&63);
-            }
-            if(cp<min || cp>0x10ffff || (cp>=0xd800 && cp<=0xdfff)) return -1;
-        }
-        if(!cp) return -1;
-        char bytes[4]; int count=0;
-        if(cp<0x80) bytes[count++]=cp;
-        else {
-            if(cp<0x800) bytes[count++]=0xc0|(cp>>6);
-            else {
-                if(cp<0x10000) bytes[count++]=0xe0|(cp>>12);
-                else { bytes[count++]=0xf0|(cp>>18); bytes[count++]=0x80|((cp>>12)&63); }
-                bytes[count++]=0x80|((cp>>6)&63);
-            }
-            bytes[count++]=0x80|(cp&63);
-        }
-        for(int k=0;k<count;k++)
-            hash=(hash^(unsigned char)bytes[k])*UINT64_C(1099511628211);
-        if(used+count>=cap) full=1;
-        if(!full){ memcpy(out+used,bytes,count); used+=count; }
+/* Copy src into dst[cap], cut at a character boundary. */
+static void copy_text(char *dst, size_t cap, const char *src){
+    size_t n=strlen(src);
+    if(n>=cap){
+        n=cap-1;
+        while(n>0 && ((unsigned char)src[n]&0xC0)==0x80) n--;   /* not inside a UTF-8 sequence */
     }
-    if(identity) *identity=hash;
-    out[used]=0; return full ? -2 : used;
+    memcpy(dst,src,n); dst[n]=0;
 }
-static int receiver_text(const char *s,int n,char *out,int cap){
-    return receiver_decode(s,n,out,cap,NULL);
+static int is_a202(diskos_report_kind kind){
+    return kind==DISKOS_REPORT_PLAY_STATE || kind==DISKOS_REPORT_TRACK || kind==DISKOS_REPORT_AIRPLAY_TRACK;
 }
-/* jsmn alone accepts missing separators. Check the flat stock objects' exact
- * punctuation, duplicate keys and scalar types as well as token boundaries. */
-static int receiver_object(const char *s,int n,jsmntok_t *t,int cap){
-    jsmn_parser p; jsmn_init(&p); int nt=jsmn_parse(&p,s,n,t,cap), at=1;
-    if(nt<1 || t[0].type!=JSMN_OBJECT || t[0].start!=0 || t[0].end!=n) return 0;
-    for(int i=1;i<nt;i+=2){
-        if(i+1>=nt || t[i].type!=JSMN_STRING || t[i].size!=1) return 0;
-        while(at<n && stock_a2_space(s[at])) at++;
-        if(i>1){ if(s[at++]!=',') return 0; while(at<n && stock_a2_space(s[at])) at++; }
-        char key[1];
-        if(at!=t[i].start-1 || memchr(s+t[i].start,'\\',t[i].end-t[i].start) ||
-           receiver_text(s+t[i].start,t[i].end-t[i].start,key,1)==-1) return 0;
-        for(int j=1;j<i;j+=2) if(t[j].end-t[j].start==t[i].end-t[i].start &&
-            !memcmp(s+t[j].start,s+t[i].start,t[i].end-t[i].start)) return 0;
-        at=t[i].end+1; while(at<n && stock_a2_space(s[at])) at++;
-        if(s[at++]!=':') return 0;
-        while(at<n && stock_a2_space(s[at])) at++;
-        jsmntok_t *v=&t[i+1];
-        if(v->type==JSMN_STRING){
-            char check[1];
-            if(at!=v->start-1 || receiver_text(s+v->start,v->end-v->start,check,1)==-1) return 0;
-            at=v->end+1;
-        } else if(v->type==JSMN_PRIMITIVE){
-            if(at!=v->start || (!stock_a2_scalar(s+at,v->end-at,0) &&
-                !stock_a2_scalar(s+at,v->end-at,1))) return 0;
-            at=v->end;
-        } else return 0;
+/* Apply an a202 to the receiver's state (legacy/player_state.h) and publish it in g_receiver_meta.
+ * Caller holds g_recov_mu. Returns 0 if the frame is refused. */
+static int receiver_apply(const char *frame,int n){
+    const diskos_player_update update=diskos_player_apply(DISKOS_PLAYER_RECEIVER, frame, (size_t)n);
+    if(!update.accepted) return 0;
+    ipc_receiver_meta *m=&g_receiver_meta;
+    if(update.reported_state>=0){ m->transport_state=update.reported_state; m->transport_valid=1; }
+    if(!update.full) return 1;
+    uint64_t now=receiver_now_ms();
+    if(update.track){
+        /* a103 carries no item id: position and duration belong to the old item. */
+        m->item_revision++; m->item_rx_ms=now;
+        m->progress_valid=0; m->position_ms=m->duration_ms=0;
     }
-    while(at<n && stock_a2_space(s[at])) at++;
-    return at==n-1 && s[at]=='}' ? nt : 0;
-}
-static int receiver_parse(const char *payload,int len){
-    if(memchr(payload,0,len)) return 0;
-    char repaired[8192], song[8192]; jsmntok_t tk[64], st[96];
-    const char *head="{\"song\":\"{\\\"id\\\":";
-    if(len>=(int)strlen(head) && !memcmp(payload,head,strlen(head))){
-        int normalized=stock_a2_normalize(payload,len,repaired,sizeof repaired);
-        /* Partial id-first JSON is not a complete stock snprintf layout. It
-         * must still pass the strict object decoder below without repair. */
-        if(normalized){ len=normalized; payload=repaired; }
+    diskos_player_track t;
+    if(diskos_player_get_track(DISKOS_PLAYER_RECEIVER, &t)){
+        copy_text(m->title, sizeof m->title, t.title);
+        copy_text(m->artist, sizeof m->artist, t.artist);
+        copy_text(m->album, sizeof m->album, t.album);
+        if(t.duration_ms>=0 && t.duration_ms<=INT32_MAX){ m->duration_ms=(long)t.duration_ms; m->dur_rx_ms=now; m->dur_seq++; }
     }
-    int nt=receiver_object(payload,len,tk,64), v, n2=0;
-    if(!nt) return 0;
-    ipc_receiver_meta next=g_receiver_meta;
-    v=find_val(payload,tk,nt,"state");
-    if(v>=0){
-        uint64_t state;
-        if(!raw_id(payload,&tk[v],&state) || state>INT32_MAX) return 0;
-        next.transport_state=(int)state; next.transport_valid=1;
-    }
-    v=find_val(payload,tk,nt,"song");
-    if(v>=0){
-        if(tk[v].type!=JSMN_STRING ||
-           receiver_text(payload+tk[v].start,tk[v].end-tk[v].start,song,sizeof song)<0) return 0;
-        if(song[0]){ n2=receiver_object(song,(int)strlen(song),st,96); if(!n2) return 0; }
-        const char *keys[]={"song_name","song_artist_name","song_album_name"};
-        char *fields[]={next.title,next.artist,next.album};
-        int caps[]={sizeof next.title,sizeof next.artist,sizeof next.album};
-        int changed=0;
-        uint64_t hashes[3]; memcpy(hashes,g_receiver_fields,sizeof hashes);
-        char ids[2][32]; memcpy(ids,g_receiver_ids,sizeof ids);
-        const char *idkeys[]={"id","pos_id"};
-        for(int k=0;k<2;k++){
-            int sv=find_val(song,st,n2,idkeys[k]);
-            if(sv<0) continue;
-            int n=st[sv].end-st[sv].start;
-            if(st[sv].type!=JSMN_PRIMITIVE || n>=32 ||
-               !stock_a2_scalar(song+st[sv].start,n,0)) return 0;
-            char id[32]; copy_tok(song,&st[sv],id,sizeof id);
-            if(strcmp(ids[k],id)) changed=1;
-            strcpy(ids[k],id);
-        }
-        for(int k=0;k<3;k++){
-            int sv=find_val(song,st,n2,keys[k]);
-            if(sv<0) continue;
-            if(st[sv].type!=JSMN_STRING) return 0;
-            char text[IPC_TITLE_CAPACITY];
-            uint64_t hash;
-            if(receiver_decode(song+st[sv].start,st[sv].end-st[sv].start,
-                               text,caps[k],&hash)==-1) return 0;
-            /* Hash decoded text, including the tail beyond the display prefix. */
-            /* Stock sends the literal "(null)" for a missing field: empty. */
-            if(!strcmp(text,"(null)")){ text[0]=0; hash=UINT64_C(14695981039346656037); }
-            if(hashes[k]!=hash) changed=1;
-            hashes[k]=hash; strcpy(fields[k],text);
-        }
-        uint64_t now=receiver_now_ms();
-        if(changed){
-            /* a103 carries no item id: position and duration belong to the old item. */
-            next.item_revision++; next.item_rx_ms=now;
-            next.progress_valid=0; next.position_ms=next.duration_ms=0;
-        }
-        int dv=find_val(song,st,n2,"song_duration_time"); uint64_t dur;
-        if(dv>=0 && raw_id(song,&st[dv],&dur) && dur<=INT32_MAX){
-            next.duration_ms=(long)dur; next.dur_rx_ms=now; next.dur_seq++;
-        }
-        memcpy(g_receiver_ids,ids,sizeof ids); memcpy(g_receiver_fields,hashes,sizeof hashes);
-    }
-    g_receiver_meta=next; return 1;
+    return 1;
 }
 
-/* Source-bearing a202: strictly parsed, with work_mode exactly "AIRPLAY" (an A2 string is source evidence only here). */
-static int receiver_airplay_frame(const char *payload,int len){
-    char repaired[8192]; jsmntok_t tk[64]; int found=0, v;
-    for(int i=0;i+7<=len;i++) if(!memcmp(payload+i,"AIRPLAY",7)) found=1;
-    if(!found || memchr(payload,0,len)) return 0;
-    const char *head="{\"song\":\"{\\\"id\\\":";
-    if(len>=(int)strlen(head) && !memcmp(payload,head,strlen(head))){
-        int normalized=stock_a2_normalize(payload,len,repaired,sizeof repaired);
-        if(normalized){ len=normalized; payload=repaired; }
-    }
-    int nt=receiver_object(payload,len,tk,64);
-    v=nt ? find_val(payload,tk,nt,"work_mode") : -1;
-    return v>=0 && tok_eq(payload,&tk[v],"AIRPLAY");
-}
 /* Under g_recov_mu. Fresh evidence only: the observation boundary was acknowledged, nothing owns the receiver. */
 static int adopt_ready_locked(void){
     return g_obs_id && g_obs_id==g_arm_ack && !g_receiver_arm && !g_rx_reopen;
@@ -574,7 +258,8 @@ static void adopt_begin_locked(void){
  * A new track drops the previous one's position and title freeze; a frozen title stays otherwise. */
 static void publish_track_locked(int new_track){
     diskos_player_track t;
-    if(!diskos_player_get_track(&t)){ clear_track(); return; }
+    /* A local track needs a path: without one, new positions would bind to the previous track. */
+    if(!diskos_player_get_track(DISKOS_PLAYER_LOCAL, &t) || !t.path[0]){ clear_track(); return; }
     if(new_track){
         g_state.playback_token++; g_title_frozen=g_title_stock=0;
         g_state.position_ms=0; g_state.pos_seq=0;
@@ -592,8 +277,8 @@ static void publish_track_locked(int new_track){
         if(!title_pending(t.path,t.title) || t.is_cue || t.is_sacd) g_title_stock=1;
         g_state.title_ready=g_title_stock;
     }
-    snprintf(g_state.artist, sizeof g_state.artist, "%s", t.artist);
-    snprintf(g_state.album,  sizeof g_state.album,  "%s", t.album);
+    copy_text(g_state.artist, sizeof g_state.artist, t.artist);
+    copy_text(g_state.album, sizeof g_state.album, t.album);
     g_state.duration_ms=(long)t.duration_ms;
     g_state.sample_rate=(int)t.sample_rate_hz;
     g_state.is_dsd=t.is_dsd;
@@ -603,13 +288,6 @@ static void publish_track_locked(int new_track){
         snprintf(g_state.playing_num, sizeof g_state.playing_num, "%lld/%lld", (long long)t.queue_position, (long long)t.queue_count);
     else g_state.playing_num[0]=0;
     g_state.have_track=1;
-}
-
-static int all_hex(const char*s,int n){
-    if(n<=0) return 0;
-    for(int i=0;i<n;i++){ char c=s[i];
-        if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return 0; }
-    return 1;
 }
 
 /* the player's screen sleep/wake ("aa23000C0000" / "...0001", echo_sys_control.c V2.57) and power-off ("aa03"):
@@ -711,14 +389,12 @@ static void parse_frame(const char*buf,int n){
     }
     if((buf[0]=='a' && buf[1]=='1') || (buf[0]=='a' && buf[1]=='2')){
         pthread_mutex_lock(&g_recov_mu);
-        char fh[5]={buf[4],buf[5],buf[6],buf[7],0};
-        if(!memcmp(buf,"a202",4) && !receiver_owned_locked() && all_hex(fh,4) &&
-           (int)strtol(fh,0,16)==n && receiver_airplay_frame(buf+8,n-8)){
+        if(report.kind == DISKOS_REPORT_AIRPLAY_TRACK && !receiver_owned_locked()){
             /* Quarantine: AirPlay metadata never reaches the Local parser (no path, so it would clear the Local
              * track). Fresh evidence after the observation boundary adopts the source and publishes this frame. */
             if(adopt_ready_locked() && (g_player_mode<0 || g_player_mode==10)){   /* a wire report of another source conflicts */
                 adopt_begin_locked();
-                if(receiver_parse(buf+8,n-8)){
+                if(receiver_apply(buf,n)){
                     adopt_locked();
                     if(g_player_mode!=10){ g_player_mode=10; g_mode_change_sequence++; g_source_sequence++; }
                 } else receiver_clear_locked();
@@ -734,9 +410,8 @@ static void parse_frame(const char*buf,int n){
             pthread_mutex_unlock(&g_recov_mu); return;
         }
         if(g_local_publication.state!=LOCAL_OPEN){
-            char lh[5]={buf[4],buf[5],buf[6],buf[7],0};
-            if(receiver_owned_locked() && !memcmp(buf,"a202",4) && all_hex(lh,4) && (int)strtol(lh,0,16)==n)
-                receiver_parse(buf+8,n-8);
+            if(receiver_owned_locked() && is_a202(report.kind))
+                receiver_apply(buf,n);
             else if(receiver_owned_locked() && report.kind == DISKOS_REPORT_POSITION) receiver_position(report.value);
             /* No receiver frame may reach local position/track publication. */
             pthread_mutex_unlock(&g_recov_mu); return;
@@ -751,15 +426,15 @@ static void parse_frame(const char*buf,int n){
         if(report.kind != DISKOS_REPORT_POSITION || report.value > INT32_MAX) return;
         /* Every report counts, also an unchanged one: pos_seq means "a position was reported" (play-start,
          * route-resume and BT-prepare checks wait for one; lyrics re-anchor on it). */
-        if(!diskos_player_apply(buf, (size_t)n).accepted) return;
+        if(!diskos_player_apply(DISKOS_PLAYER_LOCAL, buf, (size_t)n).accepted) return;
         pthread_mutex_lock(&g_mu);
-        g_state.position_ms=(long)diskos_player_position(); g_state.seq++; g_state.pos_seq=g_state.seq;
+        g_state.position_ms=(long)diskos_player_position(DISKOS_PLAYER_LOCAL); g_state.seq++; g_state.pos_seq=g_state.seq;
         pthread_mutex_unlock(&g_mu);
-    } else if(!memcmp(buf,"a202",4)){ /* the play state, or the current track */
+    } else if(is_a202(report.kind)){ /* the play state, or the current track */
         pthread_mutex_lock(&g_recov_mu);
         unsigned generation=g_generation; int pending=g_rx_reopen;
         pthread_mutex_unlock(&g_recov_mu);
-        const diskos_player_update update=diskos_player_apply(buf, (size_t)n);
+        const diskos_player_update update=diskos_player_apply(DISKOS_PLAYER_LOCAL, buf, (size_t)n);
         pthread_mutex_lock(&g_mu);
         char oldpath[sizeof g_state.path]; snprintf(oldpath, sizeof oldpath, "%s", g_state.path);
         if(update.reported_state>=0) g_state.state=update.reported_state;
@@ -813,7 +488,7 @@ static void parse_frame(const char*buf,int n){
             if(receiver_owned_locked()){
                 if(g_receiver_selected && mode!=10){
                     g_receiver_arm=0; memset(&g_receiver_meta,0,sizeof g_receiver_meta);
-                    memset(g_receiver_ids,0,sizeof g_receiver_ids); memset(g_receiver_fields,0,sizeof g_receiver_fields);
+                    diskos_player_reset(DISKOS_PLAYER_RECEIVER);
                     g_receiver_meta.generation=g_generation;
                 } else if(mode==10) g_receiver_selected=1;
             }
@@ -863,7 +538,7 @@ static int rx_do_reopen(void){
     charge_new_generation();
     unsigned generation=g_generation;
     pthread_mutex_unlock(&g_recov_mu);
-    diskos_player_reset();
+    diskos_player_reset(DISKOS_PLAYER_LOCAL);
     pthread_mutex_lock(&g_mu);
     int had_path=g_state.path[0]!=0;
     clear_track(); g_state.playback_token++; g_state.player_generation=generation; g_state.seq++;

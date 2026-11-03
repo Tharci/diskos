@@ -181,7 +181,9 @@ struct TrackReport {
     ReportedPlayState state =
             ReportedPlayState::Stopped;  // Lags: a track about to play still reads Stopped
     std::optional<QueuePosition> queue_position{};  // None under AirPlay
-    std::string work_mode{};                        // "LOCAL" or "AIRPLAY" so far
+    std::string work_mode{};                        // "LOCAL" or kAirPlay so far
+
+    static constexpr std::string_view kAirPlay = "AIRPLAY";  // The work_mode under AirPlay
 
     /** Check whether an a202 body is in this full form (else it is a PlayStateReport). */
     [[nodiscard]] static bool claims(std::string_view body);

@@ -26,9 +26,10 @@ constexpr diskos_player_update kIgnored{
         .full = 0,
 };
 
-playback::PlayerState& player_state() {
-    static playback::PlayerState state;
-    return state;
+playback::PlayerState& player_state(diskos_player_slot slot) {
+    static playback::PlayerState local;
+    static playback::PlayerState receiver;
+    return slot == DISKOS_PLAYER_RECEIVER ? receiver : local;
 }
 
 /** Check whether a text fits a legacy buffer as a C string. */
@@ -36,14 +37,14 @@ bool fits(std::string_view text) {
     return text.size() <= DISKOS_PLAYER_TEXT_MAX && !text.contains('\0');
 }
 
-/** Check whether a report's title and path fit the legacy buffers (only a track report has them).
+/** Check whether a report's title and path fit the legacy buffers (only track reports have them).
  */
 bool fits(const Report& report) {
     const auto* track = std::get_if<TrackReport>(&report);
     return track == nullptr || (fits(track->song.title) && fits(track->song.path));
 }
 
-/** The same track report without its path, which PlayerState takes as no track. */
+/** The same track report without its path, which PlayerState takes as no local track. */
 Report without_path(const Report& report) {
     TrackReport track = std::get<TrackReport>(report);
     track.song.path.clear();
@@ -70,15 +71,17 @@ bool is_applied(const Report& report) {
 }  // namespace
 }  // namespace diskos::legacy
 
-extern "C" diskos_player_update diskos_player_apply(const char* bytes, size_t size) {
+extern "C" diskos_player_update diskos_player_apply(
+        diskos_player_slot slot, const char* bytes, size_t size
+) {
     using namespace diskos::legacy;
     const auto report = diskos::player::decode_report(std::string_view{bytes, size});
     if (!report || !is_applied(*report)) {
         return kIgnored;
     }
-    const bool usable = fits(*report);
+    const bool usable = slot == DISKOS_PLAYER_RECEIVER || fits(*report);
     const diskos::playback::Changes changes =
-            player_state().apply_report(usable ? *report : without_path(*report));
+            player_state(slot).apply_report(usable ? *report : without_path(*report));
     return {
             .accepted = usable ? 1 : 0,
             .track = changes.track ? 1 : 0,
@@ -89,8 +92,9 @@ extern "C" diskos_player_update diskos_player_apply(const char* bytes, size_t si
     };
 }
 
-extern "C" int diskos_player_get_track(diskos_player_track* track) {
-    const std::optional<diskos::playback::Track>& current = diskos::legacy::player_state().track();
+extern "C" int diskos_player_get_track(diskos_player_slot slot, diskos_player_track* track) {
+    const std::optional<diskos::playback::Track>& current =
+            diskos::legacy::player_state(slot).track();
     if (!current) {
         return 0;
     }
@@ -116,11 +120,11 @@ extern "C" int diskos_player_get_track(diskos_player_track* track) {
     return 1;
 }
 
-extern "C" int64_t diskos_player_position(void) {
-    const std::optional<std::uint32_t> position = diskos::legacy::player_state().position_ms();
+extern "C" int64_t diskos_player_position(diskos_player_slot slot) {
+    const std::optional<std::uint32_t> position = diskos::legacy::player_state(slot).position_ms();
     return position ? static_cast<int64_t>(*position) : -1;
 }
 
-extern "C" void diskos_player_reset(void) {
-    diskos::legacy::player_state() = diskos::playback::PlayerState{};
+extern "C" void diskos_player_reset(diskos_player_slot slot) {
+    diskos::legacy::player_state(slot) = diskos::playback::PlayerState{};
 }

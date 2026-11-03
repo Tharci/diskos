@@ -45,7 +45,8 @@ public:
      * Apply one report from the player and say what it changed.
      *  - A track report for another file or queue row is a new track, with no position yet. Once
      *    the activity is known, the Stopped it reads means Loading.
-     *  - A track report whose song has no path clears the track.
+     *  - Under AirPlay, songs have no path: one with other texts is a new track.
+     *  - A local track report whose song has no path clears the track.
      *  - While Loading, a Paused report changes nothing.
      *  - A position report means Playing while the activity is Unknown.
      *  - Reports about anything other than playback (battery, screen, ...) change nothing.

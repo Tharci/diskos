@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "player/modes.hpp"
@@ -39,6 +40,17 @@ const player::Song kEmptyFile{
 
 player::Report track(const player::Song& song, ReportedPlayState state, bool favourite = false) {
     return player::TrackReport{.song = song, .favourite = favourite, .state = state};
+}
+
+// A track from a phone over AirPlay: no ids and no path.
+const player::Song kStreamed{.title = "Some Song", .artist = "Some Artist", .album = "Some Album"};
+
+player::Report airplay(const player::Song& song, ReportedPlayState state) {
+    return player::TrackReport{
+            .song = song,
+            .state = state,
+            .work_mode = std::string{player::TrackReport::kAirPlay},
+    };
 }
 
 player::Report playing() {
@@ -188,7 +200,9 @@ TEST_CASE("PlayerState tells tracks apart by file and queue row", "[playback][pl
     CHECK(new_row == Changes{.track = true});
 }
 
-TEST_CASE("PlayerState clears the track for a song without a path", "[playback][player_state]") {
+TEST_CASE(
+        "PlayerState clears the track for a local song without a path", "[playback][player_state]"
+) {
     PlayerState state;
     state.apply_report(track(kFirst, ReportedPlayState::Playing));
     state.apply_report(position(1000));
@@ -207,6 +221,23 @@ TEST_CASE("PlayerState gets no track from a state-only report", "[playback][play
 
     CHECK_FALSE(state.track().has_value());
     CHECK(state.activity() == PlayState::Playing);
+}
+
+TEST_CASE("PlayerState tells AirPlay tracks apart by their texts", "[playback][player_state]") {
+    player::Song next = kStreamed;
+    next.title = "Other Song";
+    player::Song longer = kStreamed;
+    longer.duration_ms = 200000;
+    PlayerState state;
+    const Changes first = state.apply_report(airplay(kStreamed, ReportedPlayState::Playing));
+    const Changes same = state.apply_report(airplay(longer, ReportedPlayState::Playing));
+    const Changes other = state.apply_report(airplay(next, ReportedPlayState::Playing));
+
+    CHECK(first == Changes{.track = true, .activity = true});
+    CHECK(same == Changes{.details = true});
+    CHECK(other == Changes{.track = true});
+    REQUIRE(state.track().has_value());
+    CHECK(state.track()->song.title == "Other Song");
 }
 
 }  // namespace

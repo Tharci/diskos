@@ -56,7 +56,19 @@ diskos_report to_c(const ConversionReport& report) {
     return {.kind = DISKOS_REPORT_CONVERSION, .value = report.code};
 }
 
-/** The reports the legacy code still reads itself: a202 and anything without a decoder. */
+diskos_report to_c(const PlayStateReport& report) {
+    return {.kind = DISKOS_REPORT_PLAY_STATE, .value = static_cast<std::uint32_t>(report.state)};
+}
+
+diskos_report to_c(const TrackReport& report) {
+    const bool airplay = report.work_mode == TrackReport::kAirPlay;
+    return {
+            .kind = airplay ? DISKOS_REPORT_AIRPLAY_TRACK : DISKOS_REPORT_TRACK,
+            .value = static_cast<std::uint32_t>(report.state),
+    };
+}
+
+/** The reports without a decoder. */
 template <typename OtherReport>
 diskos_report to_c(const OtherReport& /*report*/) {
     return {.kind = DISKOS_REPORT_UNDECODED, .value = 0};

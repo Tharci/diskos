@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
 /* The player's reports (player/reports.hpp) for the legacy C code: decode_report() behind a C
- * interface, with each report reduced to its kind and one number. Reports the legacy code still
- * reads itself (a202, Bluetooth, unknown tags) come back UNDECODED. A frame the decoder refuses
- * comes back MALFORMED, and must change nothing. */
+ * interface, with each report reduced to its kind and one number. The a202 track details are
+ * read through legacy/player_state.h. Reports without a decoder (Bluetooth, unknown tags) come
+ * back UNDECODED. A frame the decoder refuses comes back MALFORMED, and must change nothing. */
 #ifndef DISKOS_LEGACY_PLAYER_REPORTS_H
 #define DISKOS_LEGACY_PLAYER_REPORTS_H
 
@@ -28,6 +28,10 @@ typedef enum {
     DISKOS_REPORT_FAVOURITE,  /* value: as sent, meaning not known yet */
     DISKOS_REPORT_BATTERY,    /* value: 0..100 percent */
     DISKOS_REPORT_CONVERSION, /* value: the result code, 0 = done */
+    /* a202. value: the state, 0 playing, 1 paused, 2 stopped */
+    DISKOS_REPORT_PLAY_STATE,    /* state only */
+    DISKOS_REPORT_TRACK,         /* with the current track */
+    DISKOS_REPORT_AIRPLAY_TRACK, /* with the current track, under AirPlay */
 } diskos_report_kind;
 
 typedef struct {

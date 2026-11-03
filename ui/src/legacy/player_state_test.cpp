@@ -6,68 +6,30 @@
 #include <string>
 #include <string_view>
 
-#include "player/frame.hpp"
+#include "legacy/test_frames.hpp"
 #include <catch2/catch_test_macros.hpp>
 
 namespace diskos::legacy {
 namespace {
 
-// Frames in the V2.57 layout (see player/track_report_test.cpp), with the title, path and state
-// filled in.
-
-/** The path as the player writes it: every '/' escaped twice. */
-std::string escaped(std::string_view path) {
-    std::string out;
-    for (const char c : path) {
-        out += c == '/' ? std::string_view{R"(\\\/)"} : std::string_view{&c, 1};
-    }
-    return out;
-}
-
-std::string track_frame(std::string_view title, std::string_view path, int state) {
-    // clang-format off: one template field per line.
-    const std::string body =
-            R"({"song":"{\"id\":1415)"
-            R"(,\"pos_id\":1)"
-            R"(,\"song_name\":\")" + std::string{title} + R"(\")"
-            R"(,\"song_duration_time\":475000)"
-            R"(,\"song_file_path\":\")" + escaped(path) + R"(\")"
-            R"(,\"song_sample_rate\":44100)"
-            R"(,\"song_encoding_rate\":16)"
-            R"(,\"song_bit_rate\":1411)"
-            R"(,\"song_artist_name\":\"Some Artist\")"
-            R"(,\"song_album_name\":\"Some Album\")"
-            R"(,\"song_style_name\":\"Some Genre\")"
-            R"(,\"song_track\":1)"
-            R"(,\"song_channel\":2)"
-            R"(,\"is_sacd\":false)"
-            R"(,\"is_cue\":false)"
-            R"(,\"is_dsd\":false)"
-            R"(,\"is_m3u\":false)"
-            R"(,\"m3u_file_path\":\"(null)\"}")"
-            R"(,"love":true)"
-            R"(,"playerflag":5)"
-            R"(,"state":)" + std::to_string(state) +
-            R"(,"playing_num":"3/12")"
-            R"(,"work_mode":"LOCAL"})";
-    // clang-format on
-    return player::build_frame("a202", body);
-}
-
 constexpr std::string_view kPath = "/tmp/sdcard/Some Album/01 - First Song.flac";
 
 diskos_player_update apply(std::string_view frame) {
-    return diskos_player_apply(frame.data(), frame.size());
+    return diskos_player_apply(DISKOS_PLAYER_LOCAL, frame.data(), frame.size());
+}
+
+diskos_player_update receive(std::string_view frame) {
+    return diskos_player_apply(DISKOS_PLAYER_RECEIVER, frame.data(), frame.size());
 }
 
 /** Whether the bridge holds a track. */
 bool has_track() {
     diskos_player_track track{};
-    return diskos_player_get_track(&track) == 1;
+    return diskos_player_get_track(DISKOS_PLAYER_LOCAL, &track) == 1;
 }
 
 TEST_CASE("diskos_player_apply reports what each frame did", "[legacy]") {
-    diskos_player_reset();
+    diskos_player_reset(DISKOS_PLAYER_LOCAL);
     const std::string first = track_frame("First Song", kPath, 2);
     const diskos_player_update loaded = apply(first);
     const diskos_player_update again = apply(first);
@@ -92,11 +54,11 @@ TEST_CASE("diskos_player_apply reports what each frame did", "[legacy]") {
 }
 
 TEST_CASE("diskos_player_get_track gives the track's fields", "[legacy]") {
-    diskos_player_reset();
+    diskos_player_reset(DISKOS_PLAYER_LOCAL);
     apply(track_frame("First Song / Café Two", kPath, 1));
     diskos_player_track track{};
 
-    REQUIRE(diskos_player_get_track(&track) == 1);
+    REQUIRE(diskos_player_get_track(DISKOS_PLAYER_LOCAL, &track) == 1);
     CHECK(std::string_view{track.title} == "First Song / Café Two");
     CHECK(std::string_view{track.artist} == "Some Artist");
     CHECK(std::string_view{track.path} == kPath);
@@ -110,18 +72,18 @@ TEST_CASE("diskos_player_get_track gives the track's fields", "[legacy]") {
 }
 
 TEST_CASE("diskos_player_position belongs to the current track", "[legacy]") {
-    diskos_player_reset();
+    diskos_player_reset(DISKOS_PLAYER_LOCAL);
     apply(track_frame("First Song", kPath, 0));
     apply("a103001000C9174D");
-    const std::int64_t first = diskos_player_position();
+    const std::int64_t first = diskos_player_position(DISKOS_PLAYER_LOCAL);
     apply(track_frame("Second Song", "/tmp/sdcard/Some Album/02 - Second Song.flac", 2));
 
     CHECK(first == 0x00C9174D);
-    CHECK(diskos_player_position() == -1);
+    CHECK(diskos_player_position(DISKOS_PLAYER_LOCAL) == -1);
 }
 
 TEST_CASE("diskos_player_apply clears a track that does not fit", "[legacy]") {
-    diskos_player_reset();
+    diskos_player_reset(DISKOS_PLAYER_LOCAL);
     const std::string longest_title(DISKOS_PLAYER_TEXT_MAX, 'x');
     const std::string long_title(DISKOS_PLAYER_TEXT_MAX + 1, 'x');
     const std::string long_path = "/tmp/sdcard/" + std::string(DISKOS_PLAYER_TEXT_MAX, 'x');
@@ -140,10 +102,34 @@ TEST_CASE("diskos_player_apply clears a track that does not fit", "[legacy]") {
 
 TEST_CASE("diskos_player_reset forgets the track", "[legacy]") {
     apply(track_frame("First Song", kPath, 0));
-    diskos_player_reset();
+    diskos_player_reset(DISKOS_PLAYER_LOCAL);
 
     CHECK_FALSE(has_track());
-    CHECK(diskos_player_position() == -1);
+    CHECK(diskos_player_position(DISKOS_PLAYER_LOCAL) == -1);
+}
+
+TEST_CASE("diskos_player_apply keeps the receiver apart from local playback", "[legacy]") {
+    diskos_player_reset(DISKOS_PLAYER_LOCAL);
+    diskos_player_reset(DISKOS_PLAYER_RECEIVER);
+    const std::string long_title(DISKOS_PLAYER_TEXT_MAX + 1, 'x');
+    apply(track_frame("First Song", kPath, 0));
+    const diskos_player_update streamed = receive(airplay_frame("Some Song", 0));
+    const diskos_player_update same = receive(airplay_frame("Some Song", 1));
+    const diskos_player_update next = receive(airplay_frame(long_title, 0));
+    diskos_player_track local{};
+    diskos_player_track receiver{};
+
+    CHECK(streamed.accepted == 1);
+    CHECK(streamed.track == 1);
+    CHECK(same.track == 0);
+    CHECK(same.reported_state == 1);
+    CHECK(next.accepted == 1);
+    CHECK(next.track == 1);
+    REQUIRE(diskos_player_get_track(DISKOS_PLAYER_LOCAL, &local) == 1);
+    REQUIRE(diskos_player_get_track(DISKOS_PLAYER_RECEIVER, &receiver) == 1);
+    CHECK(std::string_view{local.title} == "First Song");
+    CHECK(std::string_view{receiver.title} == long_title);
+    CHECK(std::string_view{receiver.path}.empty());
 }
 
 }  // namespace
