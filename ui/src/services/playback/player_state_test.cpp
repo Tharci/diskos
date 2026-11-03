@@ -15,9 +15,6 @@ namespace {
 
 using player::ReportedPlayState;
 
-// The report sequences are as the player sent them on the Disc (capture of 2026-11-01), without
-// the reports about other things in between.
-
 const player::Song kFirst{
         .id = 1415,
         .pos_id = 1,

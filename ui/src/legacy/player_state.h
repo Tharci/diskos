@@ -1,0 +1,58 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* Copyright (C) 2026 diskOS contributors */
+/* The playback state (services/playback/player_state.hpp) for the legacy C code. It holds one
+ * PlayerState, used from the /ui receive thread only: ipc.c applies the local a103 and a202 frames
+ * to it and copies the track into its track_state_t. */
+#ifndef DISKOS_LEGACY_PLAYER_STATE_H
+#define DISKOS_LEGACY_PLAYER_STATE_H
+
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* The longest title or path that fits the legacy buffers (track_state_t), without their NUL. */
+#define DISKOS_PLAYER_TEXT_MAX 255
+
+/* What one frame did. */
+typedef struct {
+    int accepted;       /* 1: an a103 or a202, applied whole */
+    int track;          /* 1: a different track, or none any more */
+    int details;        /* 1: the same track's other fields changed */
+    int position;       /* 1: the position changed */
+    int reported_state; /* a202: the state it reported (0 playing, 1 paused, 2 stopped); else -1 */
+    int full;           /* 1: a202 in its full form, with a track */
+} diskos_player_update;
+
+/* The current track. The texts stay valid until the next diskos_player_apply() or reset. */
+typedef struct {
+    const char *title, *artist, *album, *path;
+    int64_t song_id, pos_id; /* SONG.ID and the queue row (LIST_SONG_0.ID) */
+    int64_t duration_ms, sample_rate_hz;
+    int favourite, is_dsd, is_cue, is_sacd;
+    int64_t queue_position, queue_count; /* "3/12" is 3 and 12; both 0 when not reported */
+} diskos_player_track;
+
+/* Apply one frame received on /ui: `size` bytes at `bytes`.
+ *  - A malformed frame, or any report but a103 and a202, changes nothing and is not accepted.
+ *  - A track whose title or path does not fit DISKOS_PLAYER_TEXT_MAX (or holds a NUL) clears the
+ *    track and is not accepted: a cut path can name another file, and a cut title is no evidence.
+ */
+diskos_player_update diskos_player_apply(const char* bytes, size_t size);
+
+/* Get the current track into *track: 1, or 0 when there is none. */
+int diskos_player_get_track(diskos_player_track* track);
+
+/* Get the position in ms, or -1 when none was reported since the track changed. */
+int64_t diskos_player_position(void);
+
+/* Forget everything, for a player restart. */
+void diskos_player_reset(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

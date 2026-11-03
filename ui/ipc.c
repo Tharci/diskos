@@ -18,6 +18,7 @@
 #include "jsmn.h"
 #include "framelog.h"
 #include "legacy/player_reports.h"
+#include "legacy/player_state.h"
 
 static mqd_t g_rx=(mqd_t)-1, g_tx=(mqd_t)-1;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -55,7 +56,7 @@ static unsigned g_a2_serial, g_a2_playing_report;
 #ifdef DISKOS_TEST_BT_PREPARE
 static unsigned g_prepare_playing_frames;
 #endif
-static int g_a2_stopped, g_a2_candidate_unloaded;
+static int g_a2_stopped;
 /* Main-thread send evidence only; no command or player-state mutation. */
 static unsigned g_resume_toggle, g_resume_after_report;
 static int g_confirmed;         /* [g_recov_mu] accepted a2 state report this generation */
@@ -98,13 +99,6 @@ static int raw_id(const char *js, const jsmntok_t *t, uint64_t *out){
     }
     *out=n; return 1;
 }
-static int kind_bool(const char *js, const jsmntok_t *t, int *out){
-    int n=t->end-t->start;
-    if(t->type!=JSMN_PRIMITIVE) return 0;
-    if(n==4 && !memcmp(js+t->start,"true",4)){ *out=1; return 1; }
-    if(n==5 && !memcmp(js+t->start,"false",5)){ *out=0; return 1; }
-    return 0;
-}
 static int title_pending(const char *path, const char *title){
     const char *base=strrchr(path,'/'); base=base ? base+1 : path;
     const char *ext=strrchr(base,'.');
@@ -128,35 +122,6 @@ static void copy_tok(const char*js, jsmntok_t*t, char*dst, int dstsz){
     int n=t->end-t->start; if(n>=dstsz) n=dstsz-1;
     memcpy(dst, js+t->start, n); dst[n]=0;
 }
-static long tok_long(const char*js, jsmntok_t*t){
-    char b[32]; copy_tok(js,t,b,sizeof b); return strtol(b,0,10);
-}
-static int tok_bool(const char*js, jsmntok_t*t){
-    char b[8]; copy_tok(js,t,b,sizeof b); return (b[0]=='t'||b[0]=='1'||b[0]=='T');
-}
-/* JSON string unescape (handles \" \\ \/ \n \t \r and \uXXXX -> UTF-8 BMP).
- * Returns the decoded length on success, or -1 if the input did not fit dst
- * (truncated). A silently-truncated path can alias a DIFFERENT real file, so
- * callers that key off the result (e.g. song_file_path) must drop a -1. */
-static int unescape(const char*s,int n,char*dst,int dstsz){
-    int o=0, i=0;
-    for(;i<n && o<dstsz-4;i++){
-        if(s[i]!=2 && s[i]==92 && i+1<n){ /* backslash */
-            char c=s[++i];
-            if(c==110) dst[o++]=10; else if(c==116) dst[o++]=9; else if(c==114) dst[o++]=13;
-            else if(c==117 && i+4<n){
-                char h[5]={s[i+1],s[i+2],s[i+3],s[i+4],0}; i+=4;
-                unsigned cp=strtoul(h,0,16);
-                if(cp<0x80) dst[o++]=cp;
-                else if(cp<0x800){ dst[o++]=0xC0|(cp>>6); dst[o++]=0x80|(cp&0x3F); }
-                else { dst[o++]=0xE0|(cp>>12); dst[o++]=0x80|((cp>>6)&0x3F); dst[o++]=0x80|(cp&0x3F); }
-            } else dst[o++]=c; /* \" \\ \/ and others -> literal */
-        } else dst[o++]=s[i];
-    }
-    dst[o]=0;
-    return (i<n) ? -1 : o;   /* i<n -> stopped on the o limit, input left over = truncated */
-}
-
 /* Zero the current-track fields. Caller must hold g_mu. */
 static void clear_track(void){
     if(g_state.player_confirmed) g_state.playback_token++;
@@ -335,7 +300,7 @@ static int g_receiver_selected;
  * unsent cancellation, or a new generation opens publication again. READY survives
  * cancellation/retry: stock suppresses duplicate a607 (MP 0x4f1174-0x4f119c), so
  * neither already observed departure nor late Local may require another report.
- * Outside these sessions the local parsers, including parse_a2, are unchanged. */
+ * Outside these sessions local publication (publish_track_locked) is unchanged. */
 static struct {
     enum { LOCAL_OPEN, LOCAL_RESERVED, LOCAL_BLOCKED,
            LOCAL_RETURN_ARM, LOCAL_RETURN_READY } state;
@@ -605,148 +570,39 @@ static void adopt_begin_locked(void){
     g_receiver_meta.generation=g_generation; g_receiver_meta.session_revision=++g_receiver_session;
 }
 
-static int parse_a2(const char*payload,int len){
-    jsmn_parser p; jsmntok_t tk[64];
-    static char repaired[8192], song[8192];
-    jsmntok_t st[96]; int nt, n2=0, v;
-    /* An id-first song object identifies the stock layout. A recognized but
-     * malformed/ambiguous frame must never fall through to permissive JSON. */
-    const char *stock_head="{\"song\":\"{\\\"id\\\":";
-    int head_len=(int)strlen(stock_head);
-    if(len>=head_len && !memcmp(payload,stock_head,head_len)){
-        int normalized=stock_a2_normalize(payload,len,repaired,sizeof repaired);
-        if(!normalized) return 0;
-        payload=repaired; len=normalized;
+/* Copy the player state's track (legacy/player_state.h) into g_state. Caller holds g_mu.
+ * A new track drops the previous one's position and title freeze; a frozen title stays otherwise. */
+static void publish_track_locked(int new_track){
+    diskos_player_track t;
+    if(!diskos_player_get_track(&t)){ clear_track(); return; }
+    if(new_track){
+        g_state.playback_token++; g_title_frozen=g_title_stock=0;
+        g_state.position_ms=0; g_state.pos_seq=0;
     }
-    jsmn_init(&p);
-    nt=jsmn_parse(&p,payload,len,tk,64);
-    v=nt>0 ? find_val(payload,tk,nt,"song") : -1;
-    if(v>=0 && tk[v].type==JSMN_STRING && (tk[v].end-tk[v].start)>2){
-        int decoded=unescape(payload+tk[v].start,tk[v].end-tk[v].start,song,sizeof song);
-        jsmn_parser p2; jsmn_init(&p2);
-        n2=decoded>=0 ? jsmn_parse(&p2,song,decoded,st,96) : -1;
+    if(strcmp(g_stock_title,t.title) || !g_state.is_cue_valid || g_state.is_cue!=t.is_cue || g_state.is_sacd!=t.is_sacd)
+        g_title_revision++;
+    g_state.player_confirmed=1; g_state.provisional=0;
+    g_state.song_id_raw=(uint64_t)t.song_id; g_state.pos_id_raw=(uint64_t)t.pos_id;
+    g_state.song_id_valid=g_state.pos_id_valid=g_state.is_cue_valid=g_state.is_sacd_valid=1;
+    g_state.is_cue=t.is_cue; g_state.is_sacd=t.is_sacd;
+    snprintf(g_stock_title, sizeof g_stock_title, "%s", t.title);
+    snprintf(g_state.path, sizeof g_state.path, "%s", t.path);
+    if(!g_title_frozen){
+        snprintf(g_state.title, sizeof g_state.title, "%s", t.title);
+        if(!title_pending(t.path,t.title) || t.is_cue || t.is_sacd) g_title_stock=1;
+        g_state.title_ready=g_title_stock;
     }
-    if(nt<1 || n2<0) return 0;
-    if(n2>0 && (st[0].type!=JSMN_OBJECT || st[0].start!=0 || st[0].end!=(int)strlen(song))) return 0;
-    /* A truncated title cannot be used as eligibility evidence. Reject before publication. */
-    if(n2>0){
-        char title[sizeof g_state.title]; int sv=find_val(song,st,n2,"song_name");
-        if(sv>=0 && unescape(song+st[sv].start,st[sv].end-st[sv].start,title,sizeof title)<0) return 0;
-    }
-    /* Confirmation requires a complete object and a numeric state, not arbitrary JSON.
-     * Partial metadata still follows the existing publication rules below. */
-    int state_val=-1, duplicate=0;
-    for(int i=1;i+1<nt;){
-        int value=i+1;
-        if(tk[i].size==1 && tok_eq(payload,&tk[i],"state")){
-            if(state_val>=0) duplicate=1;
-            state_val=value;
-        }
-        /* Skip the entire value: a nested song state is not a player state. */
-        int end=tk[value].end; i=value+1;
-        while(i<nt && tk[i].start<end) i++;
-    }
-    int accepted=!duplicate && tk[0].type==JSMN_OBJECT && tk[0].start==0 && tk[0].end==len &&
-        state_val>=0 && tk[state_val].type==JSMN_PRIMITIVE &&
-        stock_a2_scalar(payload+tk[state_val].start,tk[state_val].end-tk[state_val].start,0);
-    pthread_mutex_lock(&g_mu);
-    char oldpath[256]; snprintf(oldpath, sizeof oldpath, "%s", g_state.path);   /* detect a track-identity change */
-    v=find_val(payload,tk,nt,"state");        if(v>=0) g_state.state=(int)tok_long(payload,&tk[v]);
-    v=find_val(payload,tk,nt,"playing_num");  if(v>=0) copy_tok(payload,&tk[v],g_state.playing_num,sizeof g_state.playing_num);
-    v=find_val(payload,tk,nt,"work_mode");    if(v>=0) copy_tok(payload,&tk[v],g_state.work_mode,sizeof g_state.work_mode);
-    v=find_val(payload,tk,nt,"love");         if(v>=0) g_state.is_favorite=tok_bool(payload,&tk[v]);
-    v=find_val(payload,tk,nt,"song");
-    if(v>=0 && tk[v].type==JSMN_STRING && (tk[v].end-tk[v].start)>2){
-        if(n2>0){
-            /* Parse into TEMP state and publish only when the song carries a complete IDENTITY (a valid
-             * path). song_name alone must NOT make it a "track": an omitted song_file_path would otherwise
-             * leave the PREVIOUS path (and path_seq) intact while the title changes, so the new song's
-             * positions would bind to the old track and corrupt its bookmark. unescape (not copy_tok) every
-             * string: the inner song JSON still carries \/ \" \uXXXX after the outer unescape. */
-            char t_title[sizeof g_state.title]={0}, t_artist[sizeof g_state.artist]={0};
-            char t_album[sizeof g_state.album]={0}, t_path[sizeof g_state.path]={0};
-            long t_dur=-1; int t_sr=-1, t_dsd=-1, have_path=0, sv;
-            uint64_t song_id=0, pos_id=0; int sid_ok=0, pid_ok=0, cue=0, sacd=0, cue_ok=0, sacd_ok=0;
-            sv=find_val(song,st,n2,"id"); if(sv>=0) sid_ok=raw_id(song,&st[sv],&song_id);
-            sv=find_val(song,st,n2,"pos_id"); if(sv>=0) pid_ok=raw_id(song,&st[sv],&pos_id);
-            sv=find_val(song,st,n2,"is_cue"); if(sv>=0) cue_ok=kind_bool(song,&st[sv],&cue);
-            sv=find_val(song,st,n2,"is_sacd"); if(sv>=0) sacd_ok=kind_bool(song,&st[sv],&sacd);
-            sv=find_val(song,st,n2,"song_name");          if(sv>=0) unescape(song+st[sv].start, st[sv].end-st[sv].start, t_title, sizeof t_title);
-            sv=find_val(song,st,n2,"song_artist_name");   if(sv>=0) unescape(song+st[sv].start, st[sv].end-st[sv].start, t_artist, sizeof t_artist);
-            sv=find_val(song,st,n2,"song_album_name");    if(sv>=0) unescape(song+st[sv].start, st[sv].end-st[sv].start, t_album,  sizeof t_album);
-            sv=find_val(song,st,n2,"song_file_path");
-            /* a truncated path can alias a DIFFERENT real file -> unescape overflow means NO usable identity */
-            if(sv>=0){
-                int decoded=unescape(song+st[sv].start, st[sv].end-st[sv].start, t_path, sizeof t_path);
-                if(decoded<0) accepted=0;
-                else if(t_path[0]) have_path=1;
-            }
-            sv=find_val(song,st,n2,"song_duration_time"); if(sv>=0) t_dur=tok_long(song,&st[sv]);
-            sv=find_val(song,st,n2,"song_sample_rate");   if(sv>=0) t_sr=(int)tok_long(song,&st[sv]);
-            sv=find_val(song,st,n2,"is_dsd");             if(sv>=0) t_dsd=tok_bool(song,&st[sv]);
-            if(have_path){                 /* complete identity -> publish the whole track atomically */
-                int changed=!g_state.player_confirmed || strcmp(g_state.path,t_path) ||
-                    g_state.song_id_valid!=(unsigned)sid_ok || g_state.pos_id_valid!=(unsigned)pid_ok ||
-                    g_state.song_id_raw!=song_id || g_state.pos_id_raw!=pos_id;
-                if(changed){
-                    g_state.playback_token++; g_title_frozen=g_title_stock=0;
-                    /* Previous timing does not belong to this identity. An omitted
-                     * duration stays unknown until this track reports its length. */
-                    g_state.position_ms=0; g_state.pos_seq=0; g_state.duration_ms=0;
-                }
-                g_state.player_confirmed=1; g_state.provisional=0;
-                g_state.song_id_raw=song_id; g_state.pos_id_raw=pos_id;
-                g_state.song_id_valid=sid_ok; g_state.pos_id_valid=pid_ok;
-                if(strcmp(g_stock_title,t_title) || g_state.is_cue!=cue || g_state.is_sacd!=sacd ||
-                   g_state.is_cue_valid!=(unsigned)cue_ok || g_state.is_sacd_valid!=(unsigned)sacd_ok)
-                    g_title_revision++;
-                g_state.is_cue=cue; g_state.is_sacd=sacd;
-                g_state.is_cue_valid=cue_ok; g_state.is_sacd_valid=sacd_ok;
-                strcpy(g_stock_title,t_title);
-                snprintf(g_state.path, sizeof g_state.path, "%s", t_path);
-                if(!g_title_frozen){
-                    strcpy(g_state.title,t_title);
-                    if(!title_pending(t_path,t_title) || (cue_ok && cue) || (sacd_ok && sacd)) g_title_stock=1;
-                    g_state.title_ready=g_title_stock;
-                }
-                snprintf(g_state.artist, sizeof g_state.artist, "%s", t_artist);
-                snprintf(g_state.album,  sizeof g_state.album,  "%s", t_album);
-                if(t_dur>=0) g_state.duration_ms=t_dur;
-                if(t_sr>=0)  g_state.sample_rate=t_sr;
-                if(t_dsd>=0) g_state.is_dsd=t_dsd;
-                g_state.pos_id = (pid_ok && pos_id>0 && pos_id<=0x7FFFFFFF) ? (int)pos_id : 0;   /* per track: never carried over from the previous one */
-                g_state.have_track=1;
-            } else {
-                /* a present song with NO usable path can't establish identity -> clear rather than bind new
-                 * positions to the previous track (which would corrupt its bookmark). */
-                clear_track();
-            }
-        }
-    } else if(v>=0 && tk[v].type==JSMN_STRING){
-        /* "song" present as an empty/short STRING ("{}"/"" -> len<=2): the player is
-         * reporting no current track (playback stopped/ended) -> clear so the UI
-         * doesn't keep showing the song that just ended.
-         * Restricted to STRING tokens on purpose:
-         *   - an ABSENT key (v<0) is a partial state update (love/work_mode change)
-         *     and must NOT wipe the track (short frames like {"state":1} exist);
-         *   - a bare-object "song":{...} (non-string) would be a VALID track in any
-         *     encoder that doesn't stringify it, so we never clear on a non-string.
-         * NB: this only handles the present-but-empty stop encoding. If the player
-         * ever signals stop via a song-ABSENT short frame, that needs a captured
-         * stop frame to confirm + a state-based oracle. */
-        clear_track();
-    }
-    g_state.seq++;
-    if(strcmp(oldpath, g_state.path) != 0) g_state.path_seq = g_state.seq;   /* track changed -> new identity epoch */
-    int song_val=find_val(payload,tk,nt,"song");
-    g_a2_candidate_unloaded = song_val>=0 && tk[song_val].type==JSMN_STRING &&
-                             tk[song_val].end-tk[song_val].start<=2;
-    g_a2_candidate = g_state;
-    if(accepted) g_a2_candidate.state=(int)tok_long(payload,&tk[state_val]);
-    /* Short state-only replies cannot establish that a session is loaded. */
-    if(n2 <= 0) g_a2_candidate.have_track = 0;
-    pthread_mutex_unlock(&g_mu);
-    return accepted;
+    snprintf(g_state.artist, sizeof g_state.artist, "%s", t.artist);
+    snprintf(g_state.album,  sizeof g_state.album,  "%s", t.album);
+    g_state.duration_ms=(long)t.duration_ms;
+    g_state.sample_rate=(int)t.sample_rate_hz;
+    g_state.is_dsd=t.is_dsd;
+    g_state.is_favorite=t.favourite;
+    g_state.pos_id = (t.pos_id>0 && t.pos_id<=0x7FFFFFFF) ? (int)t.pos_id : 0;
+    if(t.queue_count>0)
+        snprintf(g_state.playing_num, sizeof g_state.playing_num, "%lld/%lld", (long long)t.queue_position, (long long)t.queue_count);
+    else g_state.playing_num[0]=0;
+    g_state.have_track=1;
 }
 
 static int all_hex(const char*s,int n){
@@ -893,16 +749,28 @@ static void parse_frame(const char*buf,int n){
         /* a102 is the play-mode ack (a102000C0004 after a book's Single mode) - read as a position it put Now
          * Playing at 0:00 and made the next skip count from there. A position must fit the 32-bit long. */
         if(report.kind != DISKOS_REPORT_POSITION || report.value > INT32_MAX) return;
-        pthread_mutex_lock(&g_mu); g_state.position_ms=(long)report.value; g_state.seq++; g_state.pos_seq=g_state.seq; pthread_mutex_unlock(&g_mu);
-    } else if(buf[0]==97 && buf[1]==50){ /* "a2" state/metadata JSON */
-        char lh[5]={buf[4],buf[5],buf[6],buf[7],0};
-        int complete=buf[2]=='0' && buf[3]=='2' && all_hex(lh,4) && (int)strtol(lh,0,16)==n;
+        /* Every report counts, also an unchanged one: pos_seq means "a position was reported" (play-start,
+         * route-resume and BT-prepare checks wait for one; lyrics re-anchor on it). */
+        if(!diskos_player_apply(buf, (size_t)n).accepted) return;
+        pthread_mutex_lock(&g_mu);
+        g_state.position_ms=(long)diskos_player_position(); g_state.seq++; g_state.pos_seq=g_state.seq;
+        pthread_mutex_unlock(&g_mu);
+    } else if(!memcmp(buf,"a202",4)){ /* the play state, or the current track */
         pthread_mutex_lock(&g_recov_mu);
         unsigned generation=g_generation; int pending=g_rx_reopen;
         pthread_mutex_unlock(&g_recov_mu);
-        int accepted=parse_a2(buf+8, n-8);
+        const diskos_player_update update=diskos_player_apply(buf, (size_t)n);
+        pthread_mutex_lock(&g_mu);
+        char oldpath[sizeof g_state.path]; snprintf(oldpath, sizeof oldpath, "%s", g_state.path);
+        if(update.reported_state>=0) g_state.state=update.reported_state;
+        if(update.track || update.details) publish_track_locked(update.track);
+        g_state.seq++;
+        if(strcmp(oldpath, g_state.path) != 0) g_state.path_seq = g_state.seq;   /* track changed -> new identity epoch */
+        g_a2_candidate = g_state;
+        if(!update.full) g_a2_candidate.have_track = 0;   /* a state-only report cannot show that a track is loaded */
+        pthread_mutex_unlock(&g_mu);
         pthread_mutex_lock(&g_recov_mu);
-        if(complete && accepted && !pending && !g_rx_reopen && generation==g_generation){
+        if(update.accepted && !pending && !g_rx_reopen && generation==g_generation){
             g_confirmed=1;
             pthread_mutex_lock(&g_mu);
             /* An edge belongs to one loaded identity, even between UI ticks. */
@@ -916,7 +784,7 @@ static void parse_frame(const char*buf,int n){
             if(g_a2_stopped && g_a2_report.have_track && g_a2_report.state==0)
                 g_a2_playing_report=g_a2_serial;
             /* A state-only playing report is not an unloaded session. */
-            if(g_a2_candidate_unloaded || g_a2_report.state==2)
+            if(g_a2_report.state==2)
                 g_a2_stopped=1;
             else if(g_a2_report.have_track)
                 g_a2_stopped=0;
@@ -995,6 +863,7 @@ static int rx_do_reopen(void){
     charge_new_generation();
     unsigned generation=g_generation;
     pthread_mutex_unlock(&g_recov_mu);
+    diskos_player_reset();
     pthread_mutex_lock(&g_mu);
     int had_path=g_state.path[0]!=0;
     clear_track(); g_state.playback_token++; g_state.player_generation=generation; g_state.seq++;
