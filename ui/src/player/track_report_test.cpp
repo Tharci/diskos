@@ -184,7 +184,7 @@ TEST_CASE("TrackReport::decode reads a local track", "[player][track]") {
     CHECK(song.m3u_path.empty());
     CHECK_FALSE(report->favourite);
     CHECK(report->player_flag == 5);
-    CHECK(report->state == PlayState::Stopped);
+    CHECK(report->state == ReportedPlayState::Stopped);
     REQUIRE(report->queue_position.has_value());
     CHECK(report->queue_position->position == 1);
     CHECK(report->queue_position->count == 33);
@@ -205,7 +205,7 @@ TEST_CASE("TrackReport::decode reads a file the player could not open", "[player
     CHECK(report->song.artist == "Unknown Artist");
     CHECK(report->song.duration_ms == 0);
     CHECK(report->song.sample_rate_hz == 0);
-    CHECK(report->state == PlayState::Stopped);
+    CHECK(report->state == ReportedPlayState::Stopped);
 }
 
 TEST_CASE("TrackReport::decode reads AirPlay tracks", "[player][track]") {
@@ -218,7 +218,7 @@ TEST_CASE("TrackReport::decode reads AirPlay tracks", "[player][track]") {
     CHECK(placeholder->song.genre.empty());
     CHECK_FALSE(placeholder->queue_position.has_value());
     CHECK(placeholder->player_flag == 255);
-    CHECK(placeholder->state == PlayState::Playing);
+    CHECK(placeholder->state == ReportedPlayState::Playing);
     CHECK(placeholder->work_mode == "AIRPLAY");
 
     const auto track = TrackReport::decode(body_of(kAirPlay));

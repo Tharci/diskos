@@ -86,11 +86,11 @@ static_assert(kTemplate.size() == static_cast<std::size_t>(Key::WorkMode) + 1);
 
 constexpr std::string_view kNull = "(null)";  // How the player writes a missing text
 
-std::optional<PlayState> to_play_state(std::int64_t value) {
-    if (value < 0 || value > static_cast<std::int64_t>(PlayState::Stopped)) {
+std::optional<ReportedPlayState> to_play_state(std::int64_t value) {
+    if (value < 0 || value > static_cast<std::int64_t>(ReportedPlayState::Stopped)) {
         return std::nullopt;
     }
-    return static_cast<PlayState>(value);
+    return static_cast<ReportedPlayState>(value);
 }
 
 /** Undo the path's double escaping: \\\/ is '/', \\\" is '"' and four backslashes are one. */
@@ -252,10 +252,10 @@ public:
         return path.value_or(std::string{});
     }
 
-    PlayState state(Key key) {
-        const std::optional<PlayState> state = to_play_state(integer(key));
+    ReportedPlayState state(Key key) {
+        const std::optional<ReportedPlayState> state = to_play_state(integer(key));
         failed_ |= !state;
-        return state.value_or(PlayState::Stopped);
+        return state.value_or(ReportedPlayState::Stopped);
     }
 
     /** "position/count", or "(null)" for none. */

@@ -126,7 +126,7 @@ struct ConversionReport {
 /** a202, state only: exactly {"state":N}, after every command. */
 struct PlayStateReport {
     static constexpr std::string_view kTag = "a202";
-    PlayState state;
+    ReportedPlayState state;
     [[nodiscard]] static Decoded<PlayStateReport> decode(std::string_view body);
 };
 
@@ -135,30 +135,34 @@ struct PlayStateReport {
  * Unknown numbers are 0, missing texts empty.
  */
 struct Song {
-    std::int64_t id;      // SONG.ID in the player's library; 0 under AirPlay
-    std::int64_t pos_id;  // LIST_SONG_0.ID: the queue row; 0 under AirPlay
-    std::string title;    // The file name when the file has no tags or cannot be read
-    std::string artist;
-    std::string album;
-    std::string genre;
-    std::string path;  // Empty under AirPlay
-    std::int64_t duration_ms;
-    std::int64_t sample_rate_hz;
-    std::int64_t bits_per_sample;
-    std::int64_t bit_rate_kbps;
-    std::int64_t track_number;
-    std::int64_t channels;
-    bool is_sacd;
-    bool is_cue;
-    bool is_dsd;
-    bool is_m3u;
-    std::string m3u_path;  // Empty when not from a playlist
+    std::int64_t id = 0;      // SONG.ID in the player's library; 0 under AirPlay
+    std::int64_t pos_id = 0;  // LIST_SONG_0.ID: the queue row; 0 under AirPlay
+    std::string title{};      // The file name when the file has no tags or cannot be read
+    std::string artist{};
+    std::string album{};
+    std::string genre{};
+    std::string path{};  // Empty under AirPlay
+    std::int64_t duration_ms = 0;
+    std::int64_t sample_rate_hz = 0;
+    std::int64_t bits_per_sample = 0;
+    std::int64_t bit_rate_kbps = 0;
+    std::int64_t track_number = 0;
+    std::int64_t channels = 0;
+    bool is_sacd = false;
+    bool is_cue = false;
+    bool is_dsd = false;
+    bool is_m3u = false;
+    std::string m3u_path{};  // Empty when not from a playlist
+
+    friend bool operator==(const Song&, const Song&) = default;
 };
 
 /** Where the current track is in the player's queue: "3/12" is position 3 of 12. */
 struct QueuePosition {
-    std::int64_t position;
-    std::int64_t count;
+    std::int64_t position = 0;
+    std::int64_t count = 0;
+
+    friend bool operator==(const QueuePosition&, const QueuePosition&) = default;
 };
 
 /**
@@ -171,12 +175,13 @@ struct QueuePosition {
  */
 struct TrackReport {
     static constexpr std::string_view kTag = "a202";
-    Song song;
-    bool favourite;
-    std::int64_t player_flag;  // Meaning unknown: 1, 2, 3, 5 and 6 locally, 255 under AirPlay
-    PlayState state;           // Can lag: a track that is about to play still reads Stopped
-    std::optional<QueuePosition> queue_position;  // None under AirPlay
-    std::string work_mode;                        // "LOCAL" or "AIRPLAY" so far
+    Song song{};
+    bool favourite = false;
+    std::int64_t player_flag = 0;  // Meaning unknown: 1, 2, 3, 5 and 6 locally, 255 under AirPlay
+    ReportedPlayState state =
+            ReportedPlayState::Stopped;  // Lags: a track about to play still reads Stopped
+    std::optional<QueuePosition> queue_position{};  // None under AirPlay
+    std::string work_mode{};                        // "LOCAL" or "AIRPLAY" so far
 
     /** Check whether an a202 body is in this full form (else it is a PlayStateReport). */
     [[nodiscard]] static bool claims(std::string_view body);

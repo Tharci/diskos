@@ -110,9 +110,9 @@ TEST_CASE("decode_report reads exactly the state-only a202 form", "[player][repo
     REQUIRE(playing.has_value());
     REQUIRE(paused.has_value());
     REQUIRE(stopped.has_value());
-    CHECK(playing->state == PlayState::Playing);
-    CHECK(paused->state == PlayState::Paused);
-    CHECK(stopped->state == PlayState::Stopped);
+    CHECK(playing->state == ReportedPlayState::Playing);
+    CHECK(paused->state == ReportedPlayState::Paused);
+    CHECK(stopped->state == ReportedPlayState::Stopped);
     CHECK(decode_report(R"(a2020013{"state":3})") == std::unexpected(BadValue));
     CHECK(decode_report(R"(a2020014{"state":01})") == std::unexpected(BadBody));
     CHECK(decode_report(R"(a2020014{"state": 1})") == std::unexpected(BadBody));

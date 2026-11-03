@@ -61,7 +61,7 @@ enum class Source : std::uint8_t {
 };
 
 /** The player's play state, as its a202 reports give it. */
-enum class PlayState : std::uint8_t {
+enum class ReportedPlayState : std::uint8_t {
     Playing = 0,
     Paused = 1,
     Stopped = 2,  // Also a track that could not be opened.

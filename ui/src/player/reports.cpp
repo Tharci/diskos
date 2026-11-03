@@ -181,10 +181,10 @@ Decoded<PlayStateReport> PlayStateReport::decode(std::string_view body) {
     if (!value) {
         return std::unexpected(ReportError::BadBody);
     }
-    if (*value < 0 || *value > static_cast<std::int64_t>(PlayState::Stopped)) {
+    if (*value < 0 || *value > static_cast<std::int64_t>(ReportedPlayState::Stopped)) {
         return std::unexpected(ReportError::BadValue);
     }
-    return PlayStateReport{.state = static_cast<PlayState>(*value)};
+    return PlayStateReport{.state = static_cast<ReportedPlayState>(*value)};
 }
 
 Decoded<Report> decode_report(std::string_view bytes) {
