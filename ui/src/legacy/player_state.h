@@ -17,10 +17,11 @@ extern "C" {
 /* The longest title or path that fits the legacy buffers (track_state_t), without their NUL. */
 #define DISKOS_PLAYER_TEXT_MAX 255
 
-/* Which PlayerState a call is about. */
+/* Which PlayerState a call is about. Each is used under one lock that the caller holds for every
+ * call about it (ipc.c: g_mu for LOCAL, g_recov_mu for RECEIVER). */
 typedef enum {
-    DISKOS_PLAYER_LOCAL,    /* Used from the /ui receive thread only */
-    DISKOS_PLAYER_RECEIVER, /* Used under one lock the caller holds for every call */
+    DISKOS_PLAYER_LOCAL,
+    DISKOS_PLAYER_RECEIVER,
 } diskos_player_slot;
 
 /* What one frame did. */
@@ -51,6 +52,13 @@ diskos_player_update diskos_player_apply(diskos_player_slot slot, const char* by
 
 /* Get the current track of `slot` into *track: 1, or 0 when there is none. */
 int diskos_player_get_track(diskos_player_slot slot, diskos_player_track* track);
+
+/* Advance `slot` to now (PlayerState::advance): its activity expires if its reports stopped
+ * coming. Returns 1 if the activity changed, else 0. Call it regularly. */
+int diskos_player_advance(diskos_player_slot slot);
+
+/* Check whether `slot` is playing a track or loading one to play: 1 or 0. */
+int diskos_player_is_playing(diskos_player_slot slot);
 
 /* Get the position of `slot` in ms, or -1 when none was reported since the track changed. */
 int64_t diskos_player_position(diskos_player_slot slot);

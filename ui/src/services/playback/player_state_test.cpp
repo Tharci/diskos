@@ -2,6 +2,7 @@
 // Copyright (C) 2026 diskOS contributors
 #include "services/playback/player_state.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -15,6 +16,11 @@ namespace diskos::playback {
 namespace {
 
 using player::ReportedPlayState;
+
+using namespace std::chrono_literals;
+
+// A time for the reports whose timing does not matter.
+constexpr PlayerState::Clock::time_point kNow{};
 
 const player::Song kFirst{
         .id = 1415,
@@ -77,7 +83,7 @@ player::VolumeLevel volume(std::uint32_t level) {
 
 /** Apply the reports in order, and get the activity after each one. */
 std::vector<PlayState> activities(PlayerState& state, const auto&... reports) {
-    return {(state.apply_report(reports), state.activity())...};
+    return {(state.apply_report(reports, kNow), state.activity())...};
 }
 
 TEST_CASE("PlayerState follows playing, pausing and resuming", "[playback][player_state]") {
@@ -94,7 +100,7 @@ TEST_CASE("PlayerState follows playing, pausing and resuming", "[playback][playe
 TEST_CASE("PlayerState loads a new track until it plays", "[playback][player_state]") {
     using enum PlayState;
     PlayerState state;
-    state.apply_report(track(kFirst, ReportedPlayState::Playing));
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), kNow);
     // Next: the track report reads Stopped, then the player starts it.
     const auto next =
             activities(state, track(kSecond, ReportedPlayState::Stopped), playing(), position(0));
@@ -105,7 +111,7 @@ TEST_CASE("PlayerState loads a new track until it plays", "[playback][player_sta
 TEST_CASE("PlayerState keeps loading while the previous track pauses", "[playback][player_state]") {
     using enum PlayState;
     PlayerState state;
-    state.apply_report(track(kFirst, ReportedPlayState::Playing));
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), kNow);
     // Playing an artist: the player reports Paused for the track it leaves.
     const auto artist =
             activities(state, track(kSecond, ReportedPlayState::Stopped), paused(), playing());
@@ -116,7 +122,7 @@ TEST_CASE("PlayerState keeps loading while the previous track pauses", "[playbac
 TEST_CASE("PlayerState stops on a track that cannot be opened", "[playback][player_state]") {
     using enum PlayState;
     PlayerState state;
-    state.apply_report(track(kFirst, ReportedPlayState::Paused));
+    state.apply_report(track(kFirst, ReportedPlayState::Paused), kNow);
     // Playing the empty file, then pressing play on it again.
     const auto opened = activities(
             state, track(kEmptyFile, ReportedPlayState::Stopped), position(0), stopped()
@@ -145,17 +151,18 @@ TEST_CASE("PlayerState takes the first report after startup as it is", "[playbac
 
 TEST_CASE("PlayerState says what each report changed", "[playback][player_state]") {
     PlayerState state;
-    const Changes loaded = state.apply_report(track(kFirst, ReportedPlayState::Paused));
-    const Changes started = state.apply_report(playing());
-    const Changes moved = state.apply_report(position(1000));
-    const Changes unmoved = state.apply_report(position(1000));
-    const Changes favourite = state.apply_report(track(kFirst, ReportedPlayState::Playing, true));
-    const Changes next = state.apply_report(track(kSecond, ReportedPlayState::Stopped));
-    const Changes louder = state.apply_report(player::VolumeReport{.level = volume(63)});
-    const Changes same_volume = state.apply_report(player::VolumeReport{.level = volume(63)});
-    const Changes battery = state.apply_report(player::BatteryReport{.percent = 87});
+    const Changes loaded = state.apply_report(track(kFirst, ReportedPlayState::Paused), kNow);
+    const Changes started = state.apply_report(playing(), kNow);
+    const Changes moved = state.apply_report(position(1000), kNow);
+    const Changes unmoved = state.apply_report(position(1000), kNow);
+    const Changes favourite =
+            state.apply_report(track(kFirst, ReportedPlayState::Playing, true), kNow);
+    const Changes next = state.apply_report(track(kSecond, ReportedPlayState::Stopped), kNow);
+    const Changes louder = state.apply_report(player::VolumeReport{.level = volume(63)}, kNow);
+    const Changes same_volume = state.apply_report(player::VolumeReport{.level = volume(63)}, kNow);
+    const Changes battery = state.apply_report(player::BatteryReport{.percent = 87}, kNow);
     const Changes unknown =
-            state.apply_report(player::UnknownReport{.tag = "a60a", .body = "0213"});
+            state.apply_report(player::UnknownReport{.tag = "a60a", .body = "0213"}, kNow);
 
     CHECK(loaded == Changes{.track = true, .activity = true});
     CHECK(started == Changes{.activity = true});
@@ -171,11 +178,11 @@ TEST_CASE("PlayerState says what each report changed", "[playback][player_state]
 
 TEST_CASE("PlayerState keeps the track and its position", "[playback][player_state]") {
     PlayerState state;
-    state.apply_report(track(kFirst, ReportedPlayState::Playing, true));
-    state.apply_report(position(1000));
+    state.apply_report(track(kFirst, ReportedPlayState::Playing, true), kNow);
+    state.apply_report(position(1000), kNow);
     const std::optional<Track> first = state.track();
     const std::optional<std::uint32_t> first_position = state.position_ms();
-    state.apply_report(track(kSecond, ReportedPlayState::Stopped));
+    state.apply_report(track(kSecond, ReportedPlayState::Stopped), kNow);
 
     REQUIRE(first.has_value());
     CHECK(first->song == kFirst);
@@ -192,9 +199,9 @@ TEST_CASE("PlayerState tells tracks apart by file and queue row", "[playback][pl
     player::Song requeued = kFirst;
     requeued.pos_id = 7;
     PlayerState state;
-    state.apply_report(track(kFirst, ReportedPlayState::Playing));
-    const Changes new_title = state.apply_report(track(retagged, ReportedPlayState::Playing));
-    const Changes new_row = state.apply_report(track(requeued, ReportedPlayState::Playing));
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), kNow);
+    const Changes new_title = state.apply_report(track(retagged, ReportedPlayState::Playing), kNow);
+    const Changes new_row = state.apply_report(track(requeued, ReportedPlayState::Playing), kNow);
 
     CHECK(new_title == Changes{.details = true});
     CHECK(new_row == Changes{.track = true});
@@ -204,10 +211,10 @@ TEST_CASE(
         "PlayerState clears the track for a local song without a path", "[playback][player_state]"
 ) {
     PlayerState state;
-    state.apply_report(track(kFirst, ReportedPlayState::Playing));
-    state.apply_report(position(1000));
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), kNow);
+    state.apply_report(position(1000), kNow);
     const Changes cleared = state.apply_report(
-            track(player::Song{.title = "Some Song"}, ReportedPlayState::Playing)
+            track(player::Song{.title = "Some Song"}, ReportedPlayState::Playing), kNow
     );
 
     CHECK(cleared == Changes{.track = true, .position = true});
@@ -217,7 +224,7 @@ TEST_CASE(
 
 TEST_CASE("PlayerState gets no track from a state-only report", "[playback][player_state]") {
     PlayerState state;
-    state.apply_report(playing());
+    state.apply_report(playing(), kNow);
 
     CHECK_FALSE(state.track().has_value());
     CHECK(state.activity() == PlayState::Playing);
@@ -229,15 +236,100 @@ TEST_CASE("PlayerState tells AirPlay tracks apart by their texts", "[playback][p
     player::Song longer = kStreamed;
     longer.duration_ms = 200000;
     PlayerState state;
-    const Changes first = state.apply_report(airplay(kStreamed, ReportedPlayState::Playing));
-    const Changes same = state.apply_report(airplay(longer, ReportedPlayState::Playing));
-    const Changes other = state.apply_report(airplay(next, ReportedPlayState::Playing));
+    const Changes first = state.apply_report(airplay(kStreamed, ReportedPlayState::Playing), kNow);
+    const Changes same = state.apply_report(airplay(longer, ReportedPlayState::Playing), kNow);
+    const Changes other = state.apply_report(airplay(next, ReportedPlayState::Playing), kNow);
 
     CHECK(first == Changes{.track = true, .activity = true});
     CHECK(same == Changes{.details = true});
     CHECK(other == Changes{.track = true});
     REQUIRE(state.track().has_value());
     CHECK(state.track()->song.title == "Other Song");
+}
+
+TEST_CASE(
+        "PlayerState expires Playing when the position stops moving", "[playback][player_state]"
+) {
+    using enum PlayState;
+    const auto start = kNow + 100s;
+    const auto moved = start + 4s;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), start);
+    const auto first_deadline = state.deadline();
+    state.apply_report(position(1000), moved);
+    const auto deadline = state.deadline();
+    const Changes early = state.advance(moved + PlayerState::kStale - 1ms);
+    const Changes expired = state.advance(moved + PlayerState::kStale);
+
+    CHECK(first_deadline == start + PlayerState::kStale);
+    CHECK(deadline == moved + PlayerState::kStale);
+    CHECK(early == Changes{});
+    CHECK(expired == Changes{.activity = true});
+    CHECK(state.activity() == Unknown);
+    CHECK_FALSE(state.is_playing());
+    CHECK_FALSE(state.deadline().has_value());
+}
+
+TEST_CASE("PlayerState expires Loading after a while", "[playback][player_state]") {
+    using enum PlayState;
+    const auto start = kNow + 100s;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Paused), start);
+    state.apply_report(track(kSecond, ReportedPlayState::Stopped), start + 1s);
+    const bool loading = state.is_playing();
+    const Changes expired = state.advance(start + 1s + PlayerState::kLoadTimeout);
+
+    CHECK(loading);
+    CHECK(expired == Changes{.activity = true});
+    CHECK(state.activity() == Unknown);
+}
+
+TEST_CASE("PlayerState lets no other state expire", "[playback][player_state]") {
+    const auto start = kNow + 100s;
+    PlayerState unknown;
+    PlayerState paused_player;
+    PlayerState stopped_player;
+    paused_player.apply_report(track(kFirst, ReportedPlayState::Paused), start);
+    stopped_player.apply_report(track(kFirst, ReportedPlayState::Stopped), start);
+
+    CHECK_FALSE(unknown.deadline().has_value());
+    CHECK_FALSE(paused_player.deadline().has_value());
+    CHECK_FALSE(stopped_player.deadline().has_value());
+    CHECK_FALSE(paused_player.is_playing());
+    CHECK_FALSE(stopped_player.is_playing());
+}
+
+TEST_CASE("PlayerState times Playing from the report that started it", "[playback][player_state]") {
+    const auto start = kNow + 100s;
+    const auto resumed = start + 60s;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Paused), start);
+    // Resumed long after pausing: playing from the report on, before the first position.
+    state.apply_report(playing(), resumed);
+
+    CHECK(state.is_playing());
+    CHECK(state.deadline() == resumed + PlayerState::kStale);
+}
+
+TEST_CASE(
+        "PlayerState expires a missed deadline before the next report", "[playback][player_state]"
+) {
+    using enum PlayState;
+    const auto start = kNow + 100s;
+    const auto late = start + 1min;
+    PlayerState loading;
+    PlayerState playing_player;
+    loading.apply_report(track(kFirst, ReportedPlayState::Paused), start);
+    loading.apply_report(track(kSecond, ReportedPlayState::Stopped), start);
+    playing_player.apply_report(track(kFirst, ReportedPlayState::Playing), start);
+    // No advance() call in between: the reports apply to the expired (Unknown) state.
+    const Changes reloaded = loading.apply_report(track(kSecond, ReportedPlayState::Stopped), late);
+    const Changes replayed = playing_player.apply_report(playing(), late);
+
+    CHECK(reloaded == Changes{.activity = true});
+    CHECK(loading.activity() == Stopped);
+    CHECK(replayed == Changes{});
+    CHECK(playing_player.deadline() == late + PlayerState::kStale);
 }
 
 }  // namespace

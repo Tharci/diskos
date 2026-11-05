@@ -80,8 +80,9 @@ extern "C" diskos_player_update diskos_player_apply(
         return kIgnored;
     }
     const bool usable = slot == DISKOS_PLAYER_RECEIVER || fits(*report);
-    const diskos::playback::Changes changes =
-            player_state(slot).apply_report(usable ? *report : without_path(*report));
+    const diskos::playback::Changes changes = player_state(slot).apply_report(
+            usable ? *report : without_path(*report), diskos::playback::PlayerState::Clock::now()
+    );
     return {
             .accepted = usable ? 1 : 0,
             .track = changes.track ? 1 : 0,
@@ -118,6 +119,15 @@ extern "C" int diskos_player_get_track(diskos_player_slot slot, diskos_player_tr
             .queue_count = queue.count,
     };
     return 1;
+}
+
+extern "C" int diskos_player_advance(diskos_player_slot slot) {
+    const auto now = diskos::playback::PlayerState::Clock::now();
+    return diskos::legacy::player_state(slot).advance(now).activity ? 1 : 0;
+}
+
+extern "C" int diskos_player_is_playing(diskos_player_slot slot) {
+    return diskos::legacy::player_state(slot).is_playing() ? 1 : 0;
 }
 
 extern "C" int64_t diskos_player_position(diskos_player_slot slot) {

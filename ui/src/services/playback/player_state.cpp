@@ -52,8 +52,42 @@ std::optional<Track> track_of(const player::TrackReport& report) {
 
 }  // namespace
 
-Changes PlayerState::apply_report(const player::Report& report) {
+Changes PlayerState::apply_report(const player::Report& report, Clock::time_point now) {
+    const PlayState before = play_state_;
+    advance(now);
+    Changes changes = update(report);
+    if (changes.track || changes.activity || changes.position) {
+        progress_ = now;
+    }
+    changes.activity = play_state_ != before;
+    return changes;
+}
+
+Changes PlayerState::update(const player::Report& report) {
     return std::visit([this](const auto& typed) { return update(typed); }, report);
+}
+
+Changes PlayerState::advance(Clock::time_point now) {
+    const std::optional<Clock::time_point> expiry = deadline();
+    if (!expiry || now < *expiry) {
+        return {};
+    }
+    play_state_ = PlayState::Unknown;
+    return {.activity = true};
+}
+
+std::optional<PlayerState::Clock::time_point> PlayerState::deadline() const noexcept {
+    switch (play_state_) {
+        case PlayState::Playing:
+            return progress_ + kStale;
+        case PlayState::Loading:
+            return progress_ + kLoadTimeout;
+        case PlayState::Unknown:
+        case PlayState::Stopped:
+        case PlayState::Paused:
+            return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 Changes PlayerState::update(const player::TrackReport& report) {
@@ -63,44 +97,44 @@ Changes PlayerState::update(const player::TrackReport& report) {
     // 2026-11-01: {"state":0} follows about a second later). Only a change seen from a known
     // state is a load; the first report after startup is taken as it is.
     const bool loading = track && report.state == ReportedPlayState::Stopped
-                         && activity_ != PlayState::Unknown
-                         && (is_new || activity_ == PlayState::Loading);
+                         && play_state_ != PlayState::Unknown
+                         && (is_new || play_state_ == PlayState::Loading);
     const PlayState activity = loading ? PlayState::Loading : activity_of(report.state);
     const Changes changes{
             .track = is_new,
             .details = !is_new && track_ != track,
-            .activity = activity != activity_,
+            .activity = activity != play_state_,
             .position = is_new && position_ms_.has_value(),
     };
     if (is_new) {
         position_ms_.reset();
     }
     track_ = std::move(track);
-    activity_ = activity;
+    play_state_ = activity;
     return changes;
 }
 
 Changes PlayerState::update(const player::PlayStateReport& report) {
     // While a track loads, the player can report Paused for the one it is leaving (capture of
     // 2026-11-01, playing an artist); only Playing or Stopped settle the new one.
-    if (activity_ == PlayState::Loading && report.state == ReportedPlayState::Paused) {
+    if (play_state_ == PlayState::Loading && report.state == ReportedPlayState::Paused) {
         return {};
     }
     const PlayState activity = activity_of(report.state);
-    const Changes changes{.activity = activity != activity_};
-    activity_ = activity;
+    const Changes changes{.activity = activity != play_state_};
+    play_state_ = activity;
     return changes;
 }
 
 Changes PlayerState::update(const player::PositionReport& report) {
     // Positions only come while playing, so one says so when nothing else has: after a UI restart
     // the player can ignore 02020008 until playback changes.
-    const PlayState activity = activity_ == PlayState::Unknown ? PlayState::Playing : activity_;
+    const PlayState activity = play_state_ == PlayState::Unknown ? PlayState::Playing : play_state_;
     const Changes changes{
-            .activity = activity != activity_,
+            .activity = activity != play_state_,
             .position = position_ms_ != report.position_ms,
     };
-    activity_ = activity;
+    play_state_ = activity;
     position_ms_ = report.position_ms;
     return changes;
 }

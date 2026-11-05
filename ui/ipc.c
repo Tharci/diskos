@@ -426,16 +426,17 @@ static void parse_frame(const char*buf,int n){
         if(report.kind != DISKOS_REPORT_POSITION || report.value > INT32_MAX) return;
         /* Every report counts, also an unchanged one: pos_seq means "a position was reported" (play-start,
          * route-resume and BT-prepare checks wait for one; lyrics re-anchor on it). */
-        if(!diskos_player_apply(DISKOS_PLAYER_LOCAL, buf, (size_t)n).accepted) return;
         pthread_mutex_lock(&g_mu);
-        g_state.position_ms=(long)diskos_player_position(DISKOS_PLAYER_LOCAL); g_state.seq++; g_state.pos_seq=g_state.seq;
+        if(diskos_player_apply(DISKOS_PLAYER_LOCAL, buf, (size_t)n).accepted){
+            g_state.position_ms=(long)diskos_player_position(DISKOS_PLAYER_LOCAL); g_state.seq++; g_state.pos_seq=g_state.seq;
+        }
         pthread_mutex_unlock(&g_mu);
     } else if(is_a202(report.kind)){ /* the play state, or the current track */
         pthread_mutex_lock(&g_recov_mu);
         unsigned generation=g_generation; int pending=g_rx_reopen;
         pthread_mutex_unlock(&g_recov_mu);
-        const diskos_player_update update=diskos_player_apply(DISKOS_PLAYER_LOCAL, buf, (size_t)n);
         pthread_mutex_lock(&g_mu);
+        const diskos_player_update update=diskos_player_apply(DISKOS_PLAYER_LOCAL, buf, (size_t)n);
         char oldpath[sizeof g_state.path]; snprintf(oldpath, sizeof oldpath, "%s", g_state.path);
         if(update.reported_state>=0) g_state.state=update.reported_state;
         if(update.track || update.details) publish_track_locked(update.track);
@@ -538,8 +539,8 @@ static int rx_do_reopen(void){
     charge_new_generation();
     unsigned generation=g_generation;
     pthread_mutex_unlock(&g_recov_mu);
-    diskos_player_reset(DISKOS_PLAYER_LOCAL);
     pthread_mutex_lock(&g_mu);
+    diskos_player_reset(DISKOS_PLAYER_LOCAL);
     int had_path=g_state.path[0]!=0;
     clear_track(); g_state.playback_token++; g_state.player_generation=generation; g_state.seq++;
     if(had_path) g_state.path_seq=g_state.seq;
@@ -771,6 +772,13 @@ unsigned ipc_resume_playing_report(void){
 }
 void ipc_get_state(track_state_t*out){
     pthread_mutex_lock(&g_mu); *out=g_state; pthread_mutex_unlock(&g_mu);
+}
+int ipc_local_playing(void){
+    pthread_mutex_lock(&g_mu);
+    diskos_player_advance(DISKOS_PLAYER_LOCAL);   /* the main loop's tick is the clock */
+    int playing=diskos_player_is_playing(DISKOS_PLAYER_LOCAL);
+    pthread_mutex_unlock(&g_mu);
+    return playing;
 }
 void ipc_get_title_event(ipc_title_event *out){
     pthread_mutex_lock(&g_mu);

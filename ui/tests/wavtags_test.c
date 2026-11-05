@@ -4,7 +4,7 @@
  * compiled into this test so its static readers are reachable; everything they don't use is dropped at link time
  * (tests/Makefile), so no SQLite or UI is linked. Every WAV is built here byte by byte. Built under ASan/UBSan. */
 /* TODO: move the tag readers (text decoding, the format readers, tags_with_provenance) out of scanner.c into a
- * tags module, so this test links it like config_test and playstate_test instead of including a .c file. */
+ * tags module, so this test links it like config_test instead of including a .c file. */
 #include "../scanner.c"
 
 /* ---- checks: a failure names the field and prints what came back ---- */

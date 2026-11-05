@@ -56,7 +56,6 @@ set(legacy_sources
     sdio.c
     fontft.c
     font_cjk_extra_16.c
-    playstate.c
     playback.c
     fb_pan.c
     ipc.c
