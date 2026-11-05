@@ -19,11 +19,14 @@ Checks: >
   -misc-include-cleaner,
   -modernize-use-trailing-return-type,
   -readability-identifier-length,
-  -readability-magic-numbers
+  -readability-magic-numbers,
+  -readability-redundant-member-init
 # Why the exclusions: swappable parameters and magic numbers flag ordinary protocol code (two
 # lengths side by side, a documented tag value) far more often than real bugs. unix.API misreads
 # musl's O_CREAT and flags every open(). include-cleaner trips over libstdc++'s internal headers on
 # the musl target. Trailing return types and identifier length are taste, decided the other way.
+# redundant-member-init removes the `{}` that GCC's -Wmissing-field-initializers needs on a member
+# a designated initializer may leave out (PlayListCommand's name).
 CheckOptions:
   # Size limits: a function does one thing.
   readability-function-size.LineThreshold: 60

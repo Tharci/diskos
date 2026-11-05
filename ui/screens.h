@@ -282,7 +282,7 @@ void ui_set_cast_played(int on);   /* 15c: main.c: the receiver really plays the
 int ui_view_is_book(const char *path);   /* 15b: a book path is a book only while the LOCAL player owns playback (a Cast track never gets the book UI) */
 int ui_is_playing(void);         /* authoritative normalized play state (for the drawer transport glyph) */
 int  ui_transport_command(const char *cmd); /* shared play/pause and music/book skip behavior */
-void ui_pp_tap_hint(void);       /* call on a play/pause tap: show the predicted state instantly (no ~1s lag) */
+void ui_pp_tap_hint(void);       /* call on a play/pause tap: remote playback shows the predicted state instantly */
 void ui_pp_glyph(lv_obj_t *label, int playing);   /* set a play/pause glyph (play optically centred) */
 int  ui_glyph_ink_dy(const lv_font_t *f, uint32_t cp);   /* offset that centres a glyph's ink in its line */
 void ui_glyph_center_ink(lv_obj_t *label);                /* a one-icon label centred by its ink */

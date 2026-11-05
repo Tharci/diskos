@@ -12,9 +12,6 @@ DEFS := -DCFG_PATH='"$(TDIR)/diskos.conf"' -DCFG_DIR='"$(TDIR)"' \
 config_test: ../config.c config_test.c ../config.h
 	$(CC) $(CFLAGS) $(DEFS) -I.. ../config.c config_test.c -o $@
 
-playstate_test: ../playstate.c playstate_test.c ../playstate.h
-	$(CC) $(CFLAGS) -I.. ../playstate.c playstate_test.c -o $@
-
 # The bundled SQLite amalgamation, with the device build's behaviour flags (ui/Makefile SQLITE_FLAGS). Built once and
 # without sanitizers: it is third-party and very slow to instrument. Host object name, so it never meets the device's
 # ../sqlite3.o.
@@ -40,10 +37,8 @@ btstore_test: ../btstore.c ../btstore.h btstore_test.c
 	$(CC) $(CFLAGS) -I.. ../btstore.c btstore_test.c -o $@
 
 .PHONY: run clean
-run: config_test playstate_test folderscope_test wavtags_test volkeys_hold_test btstore_test
+run: config_test folderscope_test wavtags_test volkeys_hold_test btstore_test
 	./config_test
-	@echo "--- playstate ---"
-	./playstate_test
 	@echo "--- folderscope ---"
 	./folderscope_test
 	@echo "--- wavtags ---"
@@ -54,4 +49,4 @@ run: config_test playstate_test folderscope_test wavtags_test volkeys_hold_test 
 	./btstore_test
 
 clean:
-	rm -f config_test playstate_test folderscope_test wavtags_test volkeys_hold_test btstore_test sqlite3_host.o
+	rm -f config_test folderscope_test wavtags_test volkeys_hold_test btstore_test sqlite3_host.o

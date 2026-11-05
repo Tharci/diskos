@@ -33,13 +33,12 @@ typedef struct {
     char artist[160];
     char album[160];
     char playing_num[24];
-    char work_mode[24];
     char path[256];
     long duration_ms;
     long position_ms;
-    int  state;       /* RAW A2 metadata when returned by ipc_get_state() - UNRELIABLE (reports 0 while
-                       * playing); never test it for play-state. The main loop overwrites ITS LOCAL copy
-                       * with the normalized 2=playing / 1=paused inference (and publishes g_playing). */
+    int  state;       /* RAW a202 state when returned by ipc_get_state(): 0 playing, 1 paused, 2 stopped (a new
+                       * track's report reads 2 until it starts). The main loop overwrites ITS LOCAL copy
+                       * with 2=playing / 1=paused from ipc_local_playing() (and publishes g_playing). */
     int  have_track;
     int  pos_id;      /* the current row of the player queue (LIST_SONG_0.ID, from a2 song.pos_id); 0 = unknown */
     int  sample_rate; /* Hz, from song_sample_rate */
@@ -81,6 +80,7 @@ static inline const char *ipc_display_title(const track_state_t *st){
 
 int  ipc_start(void);                  /* open queues + start thread; 0=ok */
 void ipc_get_state(track_state_t *out);
+int  ipc_local_playing(void);          /* 1 while the player plays or loads a track (PlayerState::is_playing); call each tick */
 /* Read-only complete A2 plus last accepted user toggle epoch and its A2 boundary.
  * Raw reply state 0=playing, 1=paused. Short replies carry have_track=0. */
 int ipc_resume_snapshot(track_state_t *out, unsigned *serial, unsigned *toggle, unsigned *after_report);

@@ -46,7 +46,6 @@
 #include "config.h"
 #include "lastfm.h"
 #include "scanner.h"
-#include "playstate.h"
 #include "playback.h"
 #include "cast_bridge.h"
 #include "cast_handoff.h"
@@ -828,8 +827,7 @@ static int route_bt(const char *mac, int automatic){
     if(!loss_accepted && !strcmp(norm, g_route_mac)) return 0;   /* already routed to this device */
     track_state_t st; ipc_get_state(&st);
     if(automatic && g_playing && (!st.player_confirmed || st.provisional || st.player_generation != gen)) return -1;
-    int was_playing = !loss_accepted && g_playing;   /* real play state; raw st.state is unreliable (reports 0 while playing) so
-                                    * the old `st.state==1` was false during playback -> pause was SKIPPED */
+    int was_playing = !loss_accepted && g_playing;
     if(was_playing && route_send("0201000C0000", automatic, gen) != 0) return -1;   /* pause; abort route if it can't be sent (don't switch output unpaused) */
     if(route_send("0666000C0006", automatic, gen) != 0) return -1;     /* stock pre-stop: normalize local output state */
     if(route_send("0642000C0000", automatic, gen) != 0 && (automatic || loss_accepted)) return -1;                       /* reset network/output mode */
@@ -875,8 +873,8 @@ static int route_analog(int force){
     track_state_t st; ipc_get_state(&st);
     if(automatic && !lost && g_playing && (!st.player_confirmed || st.provisional || st.player_generation != gen)) return -1;
     /* 0666 closes and joins LOCALPLAYER; its mode-1 re-init writes state 3
-     * (V2.57 0x458108..0x458198). Never toggle from inferred g_playing on loss,
-     * even if position still advances into the dead sink. Keep the seek snapshot
+     * (V2.57 0x458108..0x458198). Never toggle from g_playing on loss: the player
+     * keeps playing into the dead sink. Keep the seek snapshot
      * across partial sends: teardown may remove the next report's track. */
     if(lost){
         if(!g_route_loss.pending || g_route_loss.gen != gen || strcmp(g_route_loss.mac, g_route_mac)){
@@ -1872,7 +1870,7 @@ static void localplayer_workmode_cb(lv_timer_t *t){
     if(g_route_mac[0]){ done_gen = gen; if(!fw_needs_localplayer_init()) lv_timer_del(t); return; }
     if(!fw_needs_localplayer_init()){ lv_timer_del(t); return; }
     if(startup > 0){ done_gen = gen; return; }
-    if(g_play_sent_gen == gen){                                /* a play was started this generation (the play path sends its own preamble while stopped): g_playing is only inferred, so never risk 0666 mid-stream */
+    if(g_play_sent_gen == gen){                                /* a play was started this generation (the play path sends its own preamble while stopped): g_playing follows only once the player reports the track, so never risk 0666 mid-stream */
         done_gen = gen;
         fprintf(stderr,"v2.40 workmode: local-init skipped, play already sent (gen %u)\n", gen); fflush(stderr);
         return;
@@ -1975,12 +1973,11 @@ static void scanner_poll(lv_timer_t *t){
     } else library_poll_changes();
 }
 static unsigned g_play_last_gen = 0xFFFFFFFFu; static uint32_t g_play_last_tick = 0;   /* generation + tick of the last play command we sent */
-/* Is a previous play still starting? g_playing lags the stream by seconds and 0666 under it releases the local output. */
+/* Is a previous play still starting? g_playing follows only once the player reports the track (up to ~2 s), and 0666 under it releases the local output. */
 static int play_recent(void){ return g_play_pending || (g_play_last_gen == ipc_generation() && lv_tick_elaps(g_play_last_tick) < 10000); }
 static void play_note_sent(void){ g_play_last_gen = ipc_generation(); g_play_last_tick = lv_tick_get(); }
-/* Authoritative play state (the main loop normalizes the unreliable raw st.state into g_playing:
- * 1=playing while position advances, else 0). Exposed so lastfm/route logic share ONE source of
- * truth instead of re-deriving play/pause from position deltas. */
+/* Authoritative play state: what the player reports (ipc_local_playing), taken into g_playing by
+ * the main loop. Exposed so lastfm/route logic share ONE source of truth. */
 int ui_is_playing(void){ return g_playing; }
 /* Slice 15a: the play state the Now Playing / Home / saver surfaces draw: the facade's while casting, else exactly g_playing. */
 int ui_view_playing(void){ const pb_snapshot *f = playback_effective(); return f->source != PB_SRC_LOCAL ? f->v.playing != 0 : g_playing; }
@@ -1996,16 +1993,16 @@ const char *ui_output_blocked(void){
     return NULL;
 }
 
-/* Optimistic play/pause icon hint. Play state is INFERRED from position advance with a grace period,
- * so the transport glyph lags ~1s when PAUSING (the position stops but the inference waits before it
- * flips to paused); resuming is instant because the position advances immediately. On a play/pause tap
- * we predict the new state and show it at once; the real inference reconciles a beat later. Main-thread
+/* Optimistic play/pause icon hint for remote playback (Cast, AirPlay sending), whose state arrives late:
+ * on a play/pause tap we predict the new state and show it at once; the real state reconciles a beat
+ * later. Local playback needs none: the player reports a toggle within a main loop tick. Main-thread
  * only (taps + the glyph refresh both run on the LVGL loop), so no locking. */
 static int      g_pp_hint = -1;          /* -1 none; 0 predict paused; 1 predict playing */
 static uint32_t g_pp_hint_until = 0;
 void ui_pp_tap_hint(void){               /* a toggle tap -> predict the opposite of the current state */
-    g_pp_hint = ui_pp_icon_playing(g_playing) ? 0 : 1;
-    g_pp_hint_until = lv_tick_get() + 2200; /* exceeds the 1600ms position-inference grace */
+    if(playback_source() == PB_SRC_LOCAL) return;
+    g_pp_hint = ui_pp_icon_playing(ui_view_playing()) ? 0 : 1;
+    g_pp_hint_until = lv_tick_get() + 2200;
 }
 int ui_pp_icon_playing(int real_playing){
     if(g_pp_hint >= 0){
@@ -2067,7 +2064,7 @@ static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_
      * v2.40 only (V2.09/V2.28 don't drift, and 0666's close_player could disturb their working path);
      * Local source + analog output only (never a BT A2DP route); and only while STOPPED (an active
      * track-jump already has the route+mode correct, and 0666 would gap the audio). */
-    /* Not while a previous play is still starting (g_playing lags the stream by seconds): 0666 releases the local
+    /* Not while a previous play is still starting (g_playing follows only once the player reports the track): 0666 releases the local
      * output under it (seen live). Only the idle / long-gap case needs the preamble. */
     int recent_play = play_recent();
     if(fw_needs_localplayer_init() && ui_get_source_mode() == 0 && !g_route_mac[0] && !g_playing && !recent_play){
@@ -4713,7 +4710,7 @@ int main(int argc, char **argv){
     int cover_tap=0;   /* press landed on the NP cover -> LVGL's cover click opens full-screen art (not a seek) */
     int fsart_touch=0; /* press began while full-screen art was up -> LVGL's overlay click closes it; we only swallow */
     int sleep_touch=0; /* press began while the sleep popover was up -> swallow the whole gesture (no ring seek) */
-    playstate_t g_ps = { -1, 0 }; int last_playing=-1;   /* play/pause inference (playstate.c, host-tested) */
+    int last_playing=-1;
     char np_last_path[256] = "";   /* last track whose art/backdrop was pushed - so a mere position tick doesn't re-invalidate the 360px backdrop */
     char np_last_title[sizeof st.title] = "", np_last_artist[sizeof st.artist] = "";
     /* screensaver + screen-off timeouts come from the Settings cyclers (index ->
@@ -4809,13 +4806,9 @@ int main(int argc, char **argv){
                 ui_show_volume(key_shown ? key_vol : st.volume);
             }
         }
-        /* the metadata 'state' field is unreliable (reports 0 while playing); infer play/pause from
-         * whether position is advancing. One source of truth in playstate.c (host-tested); matches the
-         * original heuristic except a backward/rewind jump no longer counts as advancing. max_adv_ms=0
-         * keeps "any forward change counts"; the paused-forward-seek bound is device-tunable. */
-        int playing = playstate_playing(&g_ps, st.have_track, st.position_ms, lv_tick_get(), 1600, 0);
+        int playing = ipc_local_playing();   /* what the player reports; a loading track counts as playing */
         if(playing) ui_note_transport_sent();   /* playback observed this generation (any start, incl. hardware keys): its one-shot is moot */
-        g_playing = playing;   /* publish for ui_route_bt/ui_route_analog (raw st.state is unreliable) */
+        g_playing = playing;   /* publish for ui_route_bt/ui_route_analog */
         st.state = playing ? 2 : 1;
         playback_update(&st, ipc_display_title(&st), playing);   /* effective view (slice 15 moves the consumers onto it) */
         if(!sender_dispatch(&st, playing) && !AP_PROOF_OWNED(&st, playing)) ho_tick(&st, playing);   /* Cast handoff: one early return while nothing is casting; the AirPlay proof build may own the loop instead */

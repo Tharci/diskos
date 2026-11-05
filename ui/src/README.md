@@ -4,15 +4,17 @@ The UI is being rewritten from the C in `ui/` into C++23 here, one module at a t
 
 ## Layout
 
-One folder per area. A folder is created with its first module.
+One folder per area. A folder is created with its first module. Every module may use `utils/`.
 
 | Folder      | Holds                                                       | May use                 |
 |-------------|-------------------------------------------------------------|-------------------------|
-| `player/`   | The stock player's protocol: frames, messages, its state    | no other module         |
+| `utils/`    | Small general helpers with no diskOS knowledge (number parsing) | no other module     |
+| `player/`   | The stock player's protocol: frames, messages, its state    | `utils/`                |
 | `services/` | Playback, library, books, Bluetooth, Wi-Fi: logic and state | `player/`               |
 | `platform/` | The device: message queues, files, input, display, processes | `player/`, `services/` (implements their interfaces) |
 | `ui/`       | Screens and widgets (LVGL)                                  | `player/`, `services/`  |
 | `app/`      | Startup and the main loop: connects the parts               | all of the above        |
+| `legacy/`   | C interfaces (`.h`, `extern "C"`) through which the legacy C uses the modules; shrinks to nothing as the rewrite ends | all of the above |
 
 `player/` and `services/` contain no LVGL and no system calls. They take what they need through small
 interfaces, which `platform/` implements on the device and the tests implement with hand-written fakes.
@@ -36,16 +38,64 @@ bug patterns) and the warnings in `cmake/cxx.cmake`. What they cannot check:
   member functions.
 - **Small and single-purpose.** Functions stay short and files hold one idea. Split by responsibility,
   not by line count.
-- **Public functions get a comment** saying what they do and what they return on failure, in the
-  header. Implementation comments say why, not what, and only when extra context is required.
-  Compact comments are preferred.
 - **Every module has tests** for its behaviour, through its public interface. No need to test every
   small piece of logic and helper method.
+- **Tests read like a table.** Build the values under test first, each with a name, then check
+  them: one `CHECK` compares two short operands and fits on one line.
 - **Player quirks carry over.** The legacy C records many reverse-engineered player behaviours in
   its comments. When a module replaces legacy code, keep that knowledge, with its evidence.
 - **No `std::format` or `std::print` in device code.** They add about 830 KB to the binary.
 - **Silencing clang-tidy** takes `// NOLINT(check-name): reason`. A bare `NOLINT` fails the
   pre-commit hook.
+
+### Classes and names
+
+- **Public first.** A class lists its public interface first and its private members last. When
+  the public part grows, group it under short `//` labels such as `// Properties` and
+  `// Configuration`.
+- **Accessors.** A getter is named after what it returns (`current()`, `loop()`), a setter starts
+  with `set_`. Accessors that cannot fail are `const noexcept`.
+- **Data members** get a default initialiser, and a short trailing comment when the name alone does
+  not say what they hold (`std::vector<MusicItem> queue_;  // The original queue, unsorted`).
+- **Results that must be checked** are `[[nodiscard]]`. When `true` or `false` would not say what
+  happened at the call site, return an `enum class` instead of a `bool`.
+- **Long types** get a name with a `using` alias (`using OptionalMusicItemRef = ...`).
+- **Check a value once, where it enters.** A value with a real limit that travels between modules gets a small class whose only way in is a `from()`: `std::optional` when there is one way to fail (`VolumeLevel`, `ListName`), std::expected when the caller needs the reason. Code that takes one never repeats the check.
+- **Families of message types** (commands, reports) are structs that each carry their own tag and
+  encode or decode themselves, held in a `std::variant`. A concept states what every member
+  provides (`IsCommand`, `IsReport`). Shared behaviour without virtual functions goes in a base
+  struct using C++23's explicit object parameter (`CommandBase::frame(this const auto& self)`).
+- **Enums** are `enum class` with an explicit underlying type
+  (`enum class PlaybackMode : std::uint8_t`).
+- **Full words in names.** The accepted abbreviations are `prev`, `idx` and unit suffixes such as
+  `_ms`.
+- **Includes**: the standard library first, then a blank line and the project headers, each included
+  from `src/` (`"services/media/media_item.hpp"`), also from within the same folder.
+
+### Comments
+
+Public types and functions are documented in the header with a `/** ... */` comment. It starts
+with an imperative summary, then states exactly what happens at the edges, as a list when there
+are several outcomes. What a function returns on failure is always part of it. A class comment
+also states who owns what the class hands out and how long references or views stay valid.
+
+```cpp
+/**
+ * Step to the next song in the queue.
+ * After the last song in the queue:
+ *  - Returns nullopt, if loop is false or the queue is empty.
+ *  - Steps to the first one otherwise.
+ */
+[[nodiscard]] OptionalMusicItemRef next();
+
+/** Get the current song, or nullopt if the queue is empty. */
+[[nodiscard]] OptionalMusicItemRef current() const;
+```
+
+Everything else uses `//`: section labels, trailing notes on members and enum values, TODOs
+(`// TODO: ...`, continuation lines indented by one extra space) and implementation comments.
+Implementation comments say why, not what, and only when extra context is required. Compact
+comments are preferred.
 
 ## Building and testing
 
