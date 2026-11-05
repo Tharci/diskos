@@ -2,4 +2,4 @@
 # Copyright (C) 2026 diskOS contributors
 
 diskos_module(utils SOURCES numbers.cpp)
-diskos_test(utils SOURCES numbers_test.cpp DEPENDS diskos::utils)
+diskos_test(utils SOURCES numbers_test.cpp synchronized_test.cpp DEPENDS diskos::utils)

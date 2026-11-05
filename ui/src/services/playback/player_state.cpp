@@ -63,6 +63,16 @@ Changes PlayerState::apply_report(const player::Report& report, Clock::time_poin
     return changes;
 }
 
+Changes PlayerState::request_play(Clock::time_point now) {
+    Changes changes = advance(now);
+    if (is_resumable()) {
+        play_state_ = PlayState::Loading;
+        progress_ = now;
+        changes.activity = true;
+    }
+    return changes;
+}
+
 Changes PlayerState::update(const player::Report& report) {
     return std::visit([this](const auto& typed) { return update(typed); }, report);
 }

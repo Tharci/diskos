@@ -332,5 +332,55 @@ TEST_CASE(
     CHECK(playing_player.deadline() == late + PlayerState::kStale);
 }
 
+TEST_CASE("PlayerState loads a resumed track until it plays", "[playback][player_state]") {
+    using enum PlayState;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Paused), kNow);
+    // Resuming over Bluetooth: the same track reads Stopped until the stream starts.
+    const Changes requested = state.request_play(kNow);
+    const auto resumed =
+            activities(state, track(kFirst, ReportedPlayState::Stopped), playing(), position(0));
+
+    CHECK(requested == Changes{.activity = true});
+    CHECK(resumed == std::vector{Loading, Playing, Playing});
+}
+
+TEST_CASE("PlayerState expects a resume only from Paused or Stopped", "[playback][player_state]") {
+    using enum PlayState;
+    PlayerState unknown;
+    PlayerState playing_player;
+    PlayerState stopped_player;
+    PlayerState no_track;
+    playing_player.apply_report(track(kFirst, ReportedPlayState::Playing), kNow);
+    stopped_player.apply_report(track(kFirst, ReportedPlayState::Stopped), kNow);
+    no_track.apply_report(paused(), kNow);
+    // A toggle while Unknown may pause; with no track there is nothing to play.
+    const Changes from_unknown = unknown.request_play(kNow);
+    const Changes from_playing = playing_player.request_play(kNow);
+    const Changes from_stopped = stopped_player.request_play(kNow);
+    const Changes without_track = no_track.request_play(kNow);
+
+    CHECK(from_unknown == Changes{});
+    CHECK(from_playing == Changes{});
+    CHECK(from_stopped == Changes{.activity = true});
+    CHECK(without_track == Changes{});
+    CHECK(unknown.activity() == Unknown);
+    CHECK(playing_player.activity() == Playing);
+    CHECK(stopped_player.activity() == Loading);
+    CHECK(no_track.activity() == Paused);
+}
+
+TEST_CASE("PlayerState expires a resume that never comes", "[playback][player_state]") {
+    using enum PlayState;
+    const auto start = kNow + 100s;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Paused), start);
+    state.request_play(start + 1s);
+    const Changes expired = state.advance(start + 1s + PlayerState::kLoadTimeout);
+
+    CHECK(expired == Changes{.activity = true});
+    CHECK(state.activity() == Unknown);
+}
+
 }  // namespace
 }  // namespace diskos::playback

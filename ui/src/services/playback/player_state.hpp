@@ -15,7 +15,7 @@ namespace diskos::playback {
 enum class PlayState : std::uint8_t {
     Unknown,  // Nothing reported since startup or a player restart, or the reports stopped coming
     Stopped,  // Also a track that could not be opened
-    Loading,  // A new track was reported; it has not started yet
+    Loading,  // A new track was reported, or play was requested; it has not started yet
     Playing,
     Paused,
 };
@@ -63,6 +63,16 @@ public:
     Changes apply_report(const player::Report& report, Clock::time_point now);
 
     /**
+     * Note that a command to play the current track was sent, and report what changed. It first
+     * advances to `now`.
+     *  - If is_resumable(), the activity becomes Loading until the player reports Playing. The
+     *    player confirms a resume over Bluetooth only after ~1.5 s (~3 s on a silent player),
+     *    reporting the track as Stopped in between; on the speaker within ~10 ms.
+     *  - Otherwise nothing changes: the player is already playing or loading.
+     */
+    Changes request_play(Clock::time_point now);
+
+    /**
      * Advance to `now` and report what changed. An activity whose reports stopped coming (a lost
      * frame, or local frames held back while AirPlay owns the player) expires at deadline():
      * Playing or Loading becomes Unknown. Call it at the deadline, or regularly.
@@ -92,6 +102,12 @@ public:
     /** Check whether the player is playing a track, or loading one to play. */
     [[nodiscard]] bool is_playing() const noexcept {
         return play_state_ == PlayState::Playing || play_state_ == PlayState::Loading;
+    }
+
+    /** Check whether there is a track that is Paused or Stopped, which a toggle would play. */
+    [[nodiscard]] bool is_resumable() const noexcept {
+        return track_.has_value()
+               && (play_state_ == PlayState::Paused || play_state_ == PlayState::Stopped);
     }
 
     /** Get the last reported position, or nullopt if none was reported since the track changed. */
