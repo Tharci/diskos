@@ -91,26 +91,26 @@ std::optional<PlayerState::Clock::time_point> PlayerState::deadline() const noex
 }
 
 Changes PlayerState::update(const player::TrackReport& report) {
-    std::optional<Track> track = track_of(report);
-    const bool is_new = !same_track(track_, track);
+    std::optional<Track> reported = track_of(report);
+    const bool is_new = !same_track(track_, reported);
     // A track report's state lags: a track that is about to play still reads Stopped (capture of
     // 2026-11-01: {"state":0} follows about a second later). Only a change seen from a known
     // state is a load; the first report after startup is taken as it is.
-    const bool loading = track && report.state == ReportedPlayState::Stopped
+    const bool loading = reported && report.state == ReportedPlayState::Stopped
                          && play_state_ != PlayState::Unknown
                          && (is_new || play_state_ == PlayState::Loading);
-    const PlayState activity = loading ? PlayState::Loading : activity_of(report.state);
+    const PlayState next_state = loading ? PlayState::Loading : activity_of(report.state);
     const Changes changes{
             .track = is_new,
-            .details = !is_new && track_ != track,
-            .activity = activity != play_state_,
+            .details = !is_new && track_ != reported,
+            .activity = next_state != play_state_,
             .position = is_new && position_ms_.has_value(),
     };
     if (is_new) {
         position_ms_.reset();
     }
-    track_ = std::move(track);
-    play_state_ = activity;
+    track_ = std::move(reported);
+    play_state_ = next_state;
     return changes;
 }
 
@@ -120,21 +120,22 @@ Changes PlayerState::update(const player::PlayStateReport& report) {
     if (play_state_ == PlayState::Loading && report.state == ReportedPlayState::Paused) {
         return {};
     }
-    const PlayState activity = activity_of(report.state);
-    const Changes changes{.activity = activity != play_state_};
-    play_state_ = activity;
+    const PlayState next_state = activity_of(report.state);
+    const Changes changes{.activity = next_state != play_state_};
+    play_state_ = next_state;
     return changes;
 }
 
 Changes PlayerState::update(const player::PositionReport& report) {
     // Positions only come while playing, so one says so when nothing else has: after a UI restart
     // the player can ignore 02020008 until playback changes.
-    const PlayState activity = play_state_ == PlayState::Unknown ? PlayState::Playing : play_state_;
+    const PlayState next_state =
+            play_state_ == PlayState::Unknown ? PlayState::Playing : play_state_;
     const Changes changes{
-            .activity = activity != play_state_,
+            .activity = next_state != play_state_,
             .position = position_ms_ != report.position_ms,
     };
-    play_state_ = activity;
+    play_state_ = next_state;
     position_ms_ = report.position_ms;
     return changes;
 }
