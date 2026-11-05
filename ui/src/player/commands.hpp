@@ -149,6 +149,9 @@ struct SetFavouriteCommand : CommandBase {
 };
 
 /** 0100: build a queue and start playing it at `position`. */
+// type and position have no default, so GCC's -Wmissing-field-initializers catches a designated
+// initializer that leaves one out.
+// NOLINTNEXTLINE(cppcoreguidelines-pro-type-member-init): see above
 struct PlayListCommand : CommandBase {
     static constexpr std::string_view kTag = "0100";
     ListType type;

@@ -13,6 +13,7 @@
 #include "receiver_progress.h"
 #include "wifi.h"
 #include "playback.h"
+#include "legacy/player_controller.h"
 #include "musicdb.h"   /* persistent per-song accent cache */
 #include "bookmeta.h"
 #include "books.h"
@@ -589,7 +590,8 @@ static int transport_local(const char *cmd)
         }
     }
     ui_note_transport_sent();
-    if(ipc_send_cmd(cmd) < 0){ ui_toast("Player busy - try again"); return -1; }
+    int sent = is_toggle ? diskos_playback_toggle() : is_next ? diskos_playback_next() : diskos_playback_previous();
+    if(sent < 0){ ui_toast("Player busy - try again"); return -1; }
     if(is_toggle){
         ui_pp_tap_hint();
         ui_pp_glyph(btn_pp, ui_pp_icon_playing(ui_is_playing()));

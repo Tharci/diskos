@@ -17,8 +17,10 @@ extern "C" {
 /* The longest title or path that fits the legacy buffers (track_state_t), without their NUL. */
 #define DISKOS_PLAYER_TEXT_MAX 255
 
-/* Which PlayerState a call is about. Each is used under one lock that the caller holds for every
- * call about it (ipc.c: g_mu for LOCAL, g_recov_mu for RECEIVER). */
+/* Which PlayerState a call is about. Each has its own lock, so any thread may call these
+ * functions. The track's texts change only through diskos_player_apply() and reset: ipc.c calls
+ * those and diskos_player_get_track() under one lock of its own (g_mu for LOCAL, g_recov_mu for
+ * RECEIVER), which keeps the texts valid while it reads them. */
 typedef enum {
     DISKOS_PLAYER_LOCAL,
     DISKOS_PLAYER_RECEIVER,

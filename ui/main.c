@@ -47,6 +47,7 @@
 #include "lastfm.h"
 #include "scanner.h"
 #include "playback.h"
+#include "legacy/player_controller.h"
 #include "cast_bridge.h"
 #include "cast_handoff.h"
 #include "cast_ctlw.h"
@@ -417,9 +418,8 @@ int ui_seek_to(long ms){
      * before this boot's launch verdict qualified the player, and never while SD access is held. */
     if(!ui_local_playback_allowed()) return -1;
     if(ms < 0) ms = 0;
-    char f[32]; snprintf(f, sizeof f, "01030010%08lX", (unsigned long)ms);
-    int rc = ipc_send_cmd(f);   /* 0 = queued OK, -1 = send failed */
-    fprintf(stderr,"seek %ldms -> %s (rc=%d)\n", ms, f, rc); fflush(stderr);
+    int rc = diskos_playback_seek((uint32_t)ms);   /* 0 = queued OK, -1 = send failed */
+    fprintf(stderr,"seek %ldms (rc=%d)\n", ms, rc); fflush(stderr);
     return rc;
 }
 int ui_apply_eq(int preset){
@@ -1266,10 +1266,10 @@ int ui_set_source_mode(int mode){
         return 0;
     }
     int was_playing = g_playing;
-    if(was_playing && ipc_send_cmd("0201000C0000") < 0){ ui_toast("Player is busy - try again"); return -1; }
+    if(was_playing && diskos_playback_toggle() < 0){ ui_toast("Player is busy - try again"); return -1; }
     if(source_send(mode) < 0){ ui_toast("Couldn't switch mode"); return -1; }
     g_source_mode = mode;
-    if(mode == 0 && was_playing) ipc_send_cmd("0201000C0000");
+    if(mode == 0 && was_playing) (void)diskos_playback_toggle();
     return 0;
 }
 static void storage_resume_local(void){
@@ -1298,7 +1298,7 @@ static void storage_tick(lv_timer_t *t){
         if(sd_io_active() == 0 && atomic_load(&g_sd_writers) == 0){
             if(!storage_mark('E', 3)){ storage_unknown("cannot record export request"); return; }
             g_sd_phase = SD_WAIT_HOST; g_sd_deadline = lv_tick_get() + 20000;
-            if(g_playing && ipc_send_cmd("0201000C0000") < 0){ storage_unknown("pause request failed"); return; }
+            if(g_playing && diskos_playback_toggle() < 0){ storage_unknown("pause request failed"); return; }
             if(source_send(3) < 0) storage_unknown("export request failed");
             return;
         }
@@ -1386,9 +1386,8 @@ static int local_start_refuse(void){
 }
 static int send_play_mode(int mode){
     if(local_start_blocked()) return -1;   /* backstop: no 0102 frame while casting (state g_mode_applied is left as it was) */
-    char m[16]; snprintf(m, sizeof m, "0102000C%04X", mode & 0xFFFF);
-    int rc = ipc_send_cmd(m);
-    g_mode_applied = (rc == 0 && mode >= 0 && mode <= 4) ? mode : -1;
+    int rc = diskos_playback_set_play_mode(mode);   /* -1 for a mode outside 0..4 too: nothing is sent */
+    g_mode_applied = rc == 0 ? mode : -1;
     return rc;
 }
 /* The mode the player is using now, -1 if unknown. A UI restart under a still-running player (crash respawn, deploy)
@@ -2016,9 +2015,8 @@ int ui_pp_icon_playing(int real_playing){
  * cs43131 gain path as the hardware vol keys. */
 int ui_set_volume(int vol){
     if(vol < 0) vol = 0; if(vol > VOL_MAX) vol = VOL_MAX;
-    char f[16]; snprintf(f, sizeof f, "0715000C%04X", vol);
-    int rc = ipc_send_cmd(f);
-    fprintf(stderr,"set volume %d -> %s (rc=%d)\n", vol, f, rc); fflush(stderr);
+    int rc = diskos_playback_set_volume(vol);
+    fprintf(stderr,"set volume %d (rc=%d)\n", vol, rc); fflush(stderr);
     return rc;   /* 0 = queued OK, -1 = send failed (caller can retry) */
 }
 /* Play a library list. The player builds the list itself (drop LIST_SONG_0 then
@@ -2174,7 +2172,7 @@ int ui_play_plan(mdb_plan_t *plan, int song_id){
 int ui_set_favorite(int on){
     if(ui_receiver_in_use()){ ui_toast("Return to Local first"); return 0; }
     if(playback_source() != PB_SRC_LOCAL){ ui_toast("Return to local playback first"); return 0; }
-    ipc_send_cmd(on ? "0104000C0001" : "0104000C0000");
+    (void)diskos_playback_set_favourite(on);
     return 1;   /* unchanged local behaviour: a failed send was never reported to the callers */
 }
 /* Song tap -> play the exact track.  Inside an album/artist/genre drill we use
@@ -3824,7 +3822,7 @@ static cb *ho_cb(void){   /* lazy: the SD root is a runtime constant; follows g_
     return &g_cb;
 }
 static int ho_x_teardown(void *c){ return modes_local_teardown(((ho *)c)->gen); }
-static int ho_x_pause(void *c){ (void)c; return ipc_send_cmd("0201000C0000"); }   /* a toggle: the machine sends it once, only while playing */
+static int ho_x_pause(void *c){ (void)c; return diskos_playback_toggle(); }   /* a toggle: the machine sends it once, only while playing */
 static int ho_x_load(void *c, uint32_t a, const char *p, long ms){   /* c = &g_ho: the machine kept the validated track metadata */
     const ho *h = (const ho *)c;
     return cb_serve_load(ho_cb(), a, p, ms, h->title, h->artist, h->album);
@@ -4189,7 +4187,7 @@ static void cast_end_for_reload(void){
 #ifndef AIRPLAY_PROOF_HELPER
 #define AIRPLAY_PROOF_HELPER "/usr/data/diskos_airplay_probe"
 #endif
-static int ap_x_pause(void){ return ipc_send_cmd("0201000C0000"); }
+static int ap_x_pause(void){ return diskos_playback_toggle(); }
 static int ap_x_busy(void){   /* the same test cast_pick uses before it replaces a session: a live session or a waiting request */
     cs_snapshot ss;
     if(g_pickreq.pend) return 1;
@@ -4246,7 +4244,7 @@ static int ap_proof_dispatch(const track_state_t *st, int playing){   /* 1 = the
 }
 #endif
 /* Production sender integration. UI thread owns the shared handoff. */
-static int sender_pause(void){ return ipc_send_cmd("0201000C0000"); }
+static int sender_pause(void){ return diskos_playback_toggle(); }
 static void sender_say(ho_msg msg){ if(!g_sender.error) ho_x_msg(NULL, msg); }
 static void sender_notice(pb_cmd command){ ui_toast(command == PB_CMD_VOLUME ? "Receiver volume is unavailable" : "Could not change playback"); }
 static int sender_sink(pb_cmd cmd, long arg){
@@ -5106,7 +5104,7 @@ int main(int argc, char **argv){
                 receiver_sleep_exit(g_sleep_start);
                 break;
             }
-            if(ipc_send_cmd("0201000C0000") == 0){ g_sleep_ms = 0; cfg_set_int("sleep_idx", 0); }  /* paused OK -> disarm */
+            if(diskos_playback_toggle() == 0){ g_sleep_ms = 0; cfg_set_int("sleep_idx", 0); }  /* paused OK -> disarm */
             /* else: send failed -> keep armed, retry next loop */
             break;
         case PW_SLEEP_WAIT: break;
@@ -5123,7 +5121,7 @@ int main(int argc, char **argv){
                  * change is an unambiguous completion signal, so it overrides the post-seek guard. If the
                  * last position was NOT near the target, the user navigated away -> just disarm. */
                 int completed = (g_sleep_eoc_atend && g_sleep_eoc_lastpos >= 0 && g_sleep_eoc_lastpos >= g_sleep_eoc - 8000);
-                if(completed && playing && ipc_send_cmd("0201000C0000") != 0){
+                if(completed && playing && diskos_playback_toggle() != 0){
                     /* pause send failed -> keep armed, retry next loop (path still differs) */
                 } else {
                     ui_disarm_book_eoc();
@@ -5132,7 +5130,7 @@ int main(int argc, char **argv){
                 g_sleep_eoc_lastpos = sst.position_ms;
                 if(sst.position_ms >= g_sleep_eoc && !sleep_guarded){
                     if(!playing){ ui_disarm_book_eoc(); }                          /* already stopped -> disarm */
-                    else if(ipc_send_cmd("0201000C0000") == 0){ ui_disarm_book_eoc(); }  /* paused OK -> disarm */
+                    else if(diskos_playback_toggle() == 0){ ui_disarm_book_eoc(); }  /* paused OK -> disarm */
                     /* else: send failed -> keep armed, retry */
                 }
             }

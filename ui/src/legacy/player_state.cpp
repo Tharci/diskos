@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 diskOS contributors
-#include "legacy/player_state.h"
+#include "legacy/player_state.hpp"
 
 #include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
 
+#include "legacy/player_state.h"
 #include "player/reports.hpp"
 #include "services/playback/player_state.hpp"
+#include "utils/synchronized.hpp"
 
 namespace diskos::legacy {
 namespace {
 
+using playback::Changes;
+using playback::PlayerState;
 using player::Report;
 using player::TrackReport;
 
@@ -25,12 +29,6 @@ constexpr diskos_player_update kIgnored{
         .reported_state = -1,
         .full = 0,
 };
-
-playback::PlayerState& player_state(diskos_player_slot slot) {
-    static playback::PlayerState local;
-    static playback::PlayerState receiver;
-    return slot == DISKOS_PLAYER_RECEIVER ? receiver : local;
-}
 
 /** Check whether a text fits a legacy buffer as a C string. */
 bool fits(std::string_view text) {
@@ -62,6 +60,28 @@ int reported_state(const Report& report) {
     return -1;
 }
 
+/** The track as the legacy C reads it: its texts point into `track`. */
+diskos_player_track legacy_track(const playback::Track& track) {
+    const player::Song& song = track.song;
+    const player::QueuePosition queue = track.queue_position.value_or(player::QueuePosition{});
+    return {
+            .title = song.title.c_str(),
+            .artist = song.artist.c_str(),
+            .album = song.album.c_str(),
+            .path = song.path.c_str(),
+            .song_id = song.id,
+            .pos_id = song.pos_id,
+            .duration_ms = song.duration_ms,
+            .sample_rate_hz = song.sample_rate_hz,
+            .favourite = track.favourite ? 1 : 0,
+            .is_dsd = song.is_dsd ? 1 : 0,
+            .is_cue = song.is_cue ? 1 : 0,
+            .is_sacd = song.is_sacd ? 1 : 0,
+            .queue_position = queue.position,
+            .queue_count = queue.count,
+    };
+}
+
 bool is_applied(const Report& report) {
     return std::holds_alternative<player::PositionReport>(report)
            || std::holds_alternative<player::PlayStateReport>(report)
@@ -69,6 +89,13 @@ bool is_applied(const Report& report) {
 }
 
 }  // namespace
+
+utils::Synchronized<playback::PlayerState>& player_state(diskos_player_slot slot) {
+    static utils::Synchronized<playback::PlayerState> local;
+    static utils::Synchronized<playback::PlayerState> receiver;
+    return slot == DISKOS_PLAYER_RECEIVER ? receiver : local;
+}
+
 }  // namespace diskos::legacy
 
 extern "C" diskos_player_update diskos_player_apply(
@@ -80,61 +107,56 @@ extern "C" diskos_player_update diskos_player_apply(
         return kIgnored;
     }
     const bool usable = slot == DISKOS_PLAYER_RECEIVER || fits(*report);
-    const diskos::playback::Changes changes = player_state(slot).apply_report(
-            usable ? *report : without_path(*report), diskos::playback::PlayerState::Clock::now()
-    );
+    const Report applied = usable ? *report : without_path(*report);
+    const auto now = PlayerState::Clock::now();
+    const Changes changes = player_state(slot).with([&applied, now](PlayerState& state) {
+        return state.apply_report(applied, now);
+    });
     return {
             .accepted = usable ? 1 : 0,
             .track = changes.track ? 1 : 0,
             .details = changes.details ? 1 : 0,
             .position = changes.position ? 1 : 0,
             .reported_state = reported_state(*report),
-            .full = std::holds_alternative<diskos::player::TrackReport>(*report) ? 1 : 0,
+            .full = std::holds_alternative<TrackReport>(*report) ? 1 : 0,
     };
 }
 
 extern "C" int diskos_player_get_track(diskos_player_slot slot, diskos_player_track* track) {
-    const std::optional<diskos::playback::Track>& current =
-            diskos::legacy::player_state(slot).track();
-    if (!current) {
-        return 0;
-    }
-    const diskos::player::Song& song = current->song;
-    const diskos::player::QueuePosition queue =
-            current->queue_position.value_or(diskos::player::QueuePosition{});
-    *track = {
-            .title = song.title.c_str(),
-            .artist = song.artist.c_str(),
-            .album = song.album.c_str(),
-            .path = song.path.c_str(),
-            .song_id = song.id,
-            .pos_id = song.pos_id,
-            .duration_ms = song.duration_ms,
-            .sample_rate_hz = song.sample_rate_hz,
-            .favourite = current->favourite ? 1 : 0,
-            .is_dsd = song.is_dsd ? 1 : 0,
-            .is_cue = song.is_cue ? 1 : 0,
-            .is_sacd = song.is_sacd ? 1 : 0,
-            .queue_position = queue.position,
-            .queue_count = queue.count,
-    };
-    return 1;
+    using namespace diskos::legacy;
+    return player_state(slot).with([track](const PlayerState& state) {
+        if (!state.track()) {
+            return 0;
+        }
+        *track = legacy_track(*state.track());
+        return 1;
+    });
 }
 
 extern "C" int diskos_player_advance(diskos_player_slot slot) {
-    const auto now = diskos::playback::PlayerState::Clock::now();
-    return diskos::legacy::player_state(slot).advance(now).activity ? 1 : 0;
+    using namespace diskos::legacy;
+    const auto now = PlayerState::Clock::now();
+    return player_state(slot).with([now](PlayerState& state) {
+        return state.advance(now).activity ? 1 : 0;
+    });
 }
 
 extern "C" int diskos_player_is_playing(diskos_player_slot slot) {
-    return diskos::legacy::player_state(slot).is_playing() ? 1 : 0;
+    using namespace diskos::legacy;
+    return player_state(slot).with([](const PlayerState& state) {
+        return state.is_playing() ? 1 : 0;
+    });
 }
 
 extern "C" int64_t diskos_player_position(diskos_player_slot slot) {
-    const std::optional<std::uint32_t> position = diskos::legacy::player_state(slot).position_ms();
-    return position ? static_cast<int64_t>(*position) : -1;
+    using namespace diskos::legacy;
+    return player_state(slot).with([](const PlayerState& state) -> int64_t {
+        const std::optional<std::uint32_t> position = state.position_ms();
+        return position ? static_cast<int64_t>(*position) : -1;
+    });
 }
 
 extern "C" void diskos_player_reset(diskos_player_slot slot) {
-    diskos::legacy::player_state(slot) = diskos::playback::PlayerState{};
+    using namespace diskos::legacy;
+    player_state(slot).with([](PlayerState& state) { state = PlayerState{}; });
 }
