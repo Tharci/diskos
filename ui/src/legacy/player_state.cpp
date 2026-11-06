@@ -137,7 +137,7 @@ extern "C" int diskos_player_advance(diskos_player_slot slot) {
     using namespace diskos::legacy;
     const auto now = PlayerState::Clock::now();
     return player_state(slot).with([now](PlayerState& state) {
-        return state.advance(now).activity ? 1 : 0;
+        return state.advance(now).play_state ? 1 : 0;
     });
 }
 

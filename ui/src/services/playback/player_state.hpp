@@ -33,7 +33,7 @@ struct Track {
 struct Changes {
     bool track = false;    // A different track, or none any more
     bool details = false;  // The same track's other fields: its favourite, texts or queue position
-    bool activity = false;
+    bool play_state = false;
     bool position = false;
     bool volume = false;
 
@@ -52,11 +52,11 @@ public:
     /**
      * Apply one report from the player and report what it changed.
      *  - A track report for another file or queue row is a new track, with no position yet. Once
-     *    the activity is known, the Stopped it reads means Loading.
+     *    the play state is known, the Stopped it reads means Loading.
      *  - Under AirPlay, songs have no path: one with other texts is a new track.
      *  - A local track report whose song has no path clears the track.
      *  - While Loading, a Paused report changes nothing.
-     *  - A position report means Playing while the activity is Unknown.
+     *  - A position report means Playing while the play state is Unknown.
      *  - Reports about anything other than playback (battery, screen, ...) change nothing.
      * It first advances to `now`, so the outcome does not depend on how often advance() is called.
      */
@@ -65,7 +65,7 @@ public:
     /**
      * Note that a command to play the current track was sent, and report what changed. It first
      * advances to `now`.
-     *  - If is_resumable(), the activity becomes Loading until the player reports Playing. The
+     *  - If is_resumable(), the play state becomes Loading until the player reports Playing. The
      *    player confirms a resume over Bluetooth only after ~1.5 s (~3 s on a silent player),
      *    reporting the track as Stopped in between; on the speaker within ~10 ms.
      *  - Otherwise nothing changes: the player is already playing or loading.
@@ -73,14 +73,14 @@ public:
     Changes request_play(Clock::time_point now);
 
     /**
-     * Advance to `now` and report what changed. An activity whose reports stopped coming (a lost
+     * Advance to `now` and report what changed. A play state whose reports stopped coming (a lost
      * frame, or local frames held back while AirPlay owns the player) expires at deadline():
      * Playing or Loading becomes Unknown. Call it at the deadline, or regularly.
      */
     Changes advance(Clock::time_point now);
 
     /**
-     * Get when the activity expires unless the player shows progress (a new state or track, or
+     * Get when the play state expires unless the player shows progress (a new state or track, or
      * the position moving), or nullopt when it cannot expire:
      *  - Playing: kStale after the last progress.
      *  - Loading: kLoadTimeout after the last progress.
@@ -95,7 +95,7 @@ public:
     }
 
     /** Get what the player is doing, Unknown until it reports. */
-    [[nodiscard]] PlayState activity() const noexcept {
+    [[nodiscard]] PlayState play_state() const noexcept {
         return play_state_;
     }
 

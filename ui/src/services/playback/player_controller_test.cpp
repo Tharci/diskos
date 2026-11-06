@@ -67,8 +67,8 @@ public:
         state_.with([&report](PlayerState& state) { state.apply_report(report, kNow); });
     }
 
-    [[nodiscard]] PlayState activity() {
-        return state_.with([](const PlayerState& state) { return state.activity(); });
+    [[nodiscard]] PlayState play_state() {
+        return state_.with([](const PlayerState& state) { return state.play_state(); });
     }
 
     FakeSender& sender() noexcept {
@@ -91,17 +91,17 @@ TEST_CASE(
     using enum PlayState;
     Fixture fixture{ReportedPlayState::Paused};
     const bool sent = fixture.controller().toggle(kNow).has_value();
-    const PlayState requested = fixture.activity();
+    const PlayState requested = fixture.play_state();
     // Over Bluetooth: the track reads Stopped, then the stream starts.
     fixture.apply(player::TrackReport{.song = kSong, .state = ReportedPlayState::Stopped});
-    const PlayState reported_stopped = fixture.activity();
+    const PlayState reported_stopped = fixture.play_state();
     fixture.apply(player::PlayStateReport{.state = ReportedPlayState::Playing});
 
     CHECK(sent);
     CHECK(fixture.sender().frames() == std::vector<std::string>{"0201000C0000"});
     CHECK(requested == Loading);
     CHECK(reported_stopped == Loading);
-    CHECK(fixture.activity() == Playing);
+    CHECK(fixture.play_state() == Playing);
 }
 
 TEST_CASE(
@@ -117,9 +117,9 @@ TEST_CASE(
                           && unknown.controller().toggle(kNow).has_value();
 
     CHECK(all_sent);
-    CHECK(playing.activity() == Playing);
-    CHECK(stopped.activity() == Loading);
-    CHECK(unknown.activity() == Unknown);
+    CHECK(playing.play_state() == Playing);
+    CHECK(stopped.play_state() == Loading);
+    CHECK(unknown.play_state() == Unknown);
 }
 
 TEST_CASE(
@@ -132,7 +132,7 @@ TEST_CASE(
 
     CHECK(result == std::unexpected{player::SendError::Failed});
     CHECK(fixture.sender().frames().empty());
-    CHECK(fixture.activity() == PlayState::Paused);
+    CHECK(fixture.play_state() == PlayState::Paused);
 }
 
 TEST_CASE("PlayerController sends each command's frame", "[playback][player_controller]") {
@@ -156,7 +156,7 @@ TEST_CASE("PlayerController sends each command's frame", "[playback][player_cont
 
     CHECK(all_sent);
     CHECK(fixture.sender().frames() == expected);
-    CHECK(fixture.activity() == PlayState::Playing);
+    CHECK(fixture.play_state() == PlayState::Playing);
 }
 
 }  // namespace

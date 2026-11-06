@@ -55,8 +55,8 @@ diskos_player_update diskos_player_apply(diskos_player_slot slot, const char* by
 /* Get the current track of `slot` into *track: 1, or 0 when there is none. */
 int diskos_player_get_track(diskos_player_slot slot, diskos_player_track* track);
 
-/* Advance `slot` to now (PlayerState::advance): its activity expires if its reports stopped
- * coming. Returns 1 if the activity changed, else 0. Call it regularly. */
+/* Advance `slot` to now (PlayerState::advance): its play state expires if its reports stopped
+ * coming. Returns 1 if the play state changed, else 0. Call it regularly. */
 int diskos_player_advance(diskos_player_slot slot);
 
 /* Check whether `slot` is playing a track or loading one to play: 1 or 0. */

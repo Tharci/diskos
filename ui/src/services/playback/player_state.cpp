@@ -10,7 +10,7 @@ namespace {
 
 using player::ReportedPlayState;
 
-constexpr PlayState activity_of(ReportedPlayState state) {
+constexpr PlayState play_state_of(ReportedPlayState state) {
     switch (state) {
         case ReportedPlayState::Playing:
             return PlayState::Playing;
@@ -56,10 +56,10 @@ Changes PlayerState::apply_report(const player::Report& report, Clock::time_poin
     const PlayState before = play_state_;
     advance(now);
     Changes changes = update(report);
-    if (changes.track || changes.activity || changes.position) {
+    if (changes.track || changes.play_state || changes.position) {
         progress_ = now;
     }
-    changes.activity = play_state_ != before;
+    changes.play_state = play_state_ != before;
     return changes;
 }
 
@@ -68,7 +68,7 @@ Changes PlayerState::request_play(Clock::time_point now) {
     if (is_resumable()) {
         play_state_ = PlayState::Loading;
         progress_ = now;
-        changes.activity = true;
+        changes.play_state = true;
     }
     return changes;
 }
@@ -83,7 +83,7 @@ Changes PlayerState::advance(Clock::time_point now) {
         return {};
     }
     play_state_ = PlayState::Unknown;
-    return {.activity = true};
+    return {.play_state = true};
 }
 
 std::optional<PlayerState::Clock::time_point> PlayerState::deadline() const noexcept {
@@ -109,11 +109,11 @@ Changes PlayerState::update(const player::TrackReport& report) {
     const bool loading = reported && report.state == ReportedPlayState::Stopped
                          && play_state_ != PlayState::Unknown
                          && (is_new || play_state_ == PlayState::Loading);
-    const PlayState next_state = loading ? PlayState::Loading : activity_of(report.state);
+    const PlayState next_state = loading ? PlayState::Loading : play_state_of(report.state);
     const Changes changes{
             .track = is_new,
             .details = !is_new && track_ != reported,
-            .activity = next_state != play_state_,
+            .play_state = next_state != play_state_,
             .position = is_new && position_ms_.has_value(),
     };
     if (is_new) {
@@ -130,8 +130,8 @@ Changes PlayerState::update(const player::PlayStateReport& report) {
     if (play_state_ == PlayState::Loading && report.state == ReportedPlayState::Paused) {
         return {};
     }
-    const PlayState next_state = activity_of(report.state);
-    const Changes changes{.activity = next_state != play_state_};
+    const PlayState next_state = play_state_of(report.state);
+    const Changes changes{.play_state = next_state != play_state_};
     play_state_ = next_state;
     return changes;
 }
@@ -142,7 +142,7 @@ Changes PlayerState::update(const player::PositionReport& report) {
     const PlayState next_state =
             play_state_ == PlayState::Unknown ? PlayState::Playing : play_state_;
     const Changes changes{
-            .activity = next_state != play_state_,
+            .play_state = next_state != play_state_,
             .position = position_ms_ != report.position_ms,
     };
     play_state_ = next_state;
