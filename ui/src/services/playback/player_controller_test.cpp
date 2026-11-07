@@ -10,6 +10,7 @@
 #include "player/command_sender.hpp"
 #include "player/commands.hpp"
 #include "player/modes.hpp"
+#include "player/player_instance.hpp"
 #include "player/reports.hpp"
 #include "services/playback/player_state.hpp"
 #include "utils/synchronized.hpp"
@@ -25,7 +26,10 @@ constexpr PlayerState::Clock::time_point kNow{};
 /** Records the frames it is asked to send; fails every send while `failing`. */
 class FakeSender : public player::CommandSender {
 public:
-    std::expected<void, player::SendError> send(const player::Command& command) override {
+    std::expected<void, player::SendError> send(
+            const player::Command& command,
+            std::optional<player::PlayerInstance> /*instance*/ = std::nullopt
+    ) override {
         if (failing_) {
             return std::unexpected{player::SendError::Failed};
         }

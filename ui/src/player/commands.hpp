@@ -190,6 +190,16 @@ struct PrepareBluetoothSinkCommand : CommandBase {
     [[nodiscard]] static std::string body();
 };
 
+/**
+ * 06c1 0000: turn the player's Bluetooth on, which starts its initialisation thread. The route to a
+ * Bluetooth sink sends it before 0666 2, as the stock sequence does, and the codec select (06b3)
+ * does nothing before it. 06c0 turns Bluetooth off.
+ */
+struct EnableBluetoothCommand : CommandBase {
+    static constexpr std::string_view kTag = "06c1";
+    [[nodiscard]] static std::string body();
+};
+
 using Command = std::variant<
         PlayPauseCommand,
         NextTrackCommand,
@@ -203,7 +213,8 @@ using Command = std::variant<
         SwitchSourceCommand,
         RouteOutputCommand,
         SelectUsbGadgetCommand,
-        PrepareBluetoothSinkCommand>;
+        PrepareBluetoothSinkCommand,
+        EnableBluetoothCommand>;
 
 /** Get the frame of whichever command `command` holds. */
 [[nodiscard]] std::string frame(const Command& command);

@@ -43,9 +43,11 @@ class FrameCommandSender final : public CommandSender {
 public:
     explicit FrameCommandSender(FrameSender& sender) : sender_(&sender) {}
 
-    /** Send `command`'s frame. Returns SendError::Failed if it was not queued. */
-    [[nodiscard]] std::expected<void, SendError> send(const Command& command) override {
-        return sender_->send_frame(frame(command));
+    /** Send `command`'s frame, as FrameSender::send_frame() does. */
+    [[nodiscard]] std::expected<void, SendError> send(
+            const Command& command, std::optional<PlayerInstance> instance = std::nullopt
+    ) override {
+        return sender_->send_frame(frame(command), instance);
     }
 
 private:
