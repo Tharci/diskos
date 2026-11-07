@@ -10,7 +10,8 @@
 namespace diskos::player {
 
 enum class SendError : std::uint8_t {
-    Failed,
+    Failed,         // It was not queued
+    WrongInstance,  // It was meant for a player instance that is no longer connected
 };
 
 /**

@@ -5,4 +5,5 @@
 add_subdirectory(utils)
 add_subdirectory(player)
 add_subdirectory(services)
+add_subdirectory(platform)
 add_subdirectory(legacy)

@@ -78,7 +78,7 @@ static inline const char *ipc_display_title(const track_state_t *st){
 
 #define VOL_MAX 120   /* device MAX_VOL (sysconfig); a714 VV is on this same 0..120 scale */
 
-int  ipc_start(void);                  /* open queues + start thread; 0=ok */
+int  ipc_start(void);                  /* start the connection to the player (legacy/player_link.h); 0=ok */
 void ipc_get_state(track_state_t *out);
 int  ipc_local_playing(void);          /* 1 while the player plays or loads a track (PlayerState::is_playing); call each tick */
 /* Read-only complete A2 plus last accepted user toggle epoch and its A2 boundary.
@@ -102,10 +102,9 @@ int ipc_prepare_snapshot(track_state_t *, unsigned *serial, unsigned *playing_fr
 int ipc_prepare_send(const char *, unsigned generation, uint64_t token, unsigned transport,
                      unsigned report, unsigned playing_frames, int held, int release, unsigned poweroff);
 #endif
-int  ipc_is_ready(void);               /* 1 once the /ui receive queue is open */
+int  ipc_is_ready(void);               /* 1 once a player instance connected */
 int  ipc_take_send_error(void);        /* 1 (and clears) if a recent send failed */
-void ipc_health_check(void);           /* ~30s: detect player-restart queue recreation (fstat identity) */
-int  ipc_take_reconnected(void);       /* 1 (and clears) after a recovery reattach -> caller resyncs */
+int  ipc_take_reconnected(void);       /* 1 (and clears) after a player restart -> caller resyncs */
 unsigned ipc_rx_frames(void);          /* count of /ui frames received from the player (>0 => player up) */
 int  ipc_player_mode(void);            /* last a607 player mode this gen: -1=none, 8=LOCALPLAYER (v2.40 oracle) */
 /* Source evidence is independent of local metadata/work_mode strings. Copy under one

@@ -85,7 +85,7 @@ void framelog_tx(const char *frame, size_t n, int err, const char *policy) {
     if (err > 0) {
         snprintf(result, sizeof result, "errno=%d", err);
     } else {
-        snprintf(result, sizeof result, "%s", err < 0 ? "no-queue" : "ok");
+        snprintf(result, sizeof result, "%s", err < 0 ? "failed" : "ok");
     }
     int head = snprintf(g_line, sizeof g_line, "%.3f tx %zu %s %s ", now_s(), n, result, policy);
     emit(escape((size_t)head, frame, n));

@@ -7,8 +7,11 @@ set(DISKOS_SANITIZERS "" CACHE STRING
     "Sanitizers for every host target, e.g. address,undefined or thread (empty: none)")
 if(DISKOS_SANITIZERS)
     # Stop at the first report: a sanitizer finding fails the test that caused it.
+    # UBSan's vptr check needs the type info of every class it checks, which the modules (built
+    # without RTTI, like on the device) do not have.
     add_compile_options(
-        -fsanitize=${DISKOS_SANITIZERS} -fno-sanitize-recover=all -fno-omit-frame-pointer
+        -fsanitize=${DISKOS_SANITIZERS} -fno-sanitize=vptr -fno-sanitize-recover=all
+        -fno-omit-frame-pointer
     )
     add_link_options(-fsanitize=${DISKOS_SANITIZERS})
 endif()

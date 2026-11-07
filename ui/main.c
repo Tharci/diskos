@@ -2703,16 +2703,6 @@ static void ipc_connect_retry_cb(lv_timer_t *t){
     }
 }
 
-/* Periodic IPC health check: re-establish the /ui receive queue if it was ever
- * lost. Does NOT poll the player (a periodic 02020008 would bump seq every tick
- * and needlessly re-push the Now-Playing/backdrop surfaces). A player restart is
- * self-healed on the next real send instead (ipc_send_internal reopens /player). */
-static void ipc_health_cb(lv_timer_t *t){
-    (void)t;
-    if(!ipc_is_ready()) ipc_start();   /* cold-start retry if the rx thread never came up (idempotent) */
-    else ipc_health_check();           /* detect + request recovery from a player queue restart */
-}
-
 /* Advances a still-image apply (a810 wait, deadline, finish, image cache drop); idle cost is one lock. */
 static void custom_still_cb(lv_timer_t *t){ (void)t; custom_still_tick(); }
 
@@ -4638,7 +4628,6 @@ int main(int argc, char **argv){
      * seconds after we start, so a single retry can miss it. */
     lv_timer_t *sync_t = lv_timer_create(state_sync_retry_cb, 2000, NULL);
     lv_timer_set_repeat_count(sync_t, 5);   /* 2,4,6,8,10s then auto-deletes */
-    lv_timer_create(ipc_health_cb, 30000, NULL);   /* keep IPC warm + self-heal a player restart */
     lv_timer_create(custom_still_cb, 1000, NULL);   /* custom lock-screen still apply (slice 7) */
 
     /* Touch is default-ON: the whole UI is dead without it, and a fresh install carries no
