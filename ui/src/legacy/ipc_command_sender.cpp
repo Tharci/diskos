@@ -9,18 +9,30 @@ extern "C" {
 }
 
 namespace diskos::legacy {
+namespace {
+
+/** The legacy generation of `instance`, or the connected one's without. */
+unsigned generation_of(std::optional<player::PlayerInstance> instance) {
+    return instance ? instance->number() - 1 : ipc_generation();
+}
+
+}  // namespace
 
 std::expected<void, player::SendError> IpcCommandSender::send(
         const player::Command& command, std::optional<player::PlayerInstance> instance
 ) {
     const std::string frame = player::frame(command);
-    if (!instance) {
-        if (ipc_send_cmd(frame.c_str()) != 0) {
-            return std::unexpected{player::SendError::Failed};
-        }
-        return {};
+    const unsigned generation = generation_of(instance);
+    int sent = 0;
+    if (policy_ == Policy::Automatic) {
+        sent = ipc_send_automatic(frame.c_str(), generation);
+    } else if (generation != ipc_generation()) {
+        // Checked just before the send, not with it: a restart in between still lets it through,
+        // as every user command did before instances.
+        sent = IPC_SEND_DEFERRED;
+    } else {
+        sent = ipc_send_cmd(frame.c_str());
     }
-    const int sent = ipc_send_automatic(frame.c_str(), instance->number() - 1);
     if (sent == IPC_SEND_DEFERRED) {
         return std::unexpected{player::SendError::WrongInstance};
     }

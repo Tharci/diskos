@@ -22,20 +22,12 @@ constexpr PlayState play_state_of(ReportedPlayState state) {
     std::unreachable();
 }
 
-/**
- * Check whether two tracks are the same file at the same queue row (or both none). An AirPlay
- * song has no path and its ids are 0, so it is told apart by its texts.
- */
+/** Check whether two optional tracks are the same track, or both none. */
 bool same_track(const std::optional<Track>& first, const std::optional<Track>& second) {
     if (!first || !second) {
         return first.has_value() == second.has_value();
     }
-    const player::Song& one = first->song;
-    const player::Song& other = second->song;
-    const bool same_texts =
-            one.title == other.title && one.artist == other.artist && one.album == other.album;
-    return one.path == other.path && one.id == other.id && one.pos_id == other.pos_id
-           && (!one.path.empty() || same_texts);
+    return same_track(*first, *second);
 }
 
 std::optional<Track> track_of(const player::TrackReport& report) {
@@ -52,10 +44,22 @@ std::optional<Track> track_of(const player::TrackReport& report) {
 
 }  // namespace
 
+bool same_track(const Track& first, const Track& second) {
+    const player::Song& one = first.song;
+    const player::Song& other = second.song;
+    const bool same_texts =
+            one.title == other.title && one.artist == other.artist && one.album == other.album;
+    return one.path == other.path && one.id == other.id && one.pos_id == other.pos_id
+           && (!one.path.empty() || same_texts);
+}
+
 Changes PlayerState::apply_report(const player::Report& report, Clock::time_point now) {
     const PlayState before = play_state_;
     advance(now);
     Changes changes = update(report);
+    if (std::holds_alternative<player::PositionReport>(report)) {
+        position_time_ = now;
+    }
     if (changes.track || changes.play_state || changes.position) {
         progress_ = now;
     }
@@ -70,6 +74,19 @@ Changes PlayerState::request_play(Clock::time_point now) {
         progress_ = now;
         changes.play_state = true;
     }
+    return changes;
+}
+
+Changes PlayerState::note_output_reset(Clock::time_point now) {
+    const PlayState before = play_state_;
+    Changes changes = advance(now);
+    changes.position = position_ms_.has_value();
+    forget_position();
+    if (play_state_ != PlayState::Stopped) {
+        play_state_ = PlayState::Stopped;
+        progress_ = now;
+    }
+    changes.play_state = play_state_ != before;
     return changes;
 }
 
@@ -117,7 +134,7 @@ Changes PlayerState::update(const player::TrackReport& report) {
             .position = is_new && position_ms_.has_value(),
     };
     if (is_new) {
-        position_ms_.reset();
+        forget_position();
     }
     track_ = std::move(reported);
     play_state_ = next_state;
@@ -148,6 +165,11 @@ Changes PlayerState::update(const player::PositionReport& report) {
     play_state_ = next_state;
     position_ms_ = report.position_ms;
     return changes;
+}
+
+void PlayerState::forget_position() noexcept {
+    position_ms_.reset();
+    position_time_.reset();
 }
 
 Changes PlayerState::update(const player::VolumeReport& report) {

@@ -156,7 +156,8 @@ extern "C" int64_t diskos_player_position(diskos_player_slot slot) {
     });
 }
 
-extern "C" void diskos_player_reset(diskos_player_slot slot) {
+extern "C" void diskos_player_reset(diskos_player_slot slot, unsigned instance) {
     using namespace diskos::legacy;
-    player_state(slot).with([](PlayerState& state) { state = PlayerState{}; });
+    const diskos::player::PlayerInstance player{instance};
+    player_state(slot).with([player](PlayerState& state) { state = PlayerState{player}; });
 }

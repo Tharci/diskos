@@ -15,7 +15,7 @@ namespace diskos::legacy {
 namespace {
 
 playback::PlayerController& controller() {
-    static IpcCommandSender sender;
+    static IpcCommandSender sender{IpcCommandSender::Policy::User};
     static playback::PlayerController controller{sender, player_state(DISKOS_PLAYER_LOCAL)};
     return controller;
 }

@@ -65,8 +65,9 @@ int diskos_player_is_playing(diskos_player_slot slot);
 /* Get the position of `slot` in ms, or -1 when none was reported since the track changed. */
 int64_t diskos_player_position(diskos_player_slot slot);
 
-/* Forget everything in `slot`: the player restarted, or the receiver session ended. */
-void diskos_player_reset(diskos_player_slot slot);
+/* Forget everything in `slot`, which is now about the player `instance` (the legacy generation
+ * plus one): a player connected or restarted, or the receiver session ended. */
+void diskos_player_reset(diskos_player_slot slot, unsigned instance);
 
 #ifdef __cplusplus
 }

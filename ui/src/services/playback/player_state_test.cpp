@@ -382,5 +382,59 @@ TEST_CASE("PlayerState expires a resume that never comes", "[playback][player_st
     CHECK(state.play_state() == Unknown);
 }
 
+TEST_CASE("PlayerState stops the track on an output reset", "[playback][player_state]") {
+    using enum PlayState;
+    const auto start = kNow + 100s;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), start);
+    state.apply_report(position(183000), start + 1s);
+    const Changes reset = state.note_output_reset(start + 2s);
+
+    CHECK(reset == Changes{.play_state = true, .position = true});
+    CHECK(state.play_state() == Stopped);
+    REQUIRE(state.track().has_value());
+    CHECK(state.track()->song == kFirst);
+    CHECK_FALSE(state.position_ms().has_value());
+    CHECK_FALSE(state.position_time().has_value());
+}
+
+TEST_CASE(
+        "PlayerState stays Stopped on a position left from before a reset",
+        "[playback][player_state]"
+) {
+    // The player keeps playing into a lost sink until the reset lands, so its last positions can
+    // arrive after it.
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), kNow);
+    state.note_output_reset(kNow);
+    state.apply_report(position(184000), kNow);
+
+    CHECK(state.play_state() == PlayState::Stopped);
+    CHECK(state.position_ms() == 184000);
+}
+
+TEST_CASE("PlayerState keeps when each position was reported", "[playback][player_state]") {
+    const auto start = kNow + 100s;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), start);
+    const std::optional<PlayerState::Clock::time_point> before = state.position_time();
+    state.apply_report(position(1000), start + 1s);
+    state.apply_report(position(2000), start + 2s);
+    const std::optional<PlayerState::Clock::time_point> reported = state.position_time();
+    state.apply_report(track(kSecond, ReportedPlayState::Stopped), start + 3s);
+
+    CHECK_FALSE(before.has_value());
+    CHECK(reported == start + 2s);
+    CHECK_FALSE(state.position_time().has_value());
+}
+
+TEST_CASE("PlayerState knows the player instance it is about", "[playback][player_state]") {
+    const PlayerState unconnected;
+    const PlayerState second{player::PlayerInstance{2}};
+
+    CHECK_FALSE(unconnected.instance().has_value());
+    CHECK(second.instance() == player::PlayerInstance{2});
+}
+
 }  // namespace
 }  // namespace diskos::playback

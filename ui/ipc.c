@@ -115,7 +115,7 @@ static int receiver_owned_locked(void){
 static void receiver_clear_locked(void){
     g_receiver_arm=0; g_receiver_selected=0;
     memset(&g_receiver_meta,0,sizeof g_receiver_meta);
-    diskos_player_reset(DISKOS_PLAYER_RECEIVER);
+    diskos_player_reset(DISKOS_PLAYER_RECEIVER, g_generation + 1);
     g_receiver_meta.generation=g_generation;
 }
 void ipc_receiver_begin(unsigned generation, uint64_t arm){
@@ -158,7 +158,7 @@ void ipc_receiver_metadata(ipc_receiver_meta *out){
     pthread_mutex_lock(&g_recov_mu);
     if(g_receiver_meta.generation!=g_generation){
         memset(&g_receiver_meta,0,sizeof g_receiver_meta);
-        diskos_player_reset(DISKOS_PLAYER_RECEIVER);
+        diskos_player_reset(DISKOS_PLAYER_RECEIVER, g_generation + 1);
         g_receiver_meta.generation=g_generation; g_receiver_arm=0;
     }
     *out=g_receiver_meta;
@@ -464,7 +464,7 @@ static void parse_frame(const char*buf,int n){
         if(receiver_owned_locked()){
             if(g_receiver_selected && mode!=10){
                 g_receiver_arm=0; memset(&g_receiver_meta,0,sizeof g_receiver_meta);
-                diskos_player_reset(DISKOS_PLAYER_RECEIVER);
+                diskos_player_reset(DISKOS_PLAYER_RECEIVER, g_generation + 1);
                 g_receiver_meta.generation=g_generation;
             } else if(mode==10) g_receiver_selected=1;
         }
@@ -488,8 +488,8 @@ static void link_connected(unsigned instance){
     charge_new_generation();
     pthread_mutex_unlock(&g_recov_mu);
     pthread_mutex_lock(&g_mu);
+    diskos_player_reset(DISKOS_PLAYER_LOCAL, instance);   /* before its first frame: nothing to lose on the first */
     if(restarted){
-        diskos_player_reset(DISKOS_PLAYER_LOCAL);
         int had_path=g_state.path[0]!=0;
         clear_track(); g_state.playback_token++; g_state.seq++;
         if(had_path) g_state.path_seq=g_state.seq;
