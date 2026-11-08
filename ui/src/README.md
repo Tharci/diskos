@@ -10,7 +10,7 @@ One folder per area. A folder is created with its first module. Every module may
 |-------------|-------------------------------------------------------------|-------------------------|
 | `utils/`    | Small general helpers with no diskOS knowledge (number parsing) | no other module     |
 | `player/`   | The stock player's protocol: frames, messages, its state    | `utils/`                |
-| `services/` | Playback, library, books, Bluetooth, Wi-Fi: logic and state | `player/`               |
+| `services/` | Playback, library, books, Bluetooth, Wi-Fi: logic and state | `player/`, other services (no cycles) |
 | `platform/` | The device: message queues, files, input, display, processes | `player/`, `services/` (implements their interfaces) |
 | `ui/`       | Screens and widgets (LVGL)                                  | `player/`, `services/`  |
 | `app/`      | Startup and the main loop: connects the parts               | all of the above        |
