@@ -1,0 +1,40 @@
+# clangd in the dev container (.devcontainer/). It reads the CMake presets' compile_commands.json files, which
+# tools/diskos-dev.sh setup configures: the device build for everything except the tests, which are host-only.
+
+# Device code. The commands name the cross GCC (/opt/mipsel-n2008-musl-cross), from which clang takes the
+# target and finds musl and libstdc++ itself, keeping its own builtin headers (it can't parse GCC's
+# <stdatomic.h>). It can't know the ABI GCC was configured with, so that is spelled out.
+If:
+  PathExclude: src/.*_test\.cpp
+CompileFlags:
+  CompilationDatabase: build/device
+  Add:
+    # MIPS32r2, FP64, NaN2008 (ui/toolchain/mcm-config.mak), so the predefined macros match GCC's.
+    - -march=mips32r2
+    - -mfp64
+    - -mnan=2008
+    # GCC-only warnings in the commands (-Wuseless-cast, -Wlogical-op, ...).
+    - -Wno-unknown-warning-option
+---
+# The C++ tests: the host preset's commands (the image's g++ 14 and Catch2).
+If:
+  PathMatch: src/.*_test\.cpp
+CompileFlags:
+  CompilationDatabase: build/host
+  Add:
+    - -Wno-unknown-warning-option
+---
+# The legacy C is not being tidied up; the C++ modules get unused-include warnings below.
+Diagnostics:
+  UnusedIncludes: None
+---
+If:
+  PathMatch: src/.*
+Diagnostics:
+  UnusedIncludes: Strict
+---
+# Vendored code: navigable, but no warnings.
+If:
+  PathMatch: (lvgl|third_party)/.*
+Diagnostics:
+  Suppress: "*"

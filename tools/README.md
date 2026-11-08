@@ -10,6 +10,7 @@ first.
 ## Contents
 | Script | What it does |
 |---|---|
+| `diskos-dev.sh` | The dev container's loop: setup, build inputs, host tests, deploy, log, player-traffic captures |
 | `diskos-deploy.sh` | Push a built `mq_ui` to the device, verify it, and hot-reload it safely |
 | `diskos-shot.sh` | Capture the device screen to a PNG |
 | `diskos-touch.sh` | Drive the touchscreen over SSH (tap / swipe) via the on-device injector |
@@ -18,6 +19,8 @@ first.
 ## Requirements
 - `sshpass`, `ssh`, `scp` (OpenSSH), and `md5sum`
 - For screenshots: `python3` with Pillow (`pip install Pillow`)
+
+The dev container ([`../docs/DEV_WORKFLOW.md`](../docs/DEV_WORKFLOW.md)) has all of these.
 
 ## Getting access
 Enable **Debug Mode** on the device (Settings > System). It shows the device IP and a one-time SSH
@@ -55,12 +58,16 @@ and tap it. Coordinates are screen coordinates (0..359, top-left origin) matchin
 `diskos-shot.sh`; the injector applies the 180-degree panel rotation for you. Use the default
 Screen Rotation setting; the injector does not read that setting.
 
-Build the injector once (any host with the Docker builder), then push it to the device:
+Build the injector once with the cross compiler, then push it to the device (from the repository root):
 ```sh
-# from ui/ where the Docker image lives, with tinj.c copied in:
-docker run --rm -v "$PWD:/src" -w /src diskos-ui-builder sh -c '${CROSS}gcc -O2 -static -o tinj tinj.c'
+# in the dev container:
+${CROSS}gcc -O2 -static -o tools/tinj tools/tinj.c
+# or with the Docker builder image instead:
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" -w /src diskos-ui-builder \
+  sh -c '${CROSS}gcc -O2 -static -o tools/tinj tools/tinj.c'
+
 export SSHPASS="$DISKOS_PW"    # sshpass -e reads the password from the environment, not the argv
-sshpass -e scp tinj root@"$DISKOS_IP":/usr/data/tinj
+sshpass -e scp tools/tinj root@"$DISKOS_IP":/usr/data/tinj
 sshpass -e ssh  root@"$DISKOS_IP" chmod 755 /usr/data/tinj
 ```
 

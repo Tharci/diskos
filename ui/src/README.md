@@ -113,4 +113,5 @@ Both need GCC 14, CMake and Catch2 v3, which the `ui/Dockerfile` image has (see 
 
 TSan cannot start on kernels with high address-space randomisation (WSL, recent Ubuntu): it stops
 with `unexpected memory mapping`. Run it with randomisation off, `setarch -R ctest --preset
-host-tsan` (in Docker this also needs `--security-opt seccomp=unconfined`).
+host-tsan` (in Docker this also needs `--security-opt seccomp=unconfined`, which the dev container
+sets).

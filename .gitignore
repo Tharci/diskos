@@ -36,6 +36,8 @@ vendor/*/unsquashfs
 vendor/*/*.bak
 vendor/*/lib/
 flash/usbboot
+# the on-device touch injector, built from tools/tinj.c (tools/README.md)
+/tools/tinj
 
 # Windows recipe outputs; keep source and unexpected vendor files visible.
 /vendor/windows-x86_64/usbboot.exe
@@ -130,3 +132,13 @@ build/release/
 *.log
 *.tmp
 .DS_Store
+
+# --- local development data (tools/diskos-dev.sh): stock firmware inputs (FiiO's, never redistribute),
+# the Disc's address and Debug Mode password, player captures (may hold personal data), build caches ---
+/.dev/
+
+# --- editor: the shared tasks only; everything else in .vscode/ is personal ---
+/.vscode/*
+!/.vscode/tasks.json
+# clangd's background index
+.cache/
