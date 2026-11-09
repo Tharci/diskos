@@ -16,7 +16,7 @@ namespace {
 /** Hands the link's calls to the legacy C functions. */
 class CallbackListener final : public player::FrameListener {
 public:
-    explicit CallbackListener(diskos_link_listener callbacks) : callbacks_(callbacks) {}
+    explicit CallbackListener(const diskos_link_listener& callbacks) : callbacks_(callbacks) {}
 
     void on_connected(player::PlayerInstance instance) override {
         callbacks_.on_connected(instance.number());
@@ -57,9 +57,8 @@ extern "C" int diskos_link_start(diskos_link_listener listener) {
     // Never destroyed: the receive thread calls into the legacy C until the process ends, past
     // the destruction of other statics.
     // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): deliberately kept for the whole run
-    diskos::legacy::current_link().store(
-            new Link{.listener = diskos::legacy::CallbackListener{listener}}
-    );
+    auto* const link = new Link{.listener = diskos::legacy::CallbackListener{listener}};
+    diskos::legacy::current_link().store(link);
     return 0;
 }
 

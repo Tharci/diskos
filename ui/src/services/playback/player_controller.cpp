@@ -107,6 +107,7 @@ void PlayerController::advance(Clock::time_point now) {
     if (!restore_) {
         return;
     }
+    PendingRestore& pending = *restore_;
     const Progress progress = state_->with([](const PlayerState& state) {
         return Progress{
                 .instance = state.instance(),
@@ -116,25 +117,28 @@ void PlayerController::advance(Clock::time_point now) {
                 .position_time = state.position_time(),
         };
     });
-    if (progress.instance != restore_->instance
-        || (progress.track && !same_track(*progress.track, restore_->track))) {
+    if (progress.instance != pending.instance
+        || (progress.track && !same_track(*progress.track, pending.track))) {
         restore_.reset();  // Another player or another track: the restore is moot
         return;
     }
     if (!progress.track || !progress.playing) {
         return;  // A seek before the track plays is ignored
     }
-    if (restore_->last_seek_time) {
-        if (!progress.position_time || *progress.position_time <= *restore_->last_seek_time) {
+    if (pending.last_seek_time) {
+        if (!progress.position_ms || !progress.position_time
+            || *progress.position_time <= *pending.last_seek_time) {
             return;  // Wait for a position reported after the seek
         }
         const std::uint64_t reached = std::uint64_t{*progress.position_ms} + kToleranceMs;
-        if (reached >= restore_->position_ms || restore_->seek_attempts >= kMaxRestoreSeeks) {
+        if (reached >= pending.position_ms || pending.seek_attempts >= kMaxRestoreSeeks) {
             restore_.reset();  // Landed, or given up
             return;
         }
     }
-    send_restore_seek(now);
+    if (!send_restore_seek(pending, now)) {
+        restore_.reset();
+    }
 }
 
 std::optional<player::PlayerInstance> PlayerController::state_instance() const {
@@ -155,19 +159,17 @@ PlayerController::SendResult PlayerController::send_toggle(
     return sent;
 }
 
-void PlayerController::send_restore_seek(Clock::time_point now) {
+bool PlayerController::send_restore_seek(PendingRestore& pending, Clock::time_point now) {
     const SendResult sent = sender_->send(
-            player::SeekCommand{.position_ms = restore_->position_ms}, restore_->instance
+            player::SeekCommand{.position_ms = pending.position_ms}, pending.instance
     );
-    ++restore_->seek_attempts;
+    ++pending.seek_attempts;
     if (sent) {
-        restore_->last_seek_time = now;
-    } else if (
-            sent.error() == player::SendError::WrongInstance
-            || restore_->seek_attempts >= kMaxRestoreSeeks
-    ) {
-        restore_.reset();
+        pending.last_seek_time = now;
+        return true;
     }
+    return sent.error() != player::SendError::WrongInstance
+           && pending.seek_attempts < kMaxRestoreSeeks;
 }
 
 }  // namespace diskos::playback

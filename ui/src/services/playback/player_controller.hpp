@@ -144,8 +144,11 @@ private:
     /** Send a toggle to `instance`, and expect a resume if it plays a paused or stopped track. */
     SendResult send_toggle(std::optional<player::PlayerInstance> instance, Clock::time_point now);
 
-    /** Send the pending restore's seek, at `now`. */
-    void send_restore_seek(Clock::time_point now);
+    /**
+     * Send `pending`'s seek, at `now`. Returns false if the restore should end: its player is gone,
+     * or it has used its seeks.
+     */
+    [[nodiscard]] bool send_restore_seek(PendingRestore& pending, Clock::time_point now);
 
     player::CommandSender* sender_;
     utils::Synchronized<PlayerState>* state_;

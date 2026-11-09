@@ -111,13 +111,13 @@ bool PlayerLink::connect() {
         return true;  // The same queue, so the same player
     }
     reports_identity_ = *identity;
-    const PlayerInstance instance = connection_.with([](Connection& connection) {
+    const PlayerInstance connected = connection_.with([](Connection& connection) {
         connection.instance = connection.instance ? connection.instance->next() : PlayerInstance{1};
         connection.commands_stale = true;
         return *connection.instance;
     });
     drain_requested_.store(false);  // A drain was about the old player
-    listener_->on_connected(instance);
+    listener_->on_connected(connected);
     return true;
 }
 
