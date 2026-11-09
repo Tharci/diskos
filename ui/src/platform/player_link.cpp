@@ -117,6 +117,7 @@ bool PlayerLink::connect() {
         return *connection.instance;
     });
     drain_requested_.store(false);  // A drain was about the old player
+    inbox_.add_connection(connected);
     listener_->on_connected(connected);
     return true;
 }
@@ -130,7 +131,9 @@ std::expected<std::size_t, MessageReceiver::Error> PlayerLink::receive(
     }
     const auto received = reports_->receive(buffer_, timeout);
     if (received) {
-        listener_->on_frame({buffer_.data(), *received});
+        const std::string_view frame{buffer_.data(), *received};
+        inbox_.add_frame(frame);
+        listener_->on_frame(frame);
         return received;
     }
     if (received.error() == Error::Closed) {

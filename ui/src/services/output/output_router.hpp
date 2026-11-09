@@ -10,6 +10,7 @@
 
 #include "player/command_sender.hpp"
 #include "player/player_instance.hpp"
+#include "player/report_listener.hpp"
 #include "player/reports.hpp"
 #include "services/output/bluetooth_address.hpp"
 #include "services/output/interfaces.hpp"
@@ -65,7 +66,7 @@ enum class Refusal : std::uint8_t {
  * It keeps pointers to everything it is given, which must outlive it. It is not thread-safe: call
  * it from one thread, the main loop.
  */
-class OutputRouter {
+class OutputRouter final : public player::ReportListener {
 public:
     // After a move that failed with nothing changed.
     static constexpr Clock::duration kRetryWait = std::chrono::seconds{3};
@@ -124,7 +125,7 @@ public:
      */
     void bluetooth_lost(const BluetoothAddress& device);
 
-    // The player
+    // The player: PlayerLink::deliver() calls these
 
     /**
      * Note that the player `instance` connected: a running transition is dropped and applied()
@@ -132,13 +133,13 @@ public:
      * from the store instead (a UI restart), and a stored applied() becomes desired() too: the
      * route the player has is kept.
      */
-    void on_connected(player::PlayerInstance instance, Clock::time_point now);
+    void on_connected(player::PlayerInstance instance, Clock::time_point now) override;
 
     /**
-     * Apply one report from the connected player. A track, play-state or position report shows
+     * Hear one report from the connected player. A track, play-state or position report shows
      * that it takes commands, as the answer to a state request does: PlayerReadiness waits for one.
      */
-    void apply_report(const player::Report& report, Clock::time_point now);
+    void on_report(const player::Report& report, Clock::time_point now) override;
 
     /** Note that the player switched its source: applied() becomes unknown. */
     void source_changed();

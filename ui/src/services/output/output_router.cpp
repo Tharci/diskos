@@ -123,7 +123,7 @@ void OutputRouter::on_connected(player::PlayerInstance instance, Clock::time_poi
     save();
 }
 
-void OutputRouter::apply_report(const player::Report& report, Clock::time_point now) {
+void OutputRouter::on_report(const player::Report& report, Clock::time_point now) {
     if (is_answer(report)) {
         readiness_.note_reply(now);
     }

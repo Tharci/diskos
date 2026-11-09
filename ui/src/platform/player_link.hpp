@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <expected>
 #include <optional>
 #include <stop_token>
@@ -15,7 +16,9 @@
 #include "platform/message_queue.hpp"
 #include "player/frame_listener.hpp"
 #include "player/frame_sender.hpp"
+#include "player/player_inbox.hpp"
 #include "player/player_instance.hpp"
+#include "player/report_listener.hpp"
 #include "utils/synchronized.hpp"
 
 namespace diskos::platform {
@@ -35,8 +38,11 @@ struct LinkTiming {
 
 /**
  * The connection to the stock player, which moves frames both ways: it receives them on a thread
- * of its own and hands them to a FrameListener, and sends them from any thread. It does not read
- * them: player::FrameCommandSender sends Commands through it.
+ * of its own, and sends them from any thread. player::FrameCommandSender sends Commands through
+ * it. What it receives reaches:
+ *  - services, decoded, on the thread that calls deliver() (the main loop): it queues what it
+ *    receives until then, in a player::PlayerInbox;
+ *  - the legacy IPC, as raw frames, on the receiving thread (player::FrameListener).
  *
  * When the player restarts, it creates its queues anew, and a descriptor on an old one keeps
  * working without ever receiving again. So the receive thread compares the queues' identities
@@ -44,10 +50,6 @@ struct LinkTiming {
  * and a new commands queue is reopened on the next send.
  *
  * The listener must outlive the link; destroying the link stops and joins its thread.
- *
- * TODO: Deliver reports to the main loop through an inbox (the receive thread decodes and queues,
- *  the loop applies them each tick), so the state they update needs no lock. Best done once the
- *  playback service owns the flow of reports (with the routing or AirPlay port).
  */
 class PlayerLink final : public player::FrameSender {
 public:
@@ -79,6 +81,17 @@ public:
      */
     void request_drain() noexcept;
 
+    /**
+     * Hand everything received since the last call to `listener`, oldest first and decoded, at
+     * `now`: each new player instance, then its reports. Call it from one thread, regularly.
+     * Returns how many frames were dropped since the last call, as too many were waiting.
+     */
+    std::size_t deliver(
+            player::ReportListener& listener, player::ReportListener::Clock::time_point now
+    ) {
+        return inbox_.deliver(listener, now);
+    }
+
     /** Get the connected player instance, or nullopt before the first connects. */
     [[nodiscard]] std::optional<player::PlayerInstance> instance();
 
@@ -109,6 +122,7 @@ private:
     std::optional<QueueIdentity> reports_identity_{};
     std::vector<char> buffer_{};
 
+    player::PlayerInbox inbox_{};
     utils::Synchronized<Connection> connection_{};
     std::atomic<bool> drain_requested_ = false;
     std::jthread thread_;  // Last: starts once everything else is ready

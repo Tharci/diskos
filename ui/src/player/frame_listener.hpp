@@ -13,8 +13,9 @@ namespace diskos::player {
  * player instance connects. The calls come from one thread, in order; the frame's bytes stay
  * valid only during on_frame().
  *
- * TODO: Add a decoding adapter (frames to Reports, for a ReportListener), so services receive
- *  Reports and never frames, like FrameCommandSender does for commands.
+ * Only the legacy IPC hears frames, on the receiving thread: services hear decoded reports
+ * through PlayerLink::deliver() and a ReportListener.
+ * TODO: Remove once the legacy IPC no longer reads frames.
  */
 class FrameListener {
 public:

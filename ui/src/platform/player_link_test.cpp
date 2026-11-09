@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #include "platform/message_queue.hpp"
@@ -16,6 +17,8 @@
 #include "player/frame_listener.hpp"
 #include "player/frame_sender.hpp"
 #include "player/player_instance.hpp"
+#include "player/report_listener.hpp"
+#include "player/reports.hpp"
 #include "utils/synchronized.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <mqueue.h>
@@ -152,6 +155,55 @@ TEST_CASE("PlayerLink delivers the player's frames in order", "[platform][link]"
 
     CHECK(events
           == std::vector<std::string>{"connected 1", "a103001000C9174D", R"(a2020013{"state":1})"});
+}
+
+/** Records the reports deliver() hands it, on the test's thread: "connected 1", "a103", ... */
+class RecordingReportListener final : public player::ReportListener {
+public:
+    void on_connected(PlayerInstance instance, Clock::time_point /*now*/) override {
+        events_.push_back("connected " + std::to_string(instance.number()));
+    }
+
+    void on_report(const player::Report& report, Clock::time_point /*now*/) override {
+        events_.emplace_back(std::visit([](const auto& typed) { return tag_of(typed); }, report));
+    }
+
+    [[nodiscard]] const std::vector<std::string>& events() const noexcept {
+        return events_;
+    }
+
+private:
+    static std::string tag_of(const player::UnknownReport& report) {
+        return std::string{report.tag};
+    }
+
+    template <typename Report>
+    static std::string tag_of(const Report& /*report*/) {
+        return std::string{Report::kTag};
+    }
+
+    std::vector<std::string> events_{};
+};
+
+TEST_CASE(
+        "PlayerLink delivers what it received, decoded, on the caller's thread", "[platform][link]"
+) {
+    const QueueNames names = unique_names();
+    FakePlayer player{names};
+    player.start();
+    RecordingListener frames;
+    PlayerLink link{frames, names, kTiming};
+    (void)frames.wait_for(1);
+    player.report("a103001000C9174D");
+    player.report("not a frame");
+    player.report(R"(a2020013{"state":1})");
+    (void)frames.wait_for(4);
+    RecordingReportListener reports;
+    const std::size_t dropped = link.deliver(reports, std::chrono::steady_clock::now());
+    const std::vector<std::string> expected{"connected 1", "a103", "a202"};
+
+    CHECK(dropped == 0);
+    CHECK(reports.events() == expected);
 }
 
 TEST_CASE("PlayerLink sends to the connected instance, also commands", "[platform][link]") {

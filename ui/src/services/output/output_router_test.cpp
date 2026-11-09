@@ -47,7 +47,7 @@ public:
     explicit Fixture(std::optional<Output> applied = InternalDac{}) {
         store_.set_stored(StoredRoute{.applied = std::move(applied), .settled = true});
         router_.on_connected(kInstance, kStart);
-        router_.apply_report(kAnswer, kStart);
+        router_.on_report(kAnswer, kStart);
         REQUIRE(at(0ms).empty());
         REQUIRE(router_.ready());
         log_.clear();
@@ -156,7 +156,7 @@ TEST_CASE("OutputRouter keeps a choice made while the player settles", "[output]
     const bool chosen = fixture.router().select(Spdif{}).has_value();
     (void)fixture.at(0ms);
     (void)fixture.at(500ms);
-    fixture.router().apply_report(kAnswer, kStart + 600ms);
+    fixture.router().on_report(kAnswer, kStart + 600ms);
     (void)fixture.at(1s);
     const Log while_settling = fixture.log();
     (void)fixture.at(600ms + PlayerReadiness::kSettle);
@@ -177,11 +177,11 @@ TEST_CASE("OutputRouter keeps the stored route after a UI restart", "[output][ro
 
 TEST_CASE("OutputRouter takes only playback reports as the player's answer", "[output][router]") {
     Fixture fixture{FreshPlayer{}};
-    fixture.router().apply_report(player::ChargingReport{.charging = true}, kStart);
-    fixture.router().apply_report(player::UnknownReport{.tag = "aa1c", .body = ""}, kStart);
+    fixture.router().on_report(player::ChargingReport{.charging = true}, kStart);
+    fixture.router().on_report(player::UnknownReport{.tag = "aa1c", .body = ""}, kStart);
     (void)fixture.at(PlayerReadiness::kSettle);
     const bool after_others = fixture.router().ready();
-    fixture.router().apply_report(player::PositionReport{.position_ms = 1000}, kStart + 10s);
+    fixture.router().on_report(player::PositionReport{.position_ms = 1000}, kStart + 10s);
     (void)fixture.at(10s + PlayerReadiness::kSettle);
 
     CHECK_FALSE(after_others);
@@ -403,7 +403,7 @@ TEST_CASE(
 ) {
     Fixture fixture{FreshPlayer{}};
     const std::optional<StoredRoute> connected = fixture.store().saved();
-    fixture.router().apply_report(kAnswer, kStart);
+    fixture.router().on_report(kAnswer, kStart);
     (void)fixture.at(PlayerReadiness::kSettle);
     const std::optional<StoredRoute> ready = fixture.store().saved();
     (void)fixture.at(PlayerReadiness::kSettle + 100ms);  // The Correction to the internal DAC lands
