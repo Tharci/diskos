@@ -13,6 +13,7 @@
 #include "receiver_progress.h"
 #include "wifi.h"
 #include "playback.h"
+#include "legacy/output.h"
 #include "legacy/player_controller.h"
 #include "musicdb.h"   /* persistent per-song accent cache */
 #include "bookmeta.h"
@@ -561,7 +562,7 @@ static int transport_local(const char *cmd)
     int is_prev = !strcmp(cmd, "0201000C0002");
     int is_toggle = !strcmp(cmd, "0201000C0000");
     if(!is_next && !is_prev && !is_toggle) return -1;
-    if(modes_output_busy()){ ui_toast("Switching output - try again"); return -1; }
+    if(diskos_output_busy()){ ui_toast("Switching output - try again"); return -1; }
     if(ui_receiver_active()){   /* the receiver owns playback: its frames only, never book seek or the local play hint */
         int rc = ui_receiver_transport(cmd);
         if(rc != 0) ui_toast("Player busy - try again");
@@ -589,7 +590,6 @@ static int transport_local(const char *cmd)
             return 0;
         }
     }
-    ui_note_transport_sent();
     int sent = is_toggle ? diskos_playback_toggle() : is_next ? diskos_playback_next() : diskos_playback_previous();
     if(sent < 0){ ui_toast("Player busy - try again"); return -1; }
     if(is_toggle){

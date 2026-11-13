@@ -41,11 +41,7 @@ static unsigned g_generation = 0; /* [g_recov_mu] the player instance (legacy/pl
                                    * one-shot re-arm after a player restart. See ipc_generation(). */
 /* Complete A2 evidence, separate from presentation and position updates. */
 static track_state_t g_a2_report;
-static unsigned g_a2_serial, g_a2_playing_report;
-#ifdef DISKOS_TEST_BT_PREPARE
-static unsigned g_prepare_playing_frames;
-#endif
-static int g_a2_stopped;
+static unsigned g_a2_serial;
 /* Main-thread send evidence only; no command or player-state mutation. */
 static unsigned g_resume_toggle, g_resume_after_report;
 static int g_confirmed;         /* [g_recov_mu] accepted a2 state report this generation */
@@ -274,7 +270,7 @@ static void publish_track_locked(int new_track){
 static unsigned g_scr_seq, g_aa03_seq; static int g_scr_on = -1;
 /* Called under g_recov_mu: frame state belongs only to this queue generation. */
 static void screen_new_generation(unsigned generation){
-    g_confirmed = 0; g_a2_stopped = 0; g_a2_playing_report = 0;
+    g_confirmed = 0;
     g_local_publication.state=LOCAL_OPEN; g_local_publication.return_arm=0;
     g_generation = generation; g_scr_on = -1; g_scr_seq = g_aa03_seq = 0;
 }
@@ -425,21 +421,8 @@ static void parse_frame(const char*buf,int n){
         if(update.accepted){
             g_confirmed=1;
             pthread_mutex_lock(&g_mu);
-            /* An edge belongs to one loaded identity, even between UI ticks. */
-            if(g_a2_candidate.playback_token != g_a2_report.playback_token)
-                g_a2_playing_report=0;
             g_a2_report=g_a2_candidate;
             g_a2_serial++;
-#ifdef DISKOS_TEST_BT_PREPARE
-            if(g_a2_report.state == 0) g_prepare_playing_frames++;
-#endif
-            if(g_a2_stopped && g_a2_report.have_track && g_a2_report.state==0)
-                g_a2_playing_report=g_a2_serial;
-            /* A state-only playing report is not an unloaded session. */
-            if(g_a2_report.state==2)
-                g_a2_stopped=1;
-            else if(g_a2_report.have_track)
-                g_a2_stopped=0;
             pthread_mutex_unlock(&g_mu);
         }
         pthread_mutex_unlock(&g_recov_mu);
@@ -608,14 +591,6 @@ int ipc_resume_snapshot(track_state_t *out, unsigned *serial, unsigned *toggle, 
     int valid=g_confirmed && out->player_generation==g_generation;
     pthread_mutex_unlock(&g_recov_mu);
     return valid;
-}
-/* Serial of the last complete stopped/unloaded -> loaded playing transition.
- * Kept at receipt so two replies between UI ticks cannot hide the edge. */
-unsigned ipc_resume_playing_report(void){
-    pthread_mutex_lock(&g_recov_mu);
-    unsigned serial=g_a2_playing_report;
-    pthread_mutex_unlock(&g_recov_mu);
-    return serial;
 }
 void ipc_get_state(track_state_t*out){
     pthread_mutex_lock(&g_mu); *out=g_state; pthread_mutex_unlock(&g_mu);
@@ -847,33 +822,6 @@ int ipc_send_automatic(const char *frame, unsigned generation){
     pthread_mutex_unlock(&g_recov_mu);
     return r;
 }
-#ifdef DISKOS_TEST_BT_PREPARE
-int ipc_prepare_snapshot(track_state_t *out, unsigned *serial, unsigned *playing_frames){
-    pthread_mutex_lock(&g_recov_mu);
-    *out = g_a2_report; *serial = g_a2_serial; *playing_frames = g_prepare_playing_frames;
-    int valid = g_confirmed && out->player_generation == g_generation;
-    pthread_mutex_unlock(&g_recov_mu); return valid;
-}
-int ipc_prepare_send(const char *frame, unsigned generation, uint64_t token, unsigned transport,
-                     unsigned report, unsigned playing_frames, int held, int release, unsigned poweroff){
-    pthread_mutex_lock(&g_recov_mu); pthread_mutex_lock(&g_mu);
-    int rc = IPC_SEND_DEFERRED;
-    char volume[16]; snprintf(volume, sizeof volume, "0715000C%04X", (unsigned)g_state.volume);
-    if(generation == g_generation && g_confirmed &&
-       g_local_publication.state == LOCAL_OPEN && token == g_state.playback_token && transport == g_transport_seq &&
-       poweroff == g_aa03_seq && playing_frames == g_prepare_playing_frames &&
-       (!held || g_state.state != 0) &&
-       (strncmp(frame, "0715", 4) || (g_state.volume_seq && !strcmp(frame, volume))) &&
-       (release || strcmp(frame, "0201000C0000") ||
-        (report == g_a2_serial && g_a2_report.state == 0 && g_state.state == 0)) &&
-       (!release || (!strcmp(frame, "0201000C0000") && report == g_a2_serial &&
-        playing_frames == g_prepare_playing_frames && g_a2_report.have_track &&
-        g_a2_report.player_confirmed && !g_a2_report.provisional && g_a2_report.state == 1 && g_state.state == 1 &&
-        g_a2_report.playback_token == token && g_a2_report.player_generation == generation)))
-        rc = ipc_send_internal(frame, SEND_AUTOMATIC, generation);
-    pthread_mutex_unlock(&g_mu); pthread_mutex_unlock(&g_recov_mu); return rc;
-}
-#endif
 /* 1 once a player instance connected. */
 int ipc_is_ready(void){
     pthread_mutex_lock(&g_recov_mu); int r=g_rx_ready; pthread_mutex_unlock(&g_recov_mu); return r;

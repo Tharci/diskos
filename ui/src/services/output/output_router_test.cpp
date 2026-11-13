@@ -422,5 +422,58 @@ TEST_CASE(
     CHECK_FALSE(fixture.router().ready());
 }
 
+TEST_CASE("OutputRouter prepares a play from idle on the applied output", "[output][router]") {
+    Fixture spdif{Output{Spdif{}}};
+    const bool prepared = spdif.router().prepare_play().has_value();
+    Fixture speaker{kOnSpeaker};
+    const bool nothing_to_prepare = speaker.router().prepare_play().has_value();
+
+    CHECK(prepared);
+    CHECK(spdif.log() == Log{"0666000C0004", "0657000C0008"});
+    CHECK(spdif.router().applied() == Output{Spdif{}});
+    CHECK(nothing_to_prepare);
+    CHECK(speaker.log().empty());
+}
+
+TEST_CASE("OutputRouter prepares nothing while a move runs", "[output][router]") {
+    Fixture fixture;
+    fixture.playback().set_play_state(PlayState::Playing);
+    REQUIRE(fixture.router().select(Spdif{}).has_value());
+    (void)fixture.at(0ms);
+    const bool prepared = fixture.router().prepare_play().has_value();
+
+    CHECK(prepared);
+    CHECK(fixture.log() == Log{"pause"});
+}
+
+TEST_CASE("OutputRouter takes a prepared route once the player plays on it", "[output][router]") {
+    Fixture fixture{FreshPlayer{}};
+    const bool prepared = fixture.router().prepare_play().has_value();
+    const std::optional<Output> before_playing = fixture.router().applied();
+    fixture.playback().set_play_state(PlayState::Playing);
+    (void)fixture.at(0ms);
+    const std::optional<Output> playing = fixture.router().applied();
+    fixture.router().on_report(kAnswer, kStart);
+    (void)fixture.at(PlayerReadiness::kSettle);
+
+    CHECK(prepared);
+    CHECK_FALSE(before_playing.has_value());
+    CHECK(playing == Output{InternalDac{}});
+    // The preamble, then the state request: no correction once the player settles.
+    CHECK(fixture.log() == Log{"0666000C0006", "0657000C0008", "02020008"});
+}
+
+TEST_CASE("OutputRouter still moves a prepared play to a wanted speaker", "[output][router]") {
+    Fixture fixture{FreshPlayer{}};
+    fixture.router().bluetooth_connected(kSpeaker);
+    REQUIRE(fixture.router().prepare_play().has_value());  // To the internal DAC meanwhile
+    fixture.playback().set_play_state(PlayState::Playing);
+    (void)fixture.at(0ms);
+    fixture.router().on_report(kAnswer, kStart);
+    (void)fixture.at(PlayerReadiness::kSettle);
+
+    CHECK(fixture.log() == Log{"0666000C0006", "0657000C0008", "02020008", "pause"});
+}
+
 }  // namespace
 }  // namespace diskos::output

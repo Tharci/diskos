@@ -6,6 +6,7 @@
 #include <optional>
 #include <string_view>
 
+#include "legacy/player_link.hpp"
 #include "platform/player_link.hpp"
 #include "player/frame_listener.hpp"
 #include "player/player_instance.hpp"
@@ -46,6 +47,12 @@ std::atomic<Link*>& current_link() {
 }
 
 }  // namespace
+
+platform::PlayerLink* player_link() {
+    Link* const started = current_link().load();
+    return started != nullptr ? &started->link : nullptr;
+}
+
 }  // namespace diskos::legacy
 
 extern "C" int diskos_link_start(diskos_link_listener listener) {

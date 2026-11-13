@@ -24,12 +24,12 @@ std::expected<void, player::SendError> IpcCommandSender::send(
     const std::string frame = player::frame(command);
     const unsigned generation = generation_of(instance);
     int sent = 0;
-    if (policy_ == Policy::Automatic) {
-        sent = ipc_send_automatic(frame.c_str(), generation);
-    } else if (generation != ipc_generation()) {
+    if (generation != ipc_generation()) {
         // Checked just before the send, not with it: a restart in between still lets it through,
-        // as every user command did before instances.
+        // as every command did before instances.
         sent = IPC_SEND_DEFERRED;
+    } else if (policy_ == Policy::Background) {
+        sent = ipc_send_probe(frame.c_str());
     } else {
         sent = ipc_send_cmd(frame.c_str());
     }

@@ -48,4 +48,14 @@ using Step = std::variant<SendStep, WaitStep>;
  */
 [[nodiscard]] std::vector<Step> plan_route(const std::optional<Output>& from, const Output& to);
 
+/**
+ * Plan the frames stock mq_ui sends right before a local play from idle: 0666 to `output` (and
+ * 0642 5 for USB audio), then 0657 8. An idle player drifts its output (to Bluetooth, out_dev 2)
+ * and drops its work mode, so a play from stopped otherwise fails: a ~15 s hang ("Failed to get
+ * BT device MAC") or "work mode NULL" (legacy, device-confirmed 2026-09-01). The player takes its
+ * frames in order, so the play that follows gets both.
+ * A Bluetooth sink needs none: the player keeps it. Returns no frames for one.
+ */
+[[nodiscard]] std::vector<player::Command> plan_play_preamble(const Output& output);
+
 }  // namespace diskos::output

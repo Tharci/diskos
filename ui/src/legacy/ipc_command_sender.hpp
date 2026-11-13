@@ -23,8 +23,9 @@ public:
         // ipc_send_cmd: a failed send raises the error flag, and a transport command cancels the
         // legacy position recovery.
         User,
-        // ipc_send_automatic: silent, and only once the player instance has answered.
-        Automatic,
+        // ipc_send_probe: silent, also before the player has answered (the output router asks a
+        // starting player for its state).
+        Background,
     };
 
     explicit IpcCommandSender(Policy policy) : policy_(policy) {}
@@ -33,8 +34,7 @@ public:
      * Send `command`'s frame; with `instance`, only if that player instance is still the connected
      * one.
      * Returns:
-     *  - SendError::WrongInstance if `instance` is given and is not the connected one, or, under
-     *    Policy::Automatic, has not answered yet
+     *  - SendError::WrongInstance if `instance` is given and is not the connected one
      *  - SendError::Failed if it was not queued
      */
     [[nodiscard]] std::expected<void, player::SendError> send(

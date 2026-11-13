@@ -81,6 +81,22 @@ private:
 
 }  // namespace
 
+std::vector<player::Command> plan_play_preamble(const Output& output) {
+    if (std::holds_alternative<Bluetooth>(output)) {
+        return {};
+    }
+    if (std::holds_alternative<UsbAudio>(output)) {
+        return {
+                RouteOutputCommand{.route = OutputRoute::UsbHostAudio},
+                SelectUsbGadgetCommand{.gadget = UsbGadget::UsbHostAudio},
+                kLocalSource,
+        };
+    }
+    const OutputRoute route =
+            std::holds_alternative<Spdif>(output) ? OutputRoute::Spdif : OutputRoute::InternalDac;
+    return {RouteOutputCommand{.route = route}, kLocalSource};
+}
+
 std::vector<Step> plan_route(const std::optional<Output>& from, const Output& to) {
     if (from == to) {
         return {};

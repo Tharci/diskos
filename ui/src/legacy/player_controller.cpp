@@ -6,19 +6,21 @@
 #include <optional>
 
 #include "legacy/ipc_command_sender.hpp"
+#include "legacy/player_controller.hpp"
 #include "legacy/player_state.h"
 #include "legacy/player_state.hpp"
 #include "player/modes.hpp"
 #include "services/playback/player_controller.hpp"
 
 namespace diskos::legacy {
-namespace {
 
-playback::PlayerController& controller() {
+playback::PlayerController& player_controller() {
     static IpcCommandSender sender{IpcCommandSender::Policy::User};
     static playback::PlayerController controller{sender, player_state(DISKOS_PLAYER_LOCAL)};
     return controller;
 }
+
+namespace {
 
 int status(const playback::PlayerController::SendResult& result) {
     return result ? 0 : -1;
@@ -29,22 +31,22 @@ int status(const playback::PlayerController::SendResult& result) {
 
 extern "C" int diskos_playback_toggle(void) {
     using namespace diskos::legacy;
-    return status(controller().toggle(diskos::playback::PlayerState::Clock::now()));
+    return status(player_controller().toggle(diskos::playback::PlayerState::Clock::now()));
 }
 
 extern "C" int diskos_playback_next(void) {
     using namespace diskos::legacy;
-    return status(controller().next());
+    return status(player_controller().next());
 }
 
 extern "C" int diskos_playback_previous(void) {
     using namespace diskos::legacy;
-    return status(controller().previous());
+    return status(player_controller().previous());
 }
 
 extern "C" int diskos_playback_seek(uint32_t position_ms) {
     using namespace diskos::legacy;
-    return status(controller().seek(position_ms));
+    return status(player_controller().seek(position_ms));
 }
 
 extern "C" int diskos_playback_set_volume(int level) {
@@ -52,7 +54,7 @@ extern "C" int diskos_playback_set_volume(int level) {
     const std::optional<diskos::player::VolumeLevel> volume =
             level < 0 ? std::nullopt
                       : diskos::player::VolumeLevel::from(static_cast<std::uint32_t>(level));
-    return volume ? status(controller().set_volume(*volume)) : -1;
+    return volume ? status(player_controller().set_volume(*volume)) : -1;
 }
 
 extern "C" int diskos_playback_set_play_mode(int mode) {
@@ -61,10 +63,10 @@ extern "C" int diskos_playback_set_play_mode(int mode) {
     if (mode < 0 || mode > static_cast<int>(PlayMode::Single)) {
         return -1;
     }
-    return status(controller().set_play_mode(static_cast<PlayMode>(mode)));
+    return status(player_controller().set_play_mode(static_cast<PlayMode>(mode)));
 }
 
 extern "C" int diskos_playback_set_favourite(int favourite) {
     using namespace diskos::legacy;
-    return status(controller().set_favourite(favourite != 0));
+    return status(player_controller().set_favourite(favourite != 0));
 }

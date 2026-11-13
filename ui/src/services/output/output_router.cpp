@@ -5,6 +5,8 @@
 #include <utility>
 #include <variant>
 
+#include "services/output/route_plan.hpp"
+
 namespace diskos::output {
 namespace {
 
@@ -104,6 +106,7 @@ void OutputRouter::bluetooth_lost(const BluetoothAddress& device) {
 void OutputRouter::on_connected(player::PlayerInstance instance, Clock::time_point now) {
     instance_ = instance;
     transition_.reset();
+    prepared_.reset();
     snapshot_.reset();
     lost_.reset();
     intent_ = false;
@@ -131,6 +134,7 @@ void OutputRouter::on_report(const player::Report& report, Clock::time_point now
 
 void OutputRouter::source_changed() {
     transition_.reset();
+    prepared_.reset();
     snapshot_.reset();
     recovering_ = false;
     applied_.reset();
@@ -145,6 +149,7 @@ std::vector<Outcome> OutputRouter::advance(Clock::time_point now) {
     if (readiness_.advance(now)) {
         save();
     }
+    confirm_prepared();
     if (!transition_ && may_start(now)) {
         start(*instance_);
     }
@@ -175,9 +180,37 @@ bool OutputRouter::may_start(Clock::time_point now) {
     return kind != Kind::Correction || !is_playing(playback_->play_state());
 }
 
+SendResult OutputRouter::prepare_play() {
+    if (!instance_ || transition_) {
+        return {};
+    }
+    const Output fallback =
+            std::holds_alternative<Bluetooth>(desired_) ? Output{InternalDac{}} : desired_;
+    const Output output = applied_.value_or(fallback);
+    for (const player::Command& command : plan_play_preamble(output)) {
+        if (const SendResult sent = sender_->send(command, instance_); !sent) {
+            return sent;
+        }
+    }
+    if (!applied_) {
+        prepared_ = output;
+    }
+    return {};
+}
+
+void OutputRouter::confirm_prepared() {
+    if (!prepared_ || applied_ || transition_ || playback_->play_state() != PlayState::Playing) {
+        return;
+    }
+    applied_ = std::exchange(prepared_, std::nullopt);
+    intent_ = applied_ != desired_;  // Then a move it waits for is wanted, not a correction
+    save();
+}
+
 void OutputRouter::start(player::PlayerInstance instance) {
     kind_ = next_kind();
     intent_ = false;
+    prepared_.reset();
     if (!snapshot_) {
         snapshot_ = playback_->snapshot();  // A half-applied move keeps the one from before it
     }

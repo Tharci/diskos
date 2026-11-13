@@ -74,7 +74,6 @@ int  saver_custom_preview_on(void);
 void datetime_create(lv_obj_t *root);  /* SCR_DATETIME: set the date + time by hand (datetime.c) */
 void datetime_refresh(void);           /* rebuilt from the current time on each show */
 void ui_rtc_save_now(void);            /* save the system clock to the RTC now (hwclock -w, off the UI thread) */
-void ui_note_transport_sent(void);      /* a play/pause/next/prev went to the player: this ipc generation needs no local-init one-shot */
 void ui_art_redo(void);                /* re-request the cover without same-album reuse (Online Album Art switched) */
 /* Shared cover API: UI thread only; callers borrow, never free the descriptor. */
 void sharp_cover_set_source(const char *path);
@@ -159,10 +158,8 @@ void bt_info_refresh(void);
 extern const char *const BT_CODEC_LABEL[BT_CODEC_N];
 int ui_bt_codec_frame(const char *mac, char *out, int cap); /* legacy route frame */
 int ui_bt_codec_set(int value);   /* explicit Settings action only; stock saves and applies it */
-const char *ui_route_mac(void);                  /* main.c: MAC the player is routed to, "" when local */
 void bt_boot_restore(void);   /* at startup: re-enable BT + arm auto-route if it was on */
 void bt_notify_player_restart(void);   /* player restarted: forget stale auto-route so the poll re-routes */
-int  ui_player_settling(void);         /* 1 while the player is still in its post-restart late-init settle window */
 void library_open_album(const char *name);
 void library_open_artist(const char *name);
 void albumwall_create(lv_obj_t *root);     /* SCR_ALBUMWALL: cover-flow album browser */
@@ -217,11 +214,7 @@ void tune_refresh(void);      /* re-sync Tune panel Play Mode/EQ labels on show 
 void ui_set_dre(int on);
 void ui_set_gain(int high);
 void ui_set_output(int spdif);
-int  ui_route_bt_automatic(const char *mac); /* poll retries while admission is deferred */
-int  ui_route_bt(const char *mac);   /* route player audio to a connected BT speaker (by MAC) */
-int  ui_route_bt_loss_accepted(void); /* outstanding local-output recovery tail */
-int  ui_route_bt_lost(int fresh);         /* confirmed sink loss: automatic local recovery, no resume */
-int  ui_route_analog(void);          /* route player audio back to the local DAC */
+int  ui_output_select(int output, const char *mac);   /* the user picks a diskos_output_kind (legacy/output.h; mac for a sink): 0 = taken, else -1 after a toast */
 void ui_set_dac_filter(int idx);
 void ui_set_replay_gain(int v);   /* 0=Off 1=Track 2=Album */
 void ui_set_gapless(int on);

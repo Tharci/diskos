@@ -94,14 +94,6 @@ int  ipc_send_probe(const char *frame);/* background send (state-sync/health): s
 #define IPC_SEND_DEFERRED 1 /* automatic intention remains pending, no send error */
 int  ipc_confirmed_snapshot(unsigned *generation); /* atomic current-generation evidence */
 int  ipc_send_automatic(const char *frame, unsigned generation); /* 0=queued, -1=failed, 1=deferred */
-#ifdef DISKOS_TEST_BT_PREPARE
-int ipc_prepare_snapshot(track_state_t *, unsigned *serial, unsigned *playing_frames);
-/* Queue only while the preparation still owns this generation, track token
- * and main-thread transport epoch. Release additionally requires the exact
- * latest complete paused A2; RX cannot change it between the check and send. */
-int ipc_prepare_send(const char *, unsigned generation, uint64_t token, unsigned transport,
-                     unsigned report, unsigned playing_frames, int held, int release, unsigned poweroff);
-#endif
 int  ipc_is_ready(void);               /* 1 once a player instance connected */
 int  ipc_take_send_error(void);        /* 1 (and clears) if a recent send failed */
 int  ipc_take_reconnected(void);       /* 1 (and clears) after a player restart -> caller resyncs */

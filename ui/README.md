@@ -80,7 +80,7 @@ set `DISKOS_DEP_OUT` to keep them in a directory shared between build directorie
   `cmake --preset device -B build/profile -DDISKOS_PROFILE=ON && cmake --build build/profile`.
   Options: `DISKOS_PROFILE` (the `prof.c` measurement hooks), `DISKOS_FRAME_LOG` (logs every frame to and from the
   player, byte-exact, to `/tmp/diskos_frames.log` on the Disc), `DISKOS_TEST_OUTPUTS` (shows SPDIF Output and
-  USB Audio), `DISKOS_TEST_BT_PREPARE` (the Bluetooth preparation experiment).
+  USB Audio).
 - **Checks:** `tools/check_theme.py` (colours and fonts only through theme roles) runs before every link of
   `mq_ui` and as a pre-commit hook; `tools/check_punct.py` (no punctuation the device fonts lack) runs as a
   pre-commit hook.

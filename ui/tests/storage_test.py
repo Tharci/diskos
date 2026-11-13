@@ -93,10 +93,9 @@ static _Atomic int g_source_mode;
 static uint32_t lv_tick_get(void){ return test_clock; }
 static void ui_toast(const char *s){ (void)s; }
 static void art_cancel(void){}
-void modes_output_reset(void){}   /* output routing is not under test here */
+void diskos_output_source_changed(void){}   /* output routing is not under test here */
 static int fw_os_ver(void){ return 257; }   /* source_send() refuses unverified firmware */
-static void route_loss_invalidate_seek(void){}
-int modes_output_busy(void){ return 0; }
+int diskos_output_busy(void){ return 0; }
 static int scanner_active(void){ return test_scan; }
 static int scanner_start(void){ return 0; }
 int mdb_total_song_count(void){ return 1; }

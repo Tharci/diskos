@@ -67,7 +67,7 @@ diskOS sends this through `ui_set_workmode()` in `ui/main.c`.
 <a id="bt-audio-output-transmit-to-a-bt-speaker-a2dp-source---verified-working-2026-08-03"></a>
 
 ## BT AUDIO OUTPUT (transmit to a BT speaker, a2dp-source)
-Route-to-BT sequence (`ui_route_bt()`, MAC = connected speaker, uppercased):
+Route-to-BT sequence (the output router, `ui/src/services/output/route_plan.hpp`; MAC = connected speaker, uppercased):
 
 ```text
 0666000C0006   PRE-STOP: normalize local output state first
@@ -84,7 +84,7 @@ Route-to-BT sequence (`ui_route_bt()`, MAC = connected speaker, uppercased):
 shadow output and DAC flag inconsistent, causing `mq_player` to crash, release the
 SD card, and trigger an MCU reboot. `06b3` also requires `06c1` initialization to
 finish. Play with `0100...` after routing. Return to local output with
-`0666000C0006` followed by `0657000C0008` (`ui_route_analog()`).
+`0666000C0006` followed by `0657000C0008` (the output router).
 
 diskOS starts BlueALSA with `--sbc-quality=medium` to reduce SBC encoding load.
 Routing starts with SBC. On V2.57, diskOS can then request AAC or LDAC after the

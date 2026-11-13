@@ -104,5 +104,25 @@ TEST_CASE("plan_route plans nothing to the output already applied", "[output][ro
     CHECK(plan(speaker, same_speaker).empty());
 }
 
+/** The preamble before a play from idle on `output`, as frames. */
+Plan preamble(const Output& output) {
+    Plan frames;
+    for (const player::Command& command : plan_play_preamble(output)) {
+        frames.push_back(player::frame(command));
+    }
+    return frames;
+}
+
+TEST_CASE(
+        "plan_play_preamble re-asserts a local output and the work mode", "[output][route_plan]"
+) {
+    const Output speaker = bluetooth("A4:C1:38:0F:9E:2B");
+
+    CHECK(preamble(InternalDac{}) == Plan{"0666000C0006", "0657000C0008"});
+    CHECK(preamble(Spdif{}) == Plan{"0666000C0004", "0657000C0008"});
+    CHECK(preamble(UsbAudio{}) == Plan{"0666000C0003", "0642000C0005", "0657000C0008"});
+    CHECK(preamble(speaker).empty());
+}
+
 }  // namespace
 }  // namespace diskos::output

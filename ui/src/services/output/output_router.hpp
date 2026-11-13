@@ -144,6 +144,18 @@ public:
     /** Note that the player switched its source: applied() becomes unknown. */
     void source_changed();
 
+    // Playing
+
+    /**
+     * Prepare a local play from idle: send the play preamble (plan_play_preamble()) for applied(),
+     * right before the play command. While applied() is unknown it goes to desired(), or to the
+     * internal DAC if that is a Bluetooth sink; if the player then reports Playing, the route
+     * evidently took, and becomes applied(). Does nothing while a transition runs or before a
+     * player connected. Call it only when nothing plays: a 0666 gaps a playing track.
+     * Returns a SendError if a frame was not sent.
+     */
+    [[nodiscard]] SendResult prepare_play();
+
     // Time
 
     /**
@@ -163,6 +175,8 @@ private:
     [[nodiscard]] Kind next_kind() const;
     [[nodiscard]] bool departing() const;
     [[nodiscard]] bool may_start(Clock::time_point now);
+    /** Take a prepared output as applied once the player plays on it. */
+    void confirm_prepared();
     void start(player::PlayerInstance instance);
     void run(Clock::time_point now, std::vector<Outcome>& outcomes);
     void on_done(const Transition& done, Clock::time_point now, std::vector<Outcome>& outcomes);
@@ -194,7 +208,8 @@ private:
     bool intent_ = false;                     // desired_ changed since a transition last started
     std::optional<BluetoothAddress> lost_{};  // The sink that went away
     std::optional<Transition> transition_{};
-    Kind kind_ = Kind::Correction;  // Of the running or last transition
+    std::optional<Output> prepared_{};  // Its preamble was sent while applied_ was unknown
+    Kind kind_ = Kind::Correction;      // Of the running or last transition
     std::optional<playback::PlaybackSnapshot>
             snapshot_{};       // Taken at its start, kept till restored
     bool recovering_ = false;  // A move failed halfway
