@@ -17,9 +17,9 @@
 #include "player/frame_listener.hpp"
 #include "player/frame_sender.hpp"
 #include "player/player_instance.hpp"
+#include "player/report_decoder.hpp"
 #include "player/report_listener.hpp"
 #include "player/reports.hpp"
-#include "utils/synchronized.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <mqueue.h>
 #include <unistd.h>
@@ -58,36 +58,29 @@ bool eventually(const auto& done) {
 /** Records what the link delivers, one line per call: "connected 1", the frame, "drained". */
 class RecordingListener final : public player::FrameListener {
 public:
-    void on_connected(PlayerInstance instance) override {
-        add("connected " + std::to_string(instance.number()));
+    void on_connected(PlayerInstance instance, Clock::time_point /*now*/) override {
+        events_.push_back("connected " + std::to_string(instance.number()));
     }
 
-    void on_frame(std::string_view frame) override {
-        add(std::string{frame});
+    void on_frame(std::string_view frame, Clock::time_point /*now*/) override {
+        events_.emplace_back(frame);
     }
 
-    void on_drained() override {
-        add("drained");
+    void on_drained(Clock::time_point /*now*/) override {
+        events_.emplace_back("drained");
     }
 
-    [[nodiscard]] std::vector<std::string> events() {
-        return events_.with([](const std::vector<std::string>& events) { return events; });
-    }
-
-    /** Wait until `count` calls arrived, and get them. */
-    [[nodiscard]] std::vector<std::string> wait_for(std::size_t count) {
-        (void)eventually([&] { return events().size() >= count; });
-        return events();
+    /** Deliver from `link` until `count` calls arrived (or a second passed), and get them all. */
+    [[nodiscard]] const std::vector<std::string>& wait_for(PlayerLink& link, std::size_t count) {
+        (void)eventually([&] {
+            (void)link.deliver(*this, std::chrono::steady_clock::now());
+            return events_.size() >= count;
+        });
+        return events_;
     }
 
 private:
-    void add(std::string event) {
-        events_.with([&event](std::vector<std::string>& events) {
-            events.push_back(std::move(event));
-        });
-    }
-
-    utils::Synchronized<std::vector<std::string>> events_;
+    std::vector<std::string> events_;
 };
 
 /** The player's side of the queues: it creates them, sends reports and reads commands. */
@@ -134,9 +127,9 @@ private:
 TEST_CASE("PlayerLink creates the reports queue when the player has not", "[platform][link]") {
     const QueueNames names = unique_names();
     FakePlayer player{names};
+    PlayerLink link{names, kTiming};
     RecordingListener listener;
-    PlayerLink link{listener, names, kTiming};
-    const auto connected = listener.wait_for(1);
+    const auto connected = listener.wait_for(link, 1);
 
     CHECK(connected == std::vector<std::string>{"connected 1"});
     CHECK(link.instance() == PlayerInstance{1});
@@ -146,19 +139,19 @@ TEST_CASE("PlayerLink delivers the player's frames in order", "[platform][link]"
     const QueueNames names = unique_names();
     FakePlayer player{names};
     player.start();
+    PlayerLink link{names, kTiming};
     RecordingListener listener;
-    PlayerLink link{listener, names, kTiming};
-    (void)listener.wait_for(1);
+    (void)listener.wait_for(link, 1);
     player.report("a103001000C9174D");
     player.report(R"(a2020013{"state":1})");
-    const auto events = listener.wait_for(3);
+    const auto events = listener.wait_for(link, 3);
 
     CHECK(events
           == std::vector<std::string>{"connected 1", "a103001000C9174D", R"(a2020013{"state":1})"});
 }
 
-/** Records the reports deliver() hands it, on the test's thread: "connected 1", "a103", ... */
-class RecordingReportListener final : public player::ReportListener {
+/** Records the reports a ReportDecoder hands it: "connected 1", then each report's tag. */
+class RecordingReports final : public player::ReportListener {
 public:
     void on_connected(PlayerInstance instance, Clock::time_point /*now*/) override {
         events_.push_back("connected " + std::to_string(instance.number()));
@@ -185,24 +178,22 @@ private:
     std::vector<std::string> events_{};
 };
 
-TEST_CASE(
-        "PlayerLink delivers what it received, decoded, on the caller's thread", "[platform][link]"
-) {
+TEST_CASE("PlayerLink delivers on the caller's thread, also to a decoder", "[platform][link]") {
     const QueueNames names = unique_names();
     FakePlayer player{names};
     player.start();
-    RecordingListener frames;
-    PlayerLink link{frames, names, kTiming};
-    (void)frames.wait_for(1);
+    PlayerLink link{names, kTiming};
     player.report("a103001000C9174D");
     player.report("not a frame");
     player.report(R"(a2020013{"state":1})");
-    (void)frames.wait_for(4);
-    RecordingReportListener reports;
-    const std::size_t dropped = link.deliver(reports, std::chrono::steady_clock::now());
+    RecordingReports reports;
+    player::ReportDecoder decoder{reports};
+    (void)eventually([&] {
+        (void)link.deliver(decoder, std::chrono::steady_clock::now());
+        return reports.events().size() >= 3;
+    });
     const std::vector<std::string> expected{"connected 1", "a103", "a202"};
 
-    CHECK(dropped == 0);
     CHECK(reports.events() == expected);
 }
 
@@ -210,9 +201,9 @@ TEST_CASE("PlayerLink sends to the connected instance, also commands", "[platfor
     const QueueNames names = unique_names();
     FakePlayer player{names};
     player.start();
+    PlayerLink link{names, kTiming};
     RecordingListener listener;
-    PlayerLink link{listener, names, kTiming};
-    (void)listener.wait_for(1);
+    (void)listener.wait_for(link, 1);
     player::FrameCommandSender commands{link};
     const auto toggled = commands.send(player::PlayPauseCommand{});
     const auto probed = link.send_frame("02020008", PlayerInstance{1});
@@ -229,8 +220,7 @@ TEST_CASE("PlayerLink sends to the connected instance, also commands", "[platfor
 TEST_CASE("PlayerLink fails a send when the player has no commands queue", "[platform][link]") {
     const QueueNames names = unique_names();
     FakePlayer player{names};
-    RecordingListener listener;
-    PlayerLink link{listener, names, kTiming};
+    PlayerLink link{names, kTiming};
 
     CHECK(link.send_frame("0201000C0000") == std::unexpected(SendError::Failed));
 }
@@ -239,8 +229,7 @@ TEST_CASE("PlayerLink retries a full commands queue, then fails", "[platform][li
     const QueueNames names = unique_names();
     FakePlayer player{names};
     player.start();
-    RecordingListener listener;
-    PlayerLink link{listener, names, kTiming};
+    PlayerLink link{names, kTiming};
     for (long sent = 0; sent < kCapacity.max_messages; ++sent) {
         REQUIRE(link.send_frame("02020008").has_value());
     }
@@ -256,13 +245,13 @@ TEST_CASE("PlayerLink follows a player restart", "[platform][link]") {
     const QueueNames names = unique_names();
     FakePlayer player{names};
     player.start();
+    PlayerLink link{names, kTiming};
     RecordingListener listener;
-    PlayerLink link{listener, names, kTiming};
-    (void)listener.wait_for(1);
+    (void)listener.wait_for(link, 1);
     player.start();  // The restarted player creates both queues anew
-    const auto reconnected = listener.wait_for(2);
+    const auto reconnected = listener.wait_for(link, 2);
     player.report("aa1d000C0057");
-    const auto events = listener.wait_for(3);
+    const auto events = listener.wait_for(link, 3);
     const auto sent = link.send_frame("0201000C0001");
     const auto to_old = link.send_frame("02020008", PlayerInstance{1});
 
@@ -277,13 +266,13 @@ TEST_CASE("PlayerLink drains on request", "[platform][link]") {
     const QueueNames names = unique_names();
     FakePlayer player{names};
     player.start();
+    PlayerLink link{names, kTiming};
     RecordingListener listener;
-    PlayerLink link{listener, names, kTiming};
-    (void)listener.wait_for(1);
+    (void)listener.wait_for(link, 1);
     player.report("aa23000C0000");
     player.report("aa23000C0001");
     link.request_drain();
-    const auto events = listener.wait_for(4);
+    const auto events = listener.wait_for(link, 4);
 
     CHECK(events
           == std::vector<std::string>{"connected 1", "aa23000C0000", "aa23000C0001", "drained"});

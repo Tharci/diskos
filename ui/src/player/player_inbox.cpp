@@ -5,8 +5,6 @@
 #include <algorithm>
 #include <utility>
 
-#include "player/reports.hpp"
-
 namespace diskos::player {
 
 void PlayerInbox::add_connection(PlayerInstance instance) {
@@ -28,7 +26,11 @@ void PlayerInbox::add_frame(std::string_view frame) {
     });
 }
 
-std::size_t PlayerInbox::deliver(ReportListener& listener, ReportListener::Clock::time_point now) {
+void PlayerInbox::add_drained() {
+    queue_.with([](Queue& queue) { queue.events.emplace_back(Drained{}); });
+}
+
+std::size_t PlayerInbox::deliver(FrameListener& listener, FrameListener::Clock::time_point now) {
     // Taken out whole, so the receiving thread never waits for the listener.
     auto [events, dropped] = queue_.with([](Queue& queue) {
         auto taken = std::pair{std::exchange(queue.events, {}), std::exchange(queue.dropped, 0)};
@@ -39,9 +41,9 @@ std::size_t PlayerInbox::deliver(ReportListener& listener, ReportListener::Clock
         if (const auto* connected = std::get_if<Connected>(&event)) {
             listener.on_connected(connected->instance, now);
         } else if (const auto* frame = std::get_if<std::string>(&event)) {
-            if (const Decoded<Report> report = decode_report(*frame)) {
-                listener.on_report(*report, now);
-            }
+            listener.on_frame(*frame, now);
+        } else {
+            listener.on_drained(now);
         }
     }
     return dropped;

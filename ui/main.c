@@ -2032,6 +2032,7 @@ static void app_run(const char *exec){
                 }
                 killed = 1; break;
             }
+            diskos_output_tick();          /* the player's frames still reach the IPC state and the output router */
             usleep(200000);
         }
         if(!failed && !killed && WIFEXITED(status) && WEXITSTATUS(status) == 127) failed = 1;  /* exec failed */
@@ -3578,7 +3579,10 @@ static void ho_tick(const track_state_t *st, int playing);
 static void cast_end_for_reload(void){
     if(ho_get(&g_ho) == HO_LOCAL) return;
     uint32_t t0 = lv_tick_get(); g_cast_end = 1;
-    while(ho_get(&g_ho) != HO_LOCAL && lv_tick_elaps(t0) < CAST_RELOAD_MS){ track_state_t st; ipc_get_state(&st); ho_tick(&st, g_playing); usleep(20000); }
+    while(ho_get(&g_ho) != HO_LOCAL && lv_tick_elaps(t0) < CAST_RELOAD_MS){
+        diskos_output_tick();   /* the player's frames reach the IPC state only through the main loop's tick */
+        track_state_t st; ipc_get_state(&st); ho_tick(&st, g_playing); usleep(20000);
+    }
 }
 #ifdef DISKOS_AIRPLAY_PROOF
 /* ---- AirPlay proof (slice P1). airplay_probe.c supervises a FAKE helper through g_ho (so the 16b routing, output and key guards read it) with
@@ -4160,10 +4164,10 @@ int main(int argc, char **argv){
     playback_set_remote_sink(PB_SRC_AIRPLAY, sender_sink);
     playback_set_cast_sink(cast_sink);   /* Cast transport commands: toggle, next, previous (seek and volume stay unwired) */
     for(;;){
+        diskos_output_tick();   /* first: the player's frames (IPC state, then the router), a pending playback restore, output moves */
         if(ipc_take_reconnected()) player_reconnected();
         receiver_entry_tick();
         audio_restore_tick();
-        diskos_output_tick();   /* the player's reports to the router, a pending playback restore, and output moves */
         ipc_bt_autonext_poll(lv_tick_get(),
             fw_os_ver() == 257 && diskos_output_applied(NULL) == DISKOS_OUTPUT_BLUETOOTH &&
             ui_get_source_mode() == 0 && !ui_receiver_in_use() && !ui_cast_session_active() &&

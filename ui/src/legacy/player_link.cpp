@@ -10,34 +10,42 @@
 #include "platform/player_link.hpp"
 #include "player/frame_listener.hpp"
 #include "player/player_instance.hpp"
+#include "player/report_decoder.hpp"
 
 namespace diskos::legacy {
 namespace {
 
-/** Hands the link's calls to the legacy C functions. */
-class CallbackListener final : public player::FrameListener {
+using player::FrameListener;
+
+/** Hands each event to the legacy C first, then to the services, decoded. */
+class Fanout final : public FrameListener {
 public:
-    explicit CallbackListener(const diskos_link_listener& callbacks) : callbacks_(callbacks) {}
+    Fanout(const diskos_link_listener& callbacks, player::ReportListener& services)
+        : callbacks_(&callbacks), services_(services) {}
 
-    void on_connected(player::PlayerInstance instance) override {
-        callbacks_.on_connected(instance.number());
+    void on_connected(player::PlayerInstance instance, Clock::time_point now) override {
+        callbacks_->on_connected(instance.number());
+        services_.on_connected(instance, now);
     }
 
-    void on_frame(std::string_view frame) override {
-        callbacks_.on_frame(frame.data(), frame.size());
+    void on_frame(std::string_view frame, Clock::time_point now) override {
+        callbacks_->on_frame(frame.data(), frame.size());
+        services_.on_frame(frame, now);
     }
 
-    void on_drained() override {
-        callbacks_.on_drained();
+    void on_drained(Clock::time_point now) override {
+        callbacks_->on_drained();
+        services_.on_drained(now);
     }
 
 private:
-    diskos_link_listener callbacks_;
+    const diskos_link_listener* callbacks_;
+    player::ReportDecoder services_;
 };
 
 struct Link {
-    CallbackListener listener;
-    platform::PlayerLink link{listener};
+    diskos_link_listener callbacks;
+    platform::PlayerLink link{};
 };
 
 /** The started link, or nullptr before diskos_link_start(). */
@@ -48,9 +56,15 @@ std::atomic<Link*>& current_link() {
 
 }  // namespace
 
-platform::PlayerLink* player_link() {
+std::size_t deliver_player(
+        player::ReportListener& services, player::ReportListener::Clock::time_point now
+) {
     Link* const started = current_link().load();
-    return started != nullptr ? &started->link : nullptr;
+    if (started == nullptr) {
+        return 0;
+    }
+    Fanout fanout{started->callbacks, services};
+    return started->link.deliver(fanout, now);
 }
 
 }  // namespace diskos::legacy
@@ -61,10 +75,10 @@ extern "C" int diskos_link_start(diskos_link_listener listener) {
     if (started.exchange(true)) {
         return -1;
     }
-    // Never destroyed: the receive thread calls into the legacy C until the process ends, past
-    // the destruction of other statics.
+    // Never destroyed: senders on any thread may use it until the process ends, past the
+    // destruction of other statics.
     // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): deliberately kept for the whole run
-    auto* const link = new Link{.listener = diskos::legacy::CallbackListener{listener}};
+    auto* const link = new Link{.callbacks = listener};
     diskos::legacy::current_link().store(link);
     return 0;
 }

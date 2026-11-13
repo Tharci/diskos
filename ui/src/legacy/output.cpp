@@ -205,13 +205,9 @@ diskos_output_outcome outcome_of(output::Outcome::Kind kind) {
 
 void tick(Bridge& bridge) {
     const Clock::time_point now = Clock::now();
-    if (platform::PlayerLink* const link = player_link()) {
-        const std::size_t dropped = link->deliver(bridge.router(), now);
-        if (dropped > 0) {
-            const std::string line =
-                    "output: " + std::to_string(dropped) + " player frames dropped\n";
-            std::fputs(line.c_str(), stderr);
-        }
+    if (const std::size_t dropped = deliver_player(bridge.router(), now); dropped > 0) {
+        const std::string line = "player: " + std::to_string(dropped) + " frames dropped\n";
+        std::fputs(line.c_str(), stderr);
     }
     player_controller().advance(now);
     for (const output::Outcome& outcome : bridge.router().advance(now)) {

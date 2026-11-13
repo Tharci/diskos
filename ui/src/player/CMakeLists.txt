@@ -10,6 +10,6 @@ diskos_test(
     player
     SOURCES
         frame_test.cpp reports_test.cpp track_report_test.cpp commands_test.cpp
-        player_inbox_test.cpp
+        player_inbox_test.cpp report_decoder_test.cpp
     DEPENDS diskos::player
 )

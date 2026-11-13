@@ -25,9 +25,8 @@ std::optional<QueueIdentity> identity_of(const std::string& name) {
 
 }  // namespace
 
-PlayerLink::PlayerLink(player::FrameListener& listener, QueueNames names, LinkTiming timing)
-    : listener_(&listener),
-      names_(std::move(names)),
+PlayerLink::PlayerLink(QueueNames names, LinkTiming timing)
+    : names_(std::move(names)),
       timing_(timing),
       thread_([this](const std::stop_token& stop) { run(stop); }) {}
 
@@ -118,7 +117,6 @@ bool PlayerLink::connect() {
     });
     drain_requested_.store(false);  // A drain was about the old player
     inbox_.add_connection(connected);
-    listener_->on_connected(connected);
     return true;
 }
 
@@ -131,9 +129,7 @@ std::expected<std::size_t, MessageReceiver::Error> PlayerLink::receive(
     }
     const auto received = reports_->receive(buffer_, timeout);
     if (received) {
-        const std::string_view frame{buffer_.data(), *received};
-        inbox_.add_frame(frame);
-        listener_->on_frame(frame);
+        inbox_.add_frame({buffer_.data(), *received});
         return received;
     }
     if (received.error() == Error::Closed) {
@@ -150,7 +146,7 @@ void PlayerLink::drain() {
     for (;;) {
         const auto received = receive(std::chrono::milliseconds{0});
         if (!received && received.error() == Error::Empty) {
-            listener_->on_drained();
+            inbox_.add_drained();
             return;
         }
         if (!received && received.error() != Error::Interrupted) {

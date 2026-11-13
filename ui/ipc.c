@@ -23,15 +23,15 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static track_state_t g_state;
 
 /* ---- the connection to the player ---------------------
- * legacy/player_link.h owns the queues and the receive thread: it calls link_connected() when a
- * new player instance connects (also after a player restart, which recreates the queues) and
- * parse_frame() for each frame, on its receive thread. g_recov_mu guards the state that thread
- * shares with the main thread; g_tx_mu serializes sends with the BT autonext experiment and
- * guards the send error. */
+ * legacy/player_link.h owns the queues and the receive thread. On the main loop (diskos_output_tick) it calls
+ * link_connected() when a new player instance connects (also after a player restart, which recreates the queues),
+ * parse_frame() for each frame and link_drained() after a requested drain, each before the output router hears the
+ * same event. g_mu and g_recov_mu still guard the state other threads read; g_tx_mu serializes sends with the BT
+ * autonext experiment and guards the send error. */
 static pthread_mutex_t g_tx_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t g_recov_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_rx_ready    = 0;   /* [g_recov_mu] 1 once a player instance connected */
-static int g_reconnected = 0;   /* [g_recov_mu] RX thread -> main thread: recovery done, run resync */
+static int g_reconnected = 0;   /* [g_recov_mu] a player restart was seen: the main loop resyncs */
 static unsigned g_rx_frames = 0; /* [g_recov_mu] count of /ui frames received FROM the player. /ui is the
                                   * player->UI queue (we O_RDONLY it), so any frame proves the player is up
                                   * and responding - a positive-readiness signal that does NOT depend on the
@@ -459,7 +459,7 @@ static void parse_frame(const char*buf,int n){
      * a607 (external/input mode) to /ui, parsed above (a bare 0607 query is not answered on /ui). */
 }
 
-/* Link thread: a new player instance connected (legacy/player_link.h). Everything learned from a
+/* Main loop: a new player instance connected (legacy/player_link.h). Everything learned from a
  * previous instance is dropped; the first one starts from the fresh state. */
 static void link_connected(unsigned instance){
     pthread_mutex_lock(&g_recov_mu);
@@ -490,7 +490,7 @@ static void link_frame(const char *frame, size_t size){
     parse_frame(frame, (int)size);
 }
 
-/* Link thread: every frame queued when an arm was requested has been parsed (diskos_link_request_drain). No
+/* Main loop: every frame queued when an arm was requested has been parsed (diskos_link_request_drain). No
  * request ID exists in a607: this gives receipt freshness, not command-response correlation. */
 static void link_drained(void){
     pthread_mutex_lock(&g_recov_mu);
@@ -882,7 +882,7 @@ static void conv_new_generation(unsigned generation){
     (void)generation;
     pthread_mutex_lock(&g_conv_mu); conv_settle(); pthread_mutex_unlock(&g_conv_mu);
 }
-/* RX thread. ok = 0 for an a810 the decoder refused. Malformed or unexpected replies change nothing (the deadline
+/* Main loop (parse_frame). ok = 0 for an a810 the decoder refused. Malformed or unexpected replies change nothing (the deadline
  * still bounds the operation). */
 static void conv_on_reply(int ok, unsigned code){
     pthread_mutex_lock(&g_conv_mu);

@@ -61,8 +61,10 @@ typedef struct {
  * functions do nothing and report an unknown, idle, unready router. */
 void diskos_output_start(diskos_output_hooks hooks);
 
-/* Run the router for one main-loop tick: hand it what the player sent, advance a pending
- * playback restore, and move the output where it may. Outcomes go to hooks.on_outcome. */
+/* Run the router for one main-loop tick: hand what the player sent to the legacy IPC
+ * (player_link.h) and to the router, advance a pending playback restore, and move the output where
+ * it may. Outcomes go to hooks.on_outcome. Nothing reaches the legacy IPC before
+ * diskos_output_start(), so start the router before the link. */
 void diskos_output_tick(void);
 
 /* The user chooses `output`; `mac` names the sink for DISKOS_OUTPUT_BLUETOOTH, else is ignored. */

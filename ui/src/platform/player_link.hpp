@@ -18,7 +18,6 @@
 #include "player/frame_sender.hpp"
 #include "player/player_inbox.hpp"
 #include "player/player_instance.hpp"
-#include "player/report_listener.hpp"
 #include "utils/synchronized.hpp"
 
 namespace diskos::platform {
@@ -39,23 +38,19 @@ struct LinkTiming {
 /**
  * The connection to the stock player, which moves frames both ways: it receives them on a thread
  * of its own, and sends them from any thread. player::FrameCommandSender sends Commands through
- * it. What it receives reaches:
- *  - services, decoded, on the thread that calls deliver() (the main loop): it queues what it
- *    receives until then, in a player::PlayerInbox;
- *  - the legacy IPC, as raw frames, on the receiving thread (player::FrameListener).
+ * it. What it receives waits in a player::PlayerInbox for the thread that calls deliver() (the
+ * main loop), so everything that hears the player hears it there, in one order.
  *
  * When the player restarts, it creates its queues anew, and a descriptor on an old one keeps
  * working without ever receiving again. So the receive thread compares the queues' identities
  * with their names' every LinkTiming::restart_check: a new reports queue is a new player instance,
  * and a new commands queue is reopened on the next send.
  *
- * The listener must outlive the link; destroying the link stops and joins its thread.
+ * Destroying the link stops and joins its thread.
  */
 class PlayerLink final : public player::FrameSender {
 public:
-    explicit PlayerLink(
-            player::FrameListener& listener, QueueNames names = {}, LinkTiming timing = {}
-    );
+    explicit PlayerLink(QueueNames names = {}, LinkTiming timing = {});
 
     PlayerLink(const PlayerLink&) = delete;
     PlayerLink(PlayerLink&&) = delete;
@@ -75,19 +70,20 @@ public:
     ) override;
 
     /**
-     * Ask the receive thread to deliver every frame queued now, then call on_drained(): once it is
-     * called, every frame the player sent before this request has reached on_frame(). A player
-     * restart before then cancels it.
+     * Ask the receive thread to take every frame the player has queued now, then mark the drain
+     * finished: deliver() calls on_drained() after every frame the player sent before this request.
+     * A player restart before the receive thread gets to it cancels it.
      */
     void request_drain() noexcept;
 
     /**
-     * Hand everything received since the last call to `listener`, oldest first and decoded, at
-     * `now`: each new player instance, then its reports. Call it from one thread, regularly.
+     * Hand everything received since the last call to `listener`, oldest first, at `now`: each
+     * new player instance, its frames and finished drains (player::ReportDecoder decodes them for
+     * services). Call it from one thread, regularly.
      * Returns how many frames were dropped since the last call, as too many were waiting.
      */
     std::size_t deliver(
-            player::ReportListener& listener, player::ReportListener::Clock::time_point now
+            player::FrameListener& listener, player::FrameListener::Clock::time_point now
     ) {
         return inbox_.deliver(listener, now);
     }
@@ -107,13 +103,12 @@ private:
     void run(const std::stop_token& stop);
     /** Open the reports queue anew. Returns false if it cannot be opened. */
     [[nodiscard]] bool connect();
-    /** Receive one frame and hand it to the listener; after Closed, connect() again. */
+    /** Receive one frame into the inbox; after Closed, connect() again. */
     std::expected<std::size_t, MessageReceiver::Error> receive(std::chrono::milliseconds timeout);
-    /** Deliver every queued frame, then call on_drained(). */
+    /** Take every queued frame into the inbox, then mark the drain finished there. */
     void drain();
     void check_restart();
 
-    player::FrameListener* listener_;
     QueueNames names_;
     LinkTiming timing_;
 

@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
 /* The connection to the stock player (platform/player_link.hpp) for the legacy C code: one
- * PlayerLink, which receives the player's frames on its own thread and sends from any thread. */
+ * PlayerLink, which receives the player's frames on its own thread and sends from any thread.
+ * What it receives reaches the legacy C on the main loop, through diskos_output_tick(). */
 #ifndef DISKOS_LEGACY_PLAYER_LINK_H
 #define DISKOS_LEGACY_PLAYER_LINK_H
 
@@ -11,7 +12,8 @@
 extern "C" {
 #endif
 
-/* What the link calls on its receive thread (player/frame_listener.hpp). */
+/* What the link calls on the main loop, before the services hear the same event
+ * (player/frame_listener.hpp, legacy/player_link.hpp). */
 typedef struct {
     void (*on_connected)(
             unsigned instance
@@ -26,7 +28,7 @@ typedef enum {
     DISKOS_LINK_WRONG_INSTANCE = 1, /* Meant for a player instance that is no longer connected */
 } diskos_link_result;
 
-/* Start the link, calling `listener` from its receive thread. Returns 0, or -1 if it already
+/* Start the link, which calls `listener` from the main loop. Returns 0, or -1 if it already
  * started. It lives until the process ends. */
 int diskos_link_start(diskos_link_listener listener);
 
@@ -34,7 +36,8 @@ int diskos_link_start(diskos_link_listener listener);
  * instance is still the connected one. FAILED before diskos_link_start(). */
 diskos_link_result diskos_link_send(const char* frame, unsigned instance);
 
-/* Deliver every frame queued now, then call on_drained (PlayerLink::request_drain). */
+/* Take every frame the player queued now; on_drained follows them on the main loop
+ * (PlayerLink::request_drain). */
 void diskos_link_request_drain(void);
 
 #ifdef __cplusplus
