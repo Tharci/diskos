@@ -93,7 +93,6 @@ static _Atomic int g_source_mode;
 static uint32_t lv_tick_get(void){ return test_clock; }
 static void ui_toast(const char *s){ (void)s; }
 static void art_cancel(void){}
-void diskos_output_source_changed(void){}   /* output routing is not under test here */
 static int fw_os_ver(void){ return 257; }   /* source_send() refuses unverified firmware */
 int diskos_output_busy(void){ return 0; }
 static int scanner_active(void){ return test_scan; }

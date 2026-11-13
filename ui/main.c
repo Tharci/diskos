@@ -750,8 +750,7 @@ static int storage_player_guarded(void){
 static int source_send(int mode){
     int v = fw_os_ver();
     if(v != 209 && v != 228 && v != 240 && v != 257) return -1;
-    if(ipc_send_cmd("0666000C0006") < 0) return -1;
-    diskos_output_source_changed();                      /* the router re-establishes its output once back on Local */
+    if(ipc_send_cmd("0666000C0006") < 0) return -1;   /* the router hears of the switch from the player (a607) */
     switch(mode){
         case 0:
             usleep(100000);                              /* stock route-to-gadget settle */
@@ -1543,7 +1542,6 @@ int ui_play_playlist(long pid, int pos){
     if(n <= 0){ ui_toast("Couldn't prepare playlist - try again"); return 0; }
     g_book_single_mode = 0;                                 /* not a book */
     send_play_mode(cfg_get_int("work_mode", 0));  /* set the music play-mode explicitly - a song-row tap in a playlist does not, and a prior book left Single */
-    if(ui_get_source_mode() == 0 && diskos_output_applied(NULL) != DISKOS_OUTPUT_BLUETOOTH) ipc_send_cmd("0657000C0008");  /* local work-mode: a type-5 play from an idle player needs it (same as a book) */
     if(pos < 1) pos = 1;
     int ppos = mdb_reserved_slot_player_pos(pid, pos);      /* the tapped row in the player's read of the slot */
     if(ppos < 1){ ui_toast("Couldn't find that song"); return 0; }   /* never start a guessed, possibly different song */
@@ -1583,7 +1581,6 @@ int ui_play_plan(mdb_plan_t *plan, int song_id){
         if(pos < 1){ ui_toast("Couldn't find that song"); return 0; }
         g_book_single_mode = 0;
         send_play_mode(cfg_get_int("work_mode", 0));
-        if(ui_get_source_mode() == 0 && diskos_output_applied(NULL) != DISKOS_OUTPUT_BLUETOOTH) ipc_send_cmd("0657000C0008");
         return ui_play_list_ex(5, "", pos, -1);
     }
     if(plan->list_type != 2 && plan->list_type != 3 && plan->list_type != 7){ ui_toast("Couldn't play that list"); return 0; }
@@ -1751,15 +1748,8 @@ int ui_play_book(const char *path, long resume_ms){
      * rolling into the stale alternate buffer. Set the slot to this book, force Single mode (transient -
      * the next music play restores the user's mode via play_list_mode), then play seq 0. */
     if(!mdb_reserved_slot_set(path)){ ui_toast("Couldn't start book"); return 0; }
-    /* A type-5 play from an idle player can leave the work-mode NULL (player logs NO_WORK_MODE and never
-     * starts). Re-assert the local-play route + work-mode first - device-verified this is what a book
-     * play needs; ui_play_list's own preamble is gated to V2.40, but a book must start on V2.09/V2.28 too.
-     * Local analog route only (never a BT A2DP path). */
-    if(ui_get_source_mode() == 0 && diskos_output_applied(NULL) != DISKOS_OUTPUT_BLUETOOTH){
-        ipc_send_cmd("0657000C0008");                      /* LOCALPLAYER work-mode (fixes NO_WORK_MODE). NOT 0666:
-                                                            * we're already on the local route (gated above), and a
-                                                            * redundant out_dev re-init pauses the stream ~1.5s in. */
-    }
+    /* A type-5 play from an idle player needs the local work-mode (else NO_WORK_MODE, never starts): ui_play_list
+     * sends the output router's play preamble, as for every play from idle. */
     if(send_play_mode(4) != 0){ ui_toast("Couldn't start book"); return 0; }   /* Single play-mode is REQUIRED for clean EOF isolation; if it can't be set, don't start the book unguarded */
     g_book_single_mode = 1;                                 /* remember to restore the music mode on the next music play */
     if(!ui_play_list(5, "", 1)) return 0;                   /* frame 0100001000000005 -> reserved slot (seq 0): an isolated 1-item queue; not sent -> no session */

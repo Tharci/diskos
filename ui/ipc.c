@@ -688,11 +688,14 @@ static int ipc_send_wire_locked(const char*frame, int policy, unsigned generatio
 }
 /* #28 experiment: stock owns EOF and queue policy. Only its gapless scalar is
  * overridden; TX serializes restoration with every route/source command.
- * An explicit diskOS preference is required so System default is never guessed. */
+ * An explicit diskOS preference is required so System default is never guessed.
+ * Whether the audio is on a Bluetooth sink is the output router's (the poll's eligibility): it reports one only once
+ * a route to it has landed and no move runs, so this only restores before a route frame the router sends between
+ * two polls. */
 #ifndef BT_AUTONEXT_PATH
 #define BT_AUTONEXT_PATH "/usr/data/diskos_bt_autonext_exp"
 #endif
-static struct { unsigned gen; int active, restore, bt_mux, departed; } g_bt_autonext; /* g_tx_mu */
+static struct { unsigned gen; int active, restore; } g_bt_autonext; /* g_tx_mu */
 static int bt_autonext_mode(void){
     int fd = open(BT_AUTONEXT_PATH, O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_NOFOLLOW);
     if(fd < 0) return 0;
@@ -708,7 +711,6 @@ static void bt_autonext_generation(unsigned gen){
     if(g_bt_autonext.gen != gen){
         g_bt_autonext.gen = gen;
         g_bt_autonext.active = 0; /* normal reconnect scalar restoration owns the new player */
-        g_bt_autonext.bt_mux = g_bt_autonext.departed = 0;
     }
 }
 static int bt_autonext_restore(int policy, unsigned gen){
@@ -730,15 +732,7 @@ static int ipc_send_locked(const char *frame, int policy, unsigned generation){
         g_bt_autonext.restore = frame[11] == '1';
         frame = "0647000C0001";
     }
-    int rc = ipc_send_wire_locked(frame, policy, generation);
-    if(rc == 0 && departure){
-        /* The UI retains its old BT MAC across partial route failures. Once a
-         * departure lands, require BT mux + Local work-mode before re-entry. */
-        if(!strncmp(frame, "0666", 4))
-            g_bt_autonext.bt_mux = !strcmp(frame, "0666000C0002");
-        g_bt_autonext.departed = !g_bt_autonext.bt_mux || strcmp(frame, "0657000C0008") != 0;
-    }
-    return rc;
+    return ipc_send_wire_locked(frame, policy, generation);
 }
 void ipc_bt_autonext_poll(uint32_t now, int eligible, int preference){
     static uint32_t last;
@@ -751,7 +745,6 @@ void ipc_bt_autonext_poll(uint32_t now, int eligible, int preference){
     pthread_mutex_lock(&g_recov_mu);
     pthread_mutex_lock(&g_tx_mu);
     bt_autonext_generation(g_generation);
-    enabled = enabled && !g_bt_autonext.departed;
     if(g_confirmed){
         if(g_bt_autonext.active && (preference == 0 || preference == 1))
             g_bt_autonext.restore = preference;

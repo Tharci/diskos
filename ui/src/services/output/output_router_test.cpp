@@ -239,6 +239,35 @@ TEST_CASE("OutputRouter leaves a sink the player no longer lists", "[output][rou
     CHECK(fixture.router().desired() == Output{InternalDac{}});
 }
 
+TEST_CASE("OutputRouter forgets its output when the player leaves Local", "[output][router]") {
+    using player::Source;
+    using player::SourceReport;
+    Fixture fixture{kOnSpeaker};
+    fixture.router().on_report(SourceReport{.source = Source::Local}, kStart);
+    const std::optional<Output> on_local = fixture.router().applied();
+    fixture.router().on_report(SourceReport{.source = Source::AirPlay}, kStart);
+    const std::optional<Output> on_airplay = fixture.router().applied();
+    fixture.router().on_report(SourceReport{.source = Source::Local}, kStart);
+
+    CHECK(on_local == kOnSpeaker);
+    CHECK_FALSE(on_airplay.has_value());
+    CHECK_FALSE(fixture.router().applied().has_value());
+    REQUIRE(fixture.store().saved().has_value());
+    CHECK_FALSE(fixture.store().saved()->applied.has_value());
+}
+
+TEST_CASE("OutputRouter keeps a running move when the player reports Local", "[output][router]") {
+    // The echo of a 0657 8 sent before the move, or of the move's own.
+    Fixture fixture;
+    REQUIRE(fixture.router().select(Spdif{}).has_value());
+    (void)fixture.at(0ms);
+    fixture.router().on_report(player::SourceReport{.source = player::Source::Local}, kStart);
+    const Outcomes done = fixture.at(100ms);
+
+    CHECK(done == Outcomes{switched(Spdif{})});
+    CHECK(fixture.router().applied() == Output{Spdif{}});
+}
+
 TEST_CASE("OutputRouter ignores the player's sinks while on another output", "[output][router]") {
     // The list is empty until the move to the speaker starts the player's Bluetooth.
     Fixture fixture;
@@ -280,7 +309,7 @@ TEST_CASE("OutputRouter holds a Change while a play starts or Cast plays", "[out
 
 TEST_CASE("OutputRouter holds a Correction until playback stops", "[output][router]") {
     Fixture fixture;
-    fixture.router().source_changed();
+    fixture.router().on_report(player::SourceReport{.source = player::Source::AirPlay}, kStart);
     fixture.playback().set_play_state(PlayState::Playing);
     (void)fixture.at(0ms);
     const Log while_playing = fixture.log();

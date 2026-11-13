@@ -289,12 +289,6 @@ extern "C" void diskos_output_leave_bluetooth(void) {
     }
 }
 
-extern "C" void diskos_output_source_changed(void) {
-    if (auto* const bridge = diskos::legacy::started()) {
-        bridge->router().source_changed();
-    }
-}
-
 extern "C" int diskos_output_prepare_play(void) {
     auto* const bridge = diskos::legacy::started();
     return bridge == nullptr || bridge->router().prepare_play() ? 0 : -1;

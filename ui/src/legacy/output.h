@@ -79,9 +79,6 @@ void diskos_output_bluetooth_lost(const char* mac);
  * Bluetooth off). */
 void diskos_output_leave_bluetooth(void);
 
-/* The player switched its source: its output is no longer known. */
-void diskos_output_source_changed(void);
-
 /* Before a local play from idle: re-assert the output and the work mode (OutputRouter::
  * prepare_play). Returns 0, or -1 if a frame was not sent. */
 int diskos_output_prepare_play(void);

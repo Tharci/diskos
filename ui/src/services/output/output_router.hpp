@@ -140,11 +140,10 @@ public:
      * that it takes commands, as the answer to a state request does: PlayerReadiness waits for one.
      * A list of connected Bluetooth sinks without the sink that is applied() counts as
      * bluetooth_lost(): the player reports a dropped link first, while it still plays into it.
+     * A switch to a source other than Local makes applied() unknown and drops a running
+     * transition: the player re-routes for that source.
      */
     void on_report(const player::Report& report, Clock::time_point now) override;
-
-    /** Note that the player switched its source: applied() becomes unknown. */
-    void source_changed();
 
     // Playing
 
@@ -179,6 +178,14 @@ private:
     [[nodiscard]] bool may_start(Clock::time_point now);
     /** Lose the applied Bluetooth sink if the player no longer lists it. */
     void note_sinks(const player::BluetoothSinksReport& report);
+    /**
+     * Forget applied() if the player left Local. A switch back to Local changes nothing: applied()
+     * has been unknown since it left, and every 0657 8, the router's own included, is reported
+     * again ~1 s later (captures of 2026-11-01), when a transition may already have run.
+     */
+    void note_source(const player::SourceReport& report);
+    /** Note that the player's output is not known: applied() becomes unknown, a transition ends. */
+    void forget_applied();
     /** Take a prepared output as applied once the player plays on it. */
     void confirm_prepared();
     void start(player::PlayerInstance instance);

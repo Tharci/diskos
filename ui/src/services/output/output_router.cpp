@@ -134,6 +134,9 @@ void OutputRouter::on_report(const player::Report& report, Clock::time_point now
     if (const auto* const sinks = std::get_if<player::BluetoothSinksReport>(&report)) {
         note_sinks(*sinks);
     }
+    if (const auto* const source = std::get_if<player::SourceReport>(&report)) {
+        note_source(*source);
+    }
 }
 
 void OutputRouter::note_sinks(const player::BluetoothSinksReport& report) {
@@ -143,7 +146,13 @@ void OutputRouter::note_sinks(const player::BluetoothSinksReport& report) {
     }
 }
 
-void OutputRouter::source_changed() {
+void OutputRouter::note_source(const player::SourceReport& report) {
+    if (report.source != player::Source::Local) {
+        forget_applied();
+    }
+}
+
+void OutputRouter::forget_applied() {
     transition_.reset();
     prepared_.reset();
     snapshot_.reset();
