@@ -1142,8 +1142,14 @@ static void scan_abort(void){
 }
 static void start_scan(void){   /* callers have established that the adapter is powered */
     /* Classic BR/EDR inquiry - what BT speakers/headphones use - needs ~10-12s to find and
-     * resolve a device's name/class; the old 6s window quit before speakers ever appeared. */
-    system("bluetoothctl --timeout 13 scan on >/dev/null 2>&1 &");
+     * resolve a device's name/class; the old 6s window quit before speakers ever appeared.
+     * Classic only: the Disc streams over A2DP alone (BlueZ 5.54, a2dp-source; no LE Audio). An unfiltered scan also
+     * records a dual-mode sink's LE advertisements, and BlueZ may then pair it over LE, where it waits for an LE
+     * connection that never comes: reset AirPods (Find My) failed to pair that way until rediscovered over BR/EDR
+     * (btmon on the Disc, 2026-11-13). The filter belongs to the bluetoothctl session, so one session sets it, scans
+     * for 13 s and quits, which ends its discovery. */
+    system("( printf 'menu scan\\ntransport bredr\\nback\\nscan on\\n'; sleep 13; printf 'scan off\\nquit\\n' )"
+           " | bluetoothctl >/dev/null 2>&1 &");
     if(g_scan_timer) lv_timer_del(g_scan_timer);
     g_scan_timer = lv_timer_create(scan_timer_cb, 13500, NULL);
     lv_timer_set_repeat_count(g_scan_timer, 1);

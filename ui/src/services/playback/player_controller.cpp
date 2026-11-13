@@ -55,16 +55,23 @@ PlayerController::SendResult PlayerController::set_favourite(bool favourite) {
 }
 
 std::optional<PlaybackSnapshot> PlayerController::snapshot() const {
-    return state_->with([](const PlayerState& state) -> std::optional<PlaybackSnapshot> {
-        if (!state.track()) {
-            return std::nullopt;
-        }
-        return PlaybackSnapshot{
-                .track = *state.track(),
-                .position_ms = state.position_ms().value_or(0),
-                .playing = state.is_playing(),
-        };
-    });
+    std::optional<PlaybackSnapshot> taken =
+            state_->with([](const PlayerState& state) -> std::optional<PlaybackSnapshot> {
+                if (!state.track()) {
+                    return std::nullopt;
+                }
+                return PlaybackSnapshot{
+                        .track = *state.track(),
+                        .position_ms = state.position_ms().value_or(0),
+                        .playing = state.is_playing(),
+                };
+            });
+    // Until a restore lands, the player's position is not where the user is: it is unknown after
+    // the output reset, or the start of the track the restore is about to seek in.
+    if (taken && restore_ && same_track(taken->track, restore_->track)) {
+        taken->position_ms = restore_->position_ms;
+    }
+    return taken;
 }
 
 PlayerController::SendResult PlayerController::pause(Clock::time_point now) {

@@ -422,5 +422,25 @@ TEST_CASE("PlayerController snapshots what plays", "[playback][player_controller
     CHECK_FALSE(no_track.controller().snapshot().has_value());
 }
 
+TEST_CASE(
+        "PlayerController keeps a pending restore's position in a snapshot",
+        "[playback][player_controller]"
+) {
+    // A lost sink, then the earphones play by themselves and the router moves back to them
+    // before the restore lands (capture of 2026-11-13): the next snapshot still holds kAt.
+    RestoreFixture fixture{Resume::OnNextPlay};
+    fixture.step(reported(ReportedPlayState::Playing), 10);
+    const std::optional<PlaybackSnapshot> during = fixture.controller().snapshot();
+    fixture.step(position(kAt + 1000), 12);
+    fixture.step(position(kAt + 5000), 16);
+    const std::optional<PlaybackSnapshot> after = fixture.controller().snapshot();
+
+    REQUIRE(during.has_value());
+    REQUIRE(after.has_value());
+    CHECK(during->position_ms == kAt);
+    CHECK(during->playing);
+    CHECK(after->position_ms == kAt + 5000);
+}
+
 }  // namespace
 }  // namespace diskos::playback

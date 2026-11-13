@@ -89,7 +89,10 @@ public:
 
     // Restoring playback around an output change
 
-    /** Get what is playing now, or nullopt if there is no track. */
+    /**
+     * Get what is playing now, or nullopt if there is no track. While a restore of this track is
+     * pending, its position is the restore's: an output change during a restore keeps it.
+     */
     [[nodiscard]] std::optional<PlaybackSnapshot> snapshot() const;
 
     /**
