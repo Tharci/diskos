@@ -555,7 +555,6 @@ int ui_receiver_exit_needs_confirm(void){
          e.sequence <= g_rxsw.sent_sequence);
 }
 
-static int play_recent(void);
 static const char *receiver_blocked(receiver_source target){
     unsigned gen;
     if(!receiver_available()) return "Not available on this firmware";
@@ -567,7 +566,7 @@ static const char *receiver_blocked(receiver_source target){
     if(!ipc_confirmed_snapshot(&gen) || !diskos_output_ready()) return "Player is starting - try again";
     if(!source_sd_allowed() || g_sd_quiesce) return "SD card is not ready";
     if(power_shutdown_phase() != PW_OFF) return "Shutting down";
-    if(diskos_output_busy() || play_recent()) return "Player is busy - try again";
+    if(diskos_output_busy() || diskos_playback_starting()) return "Player is busy - try again";
     int actual = ui_detect_source_mode(); /* USB can survive a UI-only restart. */
     if(g_source_mode == 1 || g_source_mode == 3 || actual == 1 || actual == 3) return "Return to Local first";
     if(!output_on_internal_dac()) return "Switch to Internal DAC first";
@@ -1365,10 +1364,6 @@ static void scanner_poll(lv_timer_t *t){
         ui_toast(b);
     } else library_poll_changes();
 }
-static unsigned g_play_last_gen = 0xFFFFFFFFu; static uint32_t g_play_last_tick = 0;   /* generation + tick of the last play command we sent */
-/* Is a previous play still starting? g_playing follows only once the player reports the track (up to ~2 s), and 0666 under it releases the local output. */
-static int play_recent(void){ return g_play_pending || (g_play_last_gen == ipc_generation() && lv_tick_elaps(g_play_last_tick) < 10000); }
-static void play_note_sent(void){ g_play_last_gen = ipc_generation(); g_play_last_tick = lv_tick_get(); }
 /* Authoritative play state: what the player reports (ipc_local_playing), taken into g_playing by
  * the main loop. Exposed so lastfm/route logic share ONE source of truth. */
 int ui_is_playing(void){ return g_playing; }
@@ -1380,7 +1375,6 @@ static diskos_output_blocker output_blocker(void){
     if(!ui_local_playback_allowed()) return DISKOS_OUTPUT_CARD_NOT_READY;
     if(ui_get_source_mode() != 0) return DISKOS_OUTPUT_OTHER_SOURCE;
     if(book_session_active()) return DISKOS_OUTPUT_AUDIOBOOK;
-    if(play_recent()) return DISKOS_OUTPUT_PLAY_STARTING;
     if(ui_cast_session_active()) return DISKOS_OUTPUT_CASTING;
     return DISKOS_OUTPUT_UNBLOCKED;
 }
@@ -1478,32 +1472,15 @@ static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_
     if(pos1 < 1) pos1 = 1;
     if(!name) name = "";
     if(strlen(name) >= 380){ ui_toast("Couldn't play that list"); return 0; }   /* the frame must hold the WHOLE name (a type-7 artist+album name is up to ~2x160 chars) */
-    char f[420];
     int sent = 0;
-    /* V2.40 local-play preamble (live-confirmed on device 2026-09-01). The player's mode-control
-     * thread drifts the output route to BT (out_dev=2) and resets the work-mode to NULL when idle,
-     * so a play from stopped fails: it hangs ~15s trying to open a BT PCM ("Failed to get BT device
-     * MAC"), or reports "work mode NULL". Re-assert the stock local-play preamble TIGHT before the
-     * play command - local output route, then LOCALPLAYER work-mode - exactly as stock mq_ui does on
-     * a local-play transition (the player processes /player frames serially, so 0666's close_player
-     * runs, 0657 re-sets the mode, then 0100 plays with output=local + mode=LOCALPLAYER). The output
-     * router sends it (plan_play_preamble): Local source and a local output only (never a Bluetooth
-     * sink), and only while STOPPED (an active track-jump already has the route+mode correct, and 0666
-     * would gap the audio). */
-    /* Not while a previous play is still starting (g_playing follows only once the player reports the track): 0666 releases the local
-     * output under it (seen live). Only the idle / long-gap case needs the preamble. */
-    int recent_play = play_recent();
-    if(ui_get_source_mode() == 0 && !g_playing && !recent_play)
-        (void)diskos_output_prepare_play();   /* 0666 to the local output (+ 0642 5 for USB audio), then 0657 8; nothing on Bluetooth */
+    /* The playback controller sends the play (0100); from idle, the output router's play preamble goes first: an idle
+     * player drifts its output and drops its work mode (services/output/route_plan.hpp, plan_play_preamble). */
     {   /* always rebuild: the player's queue can change under us (Play Through Folders), so no type-0 shortcut */
-        int datalen = 8 + (int)strlen(name);          /* f1(4)+f2(4)+name */
-        snprintf(f, sizeof f, "0100%04X%04X%04X%s",
-                 8 + datalen, (build_idx >= 0 ? build_idx : pos1-1) & 0xFFFF, list_type & 0xFFFF, name);
+        unsigned position = (unsigned)(build_idx >= 0 ? build_idx : pos1 - 1);
         track_state_t cur; ipc_get_state(&cur);   /* snapshot BEFORE the send: the player's reply may already update the state */
-        if(ipc_send_cmd(f) == 0){
+        if(diskos_playback_play_list(list_type, position, name) == 0){
             sent = 1;
-            play_note_sent();
-            fprintf(stderr,"play(build) type=%d pos=%d name='%s' -> %s\n", list_type, pos1, name, f);
+            fprintf(stderr,"play(build) type=%d pos=%u name='%s'\n", list_type, position, name);
             /* rebuild can take seconds - acknowledge + arm completion/timeout.
              * Capture the current track path so we clear only on a REAL track change
              * (a1 position frames from the old track must not falsely clear it). */
@@ -1559,12 +1536,8 @@ int ui_queue_jump(int ord1){
     if(ord1 < 1 || ord1 > 0xFFFF) return -1;
     ui_cancel_book_resume();
     ui_disarm_book_eoc();
-    if(ui_get_source_mode() == 0 && !g_playing && !play_recent())
-        (void)diskos_output_prepare_play();   /* the same local-play preamble as ui_play_list */
-    char f[24]; snprintf(f, sizeof f, "0100%04X%04X0000", 16, (ord1 - 1) & 0xFFFF);
-    int rc = ipc_send_cmd(f);
-    if(rc == 0) play_note_sent();
-    fprintf(stderr, "queue jump pos=%d -> %s (rc=%d)\n", ord1, f, rc); fflush(stderr);
+    int rc = diskos_playback_play_list(0, (unsigned)(ord1 - 1), NULL);   /* type 0: a row of the current queue */
+    fprintf(stderr, "queue jump pos=%d (rc=%d)\n", ord1, rc); fflush(stderr);
     return rc;
 }
 /* Play `song_id` through a play plan (musicdb mdb_album_plan): a stock queue (type 3/7) when the plan found one that

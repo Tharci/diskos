@@ -16,6 +16,7 @@
 #include "services/output/output.hpp"
 #include "services/output/player_readiness.hpp"
 #include "services/output/transition.hpp"
+#include "services/playback/play_preparer.hpp"
 #include "services/playback/player_controller.hpp"
 #include "utils/bluetooth_address.hpp"
 
@@ -53,12 +54,14 @@ enum class Refusal : std::uint8_t {
  *
  * A transition starts once the player is ready (PlayerReadiness), the retry wait has passed and
  * nothing blocks it (Admission). It is one of three kinds:
- *  - Change: desired() changed. It pauses playback if it plays, and resumes it after.
+ *  - Change: desired() changed. It waits while a play starts (Loading), then pauses playback if
+ *    it plays, and resumes it after.
  *  - Correction: desired() did not change, but applied() was lost (a player restart, a source
  *    change, a move that failed halfway). It waits until playback stops: it never interrupts it.
  *  - Departure: applied() is a Bluetooth sink that is gone. It does not pause (the player plays
  *    into the dead sink), waits for nothing but the source and the card, and resumes on the
  *    user's next play.
+ * As the PlayPreparer, it readies the player before each play from idle (prepare_play()).
  * A move that fails before any 0666 changed nothing: it resumes playback and is retried after
  * kRetryWait, a Change up to kMaxAttempts times. One that fails after a 0666 leaves the output
  * unknown: it is retried every kRecoveryRetry until one lands, and playback stays paused till then.
@@ -66,7 +69,7 @@ enum class Refusal : std::uint8_t {
  * It keeps pointers to everything it is given, which must outlive it. It is not thread-safe: call
  * it from one thread, the main loop.
  */
-class OutputRouter final : public player::ReportListener {
+class OutputRouter final : public player::ReportListener, public playback::PlayPreparer {
 public:
     // After a move that failed with nothing changed.
     static constexpr Clock::duration kRetryWait = std::chrono::seconds{3};
@@ -152,10 +155,11 @@ public:
      * right before the play command. While applied() is unknown it goes to desired(), or to the
      * internal DAC if that is a Bluetooth sink; if the player then reports Playing, the route
      * evidently took, and becomes applied(). Does nothing while a transition runs or before a
-     * player connected. Call it only when nothing plays: a 0666 gaps a playing track.
+     * player connected. PlayerController calls it only when nothing plays: a 0666 gaps a playing
+     * track.
      * Returns a SendError if a frame was not sent.
      */
-    [[nodiscard]] SendResult prepare_play();
+    [[nodiscard]] SendResult prepare_play() override;
 
     // Time
 

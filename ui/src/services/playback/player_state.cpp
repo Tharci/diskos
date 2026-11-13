@@ -77,6 +77,14 @@ Changes PlayerState::request_play(Clock::time_point now) {
     return changes;
 }
 
+Changes PlayerState::request_list(Clock::time_point now) {
+    Changes changes = advance(now);
+    changes.play_state = changes.play_state || play_state_ != PlayState::Loading;
+    play_state_ = PlayState::Loading;
+    progress_ = now;
+    return changes;
+}
+
 Changes PlayerState::note_output_reset(Clock::time_point now) {
     const PlayState before = play_state_;
     Changes changes = advance(now);

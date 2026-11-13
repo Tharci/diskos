@@ -27,6 +27,25 @@ PlayerController::SendResult PlayerController::toggle(Clock::time_point now) {
     return send_toggle(state_instance(), now);
 }
 
+PlayerController::SendResult PlayerController::play_list(
+        const player::PlayListCommand& list, Clock::time_point now
+) {
+    restore_.reset();
+    const auto [idle, instance] = state_->with([](const PlayerState& state) {
+        return std::pair{!state.is_playing(), state.instance()};
+    });
+    if (idle && preparer_ != nullptr) {
+        if (SendResult prepared = preparer_->prepare_play(); !prepared) {
+            return prepared;
+        }
+    }
+    SendResult sent = sender_->send(list, instance);
+    if (sent) {
+        state_->with([now](PlayerState& state) { state.request_list(now); });
+    }
+    return sent;
+}
+
 PlayerController::SendResult PlayerController::next() {
     restore_.reset();
     return sender_->send(player::NextTrackCommand{}, state_instance());

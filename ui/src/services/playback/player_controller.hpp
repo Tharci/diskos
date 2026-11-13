@@ -8,8 +8,10 @@
 #include <optional>
 
 #include "player/command_sender.hpp"
+#include "player/commands.hpp"
 #include "player/modes.hpp"
 #include "player/player_instance.hpp"
+#include "services/playback/play_preparer.hpp"
 #include "services/playback/player_state.hpp"
 #include "utils/synchronized.hpp"
 
@@ -31,9 +33,9 @@ enum class Resume : std::uint8_t {
 /**
  * Sends the commands that drive local playback to the stock player, and tells its PlayerState
  * what a command will do before the player reports it.
- * It keeps pointers to the sender and the state, which must outlive it. It holds the state's
- * lock only to read or update it, never while sending. It is not thread-safe: call it from one
- * thread, the main loop.
+ * It keeps pointers to the sender, the state and the preparer, which must outlive it. It holds
+ * the state's lock only to read or update it, never while sending. It is not thread-safe: call it
+ * from one thread, the main loop.
  */
 class PlayerController {
 public:
@@ -47,12 +49,35 @@ public:
     PlayerController(player::CommandSender& sender, utils::Synchronized<PlayerState>& state)
         : sender_(&sender), state_(&state) {}
 
+    // Configuration
+
+    /**
+     * Have `preparer` ready the player before each play from idle (play_list()). Set once, when
+     * the preparer exists: the output router, which itself controls playback through this
+     * controller, is made after it.
+     */
+    void set_preparer(PlayPreparer& preparer) noexcept {
+        preparer_ = &preparer;
+    }
+
+    // Commands
+
     /**
      * Play if paused, pause if playing: the player only has a toggle.
      * Returns SendError::Failed or WrongInstance if it was not sent; the state is then left as it
      * was.
      */
     [[nodiscard]] SendResult toggle(Clock::time_point now);
+
+    /**
+     * Play `list`, cancelling a pending restore. When nothing plays (the state is not Playing or
+     * Loading), the preparer readies the player first. The state is Loading once it is sent
+     * (PlayerState::request_list()).
+     * Returns, without sending the play:
+     *  - the preparer's SendError, if it could not ready the player
+     * and otherwise SendError::Failed or WrongInstance if the play was not sent.
+     */
+    [[nodiscard]] SendResult play_list(const player::PlayListCommand& list, Clock::time_point now);
 
     /**
      * Skip to the next track in the queue, cancelling a pending restore.
@@ -155,6 +180,7 @@ private:
 
     player::CommandSender* sender_;
     utils::Synchronized<PlayerState>* state_;
+    PlayPreparer* preparer_ = nullptr;  // None: plays from idle are sent as they are
     std::optional<PendingRestore> restore_{};
 };
 

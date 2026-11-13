@@ -66,6 +66,29 @@ private:
     player::PlayerInstance connected_ = kInstance;
 };
 
+/** Readies the player as the output router does on the internal DAC: it sends a 0666 first. */
+class FakePreparer final : public PlayPreparer {
+public:
+    explicit FakePreparer(FakeSender& sender) : sender_(&sender) {}
+
+    SendResult prepare_play() override {
+        if (failing_) {
+            return std::unexpected{player::SendError::Failed};
+        }
+        return sender_->send(player::RouteOutputCommand{.route = player::OutputRoute::InternalDac});
+    }
+
+    void set_failing(bool failing) noexcept {
+        failing_ = failing;
+    }
+
+private:
+    FakeSender* sender_;
+    bool failing_ = false;
+};
+
+const std::string kPrepared = "0666000C0006";
+
 const player::Song kSong{
         .id = 1415,
         .pos_id = 1,
@@ -79,6 +102,7 @@ const player::Song kSong{
 class Fixture {
 public:
     explicit Fixture(std::optional<ReportedPlayState> reported) {
+        controller_.set_preparer(preparer_);
         restart(kInstance);
         if (reported) {
             const player::Report report = player::TrackReport{.song = kSong, .state = *reported};
@@ -104,12 +128,17 @@ public:
         return sender_;
     }
 
+    FakePreparer& preparer() noexcept {
+        return preparer_;
+    }
+
     PlayerController& controller() noexcept {
         return controller_;
     }
 
 private:
     FakeSender sender_;
+    FakePreparer preparer_{sender_};
     utils::Synchronized<PlayerState> state_;
     PlayerController controller_{sender_, state_};
 };
@@ -395,6 +424,68 @@ TEST_CASE(
     CHECK(fixture.sender().frames() == std::vector{kPlayPause, kPlayPause});
 }
 
+// The album "Some Album" from its first song.
+const player::PlayListCommand kAlbum{
+        .type = player::ListType::Album,
+        .position = 0,
+        .name = player::ListName::from("Some Album").value(),
+};
+const std::string kPlayAlbum = "0100001A00000003Some Album";
+
+TEST_CASE(
+        "PlayerController readies an idle player before a list play",
+        "[playback][player_controller]"
+) {
+    Fixture paused{ReportedPlayState::Paused};
+    Fixture no_track{std::nullopt};
+    const bool from_paused = paused.controller().play_list(kAlbum, kNow).has_value();
+    const bool from_nothing = no_track.controller().play_list(kAlbum, kNow).has_value();
+    const std::vector<std::string> expected{kPrepared, kPlayAlbum};
+
+    CHECK(from_paused);
+    CHECK(from_nothing);
+    CHECK(paused.sender().frames() == expected);
+    CHECK(no_track.sender().frames() == expected);
+    CHECK(paused.play_state() == PlayState::Loading);
+    CHECK(no_track.play_state() == PlayState::Loading);
+}
+
+TEST_CASE(
+        "PlayerController plays a list at once while one plays", "[playback][player_controller]"
+) {
+    Fixture playing{ReportedPlayState::Playing};
+    const bool sent = playing.controller().play_list(kAlbum, kNow).has_value();
+
+    CHECK(sent);
+    CHECK(playing.sender().frames() == std::vector{kPlayAlbum});
+    CHECK(playing.play_state() == PlayState::Loading);
+}
+
+TEST_CASE(
+        "PlayerController sends no play the player could not be readied for",
+        "[playback][player_controller]"
+) {
+    Fixture fixture{ReportedPlayState::Paused};
+    fixture.preparer().set_failing(true);
+    const PlayerController::SendResult played = fixture.controller().play_list(kAlbum, kNow);
+
+    CHECK(played == std::unexpected{player::SendError::Failed});
+    CHECK(fixture.sender().frames().empty());
+    CHECK(fixture.play_state() == PlayState::Paused);
+}
+
+TEST_CASE(
+        "PlayerController leaves the state alone when a play is not sent",
+        "[playback][player_controller]"
+) {
+    Fixture fixture{ReportedPlayState::Playing};
+    fixture.sender().set_failing(true);
+    const PlayerController::SendResult played = fixture.controller().play_list(kAlbum, kNow);
+
+    CHECK(played == std::unexpected{player::SendError::Failed});
+    CHECK(fixture.play_state() == PlayState::Playing);
+}
+
 TEST_CASE("PlayerController pauses only what plays", "[playback][player_controller]") {
     Fixture playing{ReportedPlayState::Playing};
     Fixture paused{ReportedPlayState::Paused};
@@ -420,6 +511,19 @@ TEST_CASE("PlayerController snapshots what plays", "[playback][player_controller
     CHECK(snapshot->position_ms == kAt);
     CHECK(snapshot->playing);
     CHECK_FALSE(no_track.controller().snapshot().has_value());
+}
+
+TEST_CASE(
+        "PlayerController drops a pending restore for a list play", "[playback][player_controller]"
+) {
+    RestoreFixture fixture{Resume::OnNextPlay};
+    const bool played =
+            fixture.controller().play_list(kAlbum, RestoreFixture::time(10)).has_value();
+    fixture.step(reported(ReportedPlayState::Playing), 12);
+    fixture.step(position(1000), 13);
+
+    CHECK(played);
+    CHECK(fixture.sender().frames() == std::vector{kPrepared, kPlayAlbum});
 }
 
 TEST_CASE(

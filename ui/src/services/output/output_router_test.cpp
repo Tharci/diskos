@@ -139,14 +139,14 @@ TEST_CASE("OutputRouter refuses a choice the user must act on first", "[output][
     no_card.admission().set_blocker(Blocker::CardNotReady);
     Fixture no_dac;
     no_dac.usb_dac().set_connected(false);
-    Fixture starting;
-    starting.admission().set_blocker(Blocker::PlayStarting);
+    Fixture casting;
+    casting.admission().set_blocker(Blocker::Casting);
 
     CHECK(audiobook.router().select(Spdif{}) == std::unexpected{Refusal::Audiobook});
     CHECK(other_source.router().select(Spdif{}) == std::unexpected{Refusal::OtherSource});
     CHECK(no_card.router().select(Spdif{}) == std::unexpected{Refusal::CardNotReady});
     CHECK(no_dac.router().select(UsbAudio{}) == std::unexpected{Refusal::NoUsbDac});
-    CHECK(starting.router().select(Spdif{}).has_value());
+    CHECK(casting.router().select(Spdif{}).has_value());
     CHECK(audiobook.router().desired() == Output{InternalDac{}});
     CHECK(no_dac.router().desired() == Output{InternalDac{}});
 }
@@ -294,9 +294,10 @@ TEST_CASE("OutputRouter makes a move off a lost sink a Departure", "[output][rou
 
 TEST_CASE("OutputRouter holds a Change while a play starts or Cast plays", "[output][router]") {
     Fixture fixture;
-    fixture.admission().set_blocker(Blocker::PlayStarting);
+    fixture.playback().set_play_state(PlayState::Loading);
     REQUIRE(fixture.router().select(Spdif{}).has_value());
     (void)fixture.at(0ms);
+    fixture.playback().set_play_state(PlayState::Paused);
     fixture.admission().set_blocker(Blocker::Casting);
     (void)fixture.at(10ms);
     const Log while_blocked = fixture.log();
@@ -305,6 +306,15 @@ TEST_CASE("OutputRouter holds a Change while a play starts or Cast plays", "[out
 
     CHECK(while_blocked.empty());
     CHECK(fixture.log() == Log{"0666000C0004", "reset"});
+}
+
+TEST_CASE("OutputRouter leaves a lost sink while a play starts", "[output][router]") {
+    Fixture fixture{kOnSpeaker};
+    fixture.playback().set_play_state(PlayState::Loading);
+    fixture.router().bluetooth_lost(kSpeaker);
+    (void)fixture.at(0ms);
+
+    CHECK(fixture.log() == Log{"0666000C0006", "reset"});
 }
 
 TEST_CASE("OutputRouter holds a Correction until playback stops", "[output][router]") {

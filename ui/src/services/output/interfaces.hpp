@@ -39,7 +39,6 @@ enum class Blocker : std::uint8_t {
     CardNotReady,  // The SD card is not ready for the player
     OtherSource,   // The player is not on local playback
     Audiobook,     // An audiobook session is running
-    PlayStarting,  // A play was sent and has not started yet
     Casting,       // A Cast session owns playback
 };
 

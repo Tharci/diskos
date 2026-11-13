@@ -27,7 +27,6 @@ typedef enum {
     DISKOS_OUTPUT_CARD_NOT_READY,
     DISKOS_OUTPUT_OTHER_SOURCE,
     DISKOS_OUTPUT_AUDIOBOOK,
-    DISKOS_OUTPUT_PLAY_STARTING,
     DISKOS_OUTPUT_CASTING,
 } diskos_output_blocker;
 
@@ -57,8 +56,9 @@ typedef struct {
     void (*on_outcome)(diskos_output_outcome outcome, diskos_output_kind output);
 } diskos_output_hooks;
 
-/* Start the router with `hooks`. Later calls change nothing. Until it starts, the other
- * functions do nothing and report an unknown, idle, unready router. */
+/* Start the router with `hooks`, and make it the playback controller's play preparer
+ * (diskos_playback_play_list() readies an idle player through it). Later calls change nothing.
+ * Until it starts, the other functions do nothing and report an unknown, idle, unready router. */
 void diskos_output_start(diskos_output_hooks hooks);
 
 /* Run the router for one main-loop tick: hand what the player sent to the legacy IPC
@@ -80,10 +80,6 @@ void diskos_output_bluetooth_lost(const char* mac);
 /* As diskos_output_bluetooth_lost(), for whatever sink the audio has or should go to (turning
  * Bluetooth off). */
 void diskos_output_leave_bluetooth(void);
-
-/* Before a local play from idle: re-assert the output and the work mode (OutputRouter::
- * prepare_play). Returns 0, or -1 if a frame was not sent. */
-int diskos_output_prepare_play(void);
 
 /* Get where the audio should go, and the sink's address into `mac` (DISKOS_OUTPUT_MAC_SIZE bytes,
  * may be NULL) for a Bluetooth one, else "". */

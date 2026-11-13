@@ -77,8 +77,6 @@ public:
                 return Blocker::OtherSource;
             case DISKOS_OUTPUT_AUDIOBOOK:
                 return Blocker::Audiobook;
-            case DISKOS_OUTPUT_PLAY_STARTING:
-                return Blocker::PlayStarting;
             case DISKOS_OUTPUT_CASTING:
                 return Blocker::Casting;
         }
@@ -229,6 +227,7 @@ extern "C" void diskos_output_start(diskos_output_hooks hooks) {
     if (diskos::legacy::started() == nullptr) {
         static Bridge bridge{hooks};
         diskos::legacy::started() = &bridge;
+        diskos::legacy::player_controller().set_preparer(bridge.router());
     }
 }
 
@@ -283,11 +282,6 @@ extern "C" void diskos_output_leave_bluetooth(void) {
             return;
         }
     }
-}
-
-extern "C" int diskos_output_prepare_play(void) {
-    auto* const bridge = diskos::legacy::started();
-    return bridge == nullptr || bridge->router().prepare_play() ? 0 : -1;
 }
 
 extern "C" diskos_output_kind diskos_output_desired(char* mac) {

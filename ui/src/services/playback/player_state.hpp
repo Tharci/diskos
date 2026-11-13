@@ -89,6 +89,14 @@ public:
     Changes request_play(Clock::time_point now);
 
     /**
+     * Note that a command to play a list (or a row of the current queue) was sent, and report
+     * what changed. It first advances to `now`. The play state becomes Loading, whatever it was,
+     * until the player reports the new track playing: it may report Paused for the track it
+     * leaves, then the new track as Stopped, then Playing (captures of 2026-11-01).
+     */
+    Changes request_list(Clock::time_point now);
+
+    /**
      * Note that the player re-initialised its output (0666), and report what changed. It first
      * advances to `now`. The re-init stops the track (V2.57 0x458108): the play state becomes
      * Stopped, the track is kept and its position is forgotten. The player reports the same, but

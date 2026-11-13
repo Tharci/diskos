@@ -27,7 +27,6 @@ std::optional<Refusal> refusal_of(Blocker blocker) {
             return Refusal::OtherSource;
         case Blocker::Audiobook:
             return Refusal::Audiobook;
-        case Blocker::PlayStarting:
         case Blocker::Casting:
             return std::nullopt;
     }
@@ -197,7 +196,13 @@ bool OutputRouter::may_start(Clock::time_point now) {
     if (blocker && (kind != Kind::Departure || !departure_passes(*blocker))) {
         return false;
     }
-    return kind != Kind::Correction || !is_playing(playback_->play_state());
+    if (kind == Kind::Departure) {
+        return true;
+    }
+    // A starting play: a 0666 now releases the output under it (seen live). A Correction also
+    // waits while one plays: it never interrupts playback.
+    const PlayState state = playback_->play_state();
+    return state != PlayState::Loading && (kind == Kind::Change || state != PlayState::Playing);
 }
 
 SendResult OutputRouter::prepare_play() {
