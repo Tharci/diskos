@@ -12,12 +12,12 @@
 #include "player/player_instance.hpp"
 #include "player/report_listener.hpp"
 #include "player/reports.hpp"
-#include "services/output/bluetooth_address.hpp"
 #include "services/output/interfaces.hpp"
 #include "services/output/output.hpp"
 #include "services/output/player_readiness.hpp"
 #include "services/output/transition.hpp"
 #include "services/playback/player_controller.hpp"
+#include "utils/bluetooth_address.hpp"
 
 namespace diskos::output {
 
@@ -116,14 +116,14 @@ public:
      * Note that the Bluetooth sink `device` is connected: it becomes desired(), unless the user
      * chose S/PDIF or USB audio.
      */
-    void bluetooth_connected(const BluetoothAddress& device);
+    void bluetooth_connected(const utils::BluetoothAddress& device);
 
     /**
      * Note that the Bluetooth sink `device` is gone, or about to be: the internal DAC replaces it
      * as desired(), and leaving it is a Departure. Call advance() right after: a Departure sends
      * its first 0666 at once, so the audio leaves the sink before it is dropped.
      */
-    void bluetooth_lost(const BluetoothAddress& device);
+    void bluetooth_lost(const utils::BluetoothAddress& device);
 
     // The player: PlayerLink::deliver() calls these
 
@@ -138,6 +138,8 @@ public:
     /**
      * Hear one report from the connected player. A track, play-state or position report shows
      * that it takes commands, as the answer to a state request does: PlayerReadiness waits for one.
+     * A list of connected Bluetooth sinks without the sink that is applied() counts as
+     * bluetooth_lost(): the player reports a dropped link first, while it still plays into it.
      */
     void on_report(const player::Report& report, Clock::time_point now) override;
 
@@ -175,6 +177,8 @@ private:
     [[nodiscard]] Kind next_kind() const;
     [[nodiscard]] bool departing() const;
     [[nodiscard]] bool may_start(Clock::time_point now);
+    /** Lose the applied Bluetooth sink if the player no longer lists it. */
+    void note_sinks(const player::BluetoothSinksReport& report);
     /** Take a prepared output as applied once the player plays on it. */
     void confirm_prepared();
     void start(player::PlayerInstance instance);
@@ -205,8 +209,8 @@ private:
     bool loaded_ = false;  // The store was read, on the first connection
     Output desired_{};
     std::optional<Output> applied_{};
-    bool intent_ = false;                     // desired_ changed since a transition last started
-    std::optional<BluetoothAddress> lost_{};  // The sink that went away
+    bool intent_ = false;  // desired_ changed since a transition last started
+    std::optional<utils::BluetoothAddress> lost_{};  // The sink that went away
     std::optional<Transition> transition_{};
     std::optional<Output> prepared_{};  // Its preamble was sent while applied_ was unknown
     Kind kind_ = Kind::Correction;      // Of the running or last transition

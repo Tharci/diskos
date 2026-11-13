@@ -7,7 +7,7 @@
 #include <optional>
 #include <string_view>
 
-namespace diskos::output {
+namespace diskos::utils {
 
 /** A Bluetooth device address in its canonical form, "AA:BB:CC:DD:EE:FF". */
 class BluetoothAddress {
@@ -33,4 +33,4 @@ private:
     std::array<char, kSize> text_;
 };
 
-}  // namespace diskos::output
+}  // namespace diskos::utils

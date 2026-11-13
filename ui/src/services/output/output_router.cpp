@@ -2,6 +2,7 @@
 // Copyright (C) 2026 diskOS contributors
 #include "services/output/output_router.hpp"
 
+#include <algorithm>
 #include <utility>
 #include <variant>
 
@@ -79,7 +80,7 @@ std::expected<void, Refusal> OutputRouter::select(const Output& target) {
     return {};
 }
 
-void OutputRouter::bluetooth_connected(const BluetoothAddress& device) {
+void OutputRouter::bluetooth_connected(const utils::BluetoothAddress& device) {
     if (lost_ == device) {
         lost_.reset();
     }
@@ -94,7 +95,7 @@ void OutputRouter::bluetooth_connected(const BluetoothAddress& device) {
     }
 }
 
-void OutputRouter::bluetooth_lost(const BluetoothAddress& device) {
+void OutputRouter::bluetooth_lost(const utils::BluetoothAddress& device) {
     lost_ = device;
     if (desired_ == Output{Bluetooth{.device = device}}) {
         desired_ = InternalDac{};
@@ -129,6 +130,16 @@ void OutputRouter::on_connected(player::PlayerInstance instance, Clock::time_poi
 void OutputRouter::on_report(const player::Report& report, Clock::time_point now) {
     if (is_answer(report)) {
         readiness_.note_reply(now);
+    }
+    if (const auto* const sinks = std::get_if<player::BluetoothSinksReport>(&report)) {
+        note_sinks(*sinks);
+    }
+}
+
+void OutputRouter::note_sinks(const player::BluetoothSinksReport& report) {
+    const auto* const sink = applied_ ? std::get_if<Bluetooth>(&*applied_) : nullptr;
+    if (sink != nullptr && !std::ranges::contains(report.sinks, sink->device)) {
+        bluetooth_lost(sink->device);
     }
 }
 

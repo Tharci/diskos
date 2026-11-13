@@ -13,8 +13,8 @@
 
 #include "platform/message_queue.hpp"
 #include "platform/test_directory.hpp"
-#include "services/output/bluetooth_address.hpp"
 #include "services/output/output.hpp"
+#include "utils/bluetooth_address.hpp"
 #include <catch2/catch_test_macros.hpp>
 #include <mqueue.h>
 #include <sys/stat.h>
@@ -133,9 +133,8 @@ bool same(const std::optional<StoredRoute>& loaded, const StoredRoute& expected)
 }
 
 TEST_CASE("FileRouteStore keeps each route for the running player", "[platform][route_store]") {
-    const Output speaker = output::Bluetooth{
-            .device = output::BluetoothAddress::from("30:82:16:ab:38:a0").value()
-    };
+    const Output speaker =
+            output::Bluetooth{.device = utils::BluetoothAddress::from("30:82:16:ab:38:a0").value()};
     const std::vector<StoredRoute> routes{
             {.applied = std::nullopt, .settled = false},
             {.applied = output::InternalDac{}, .settled = true},

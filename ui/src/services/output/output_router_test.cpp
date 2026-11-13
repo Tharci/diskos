@@ -9,11 +9,11 @@
 
 #include "player/modes.hpp"
 #include "player/reports.hpp"
-#include "services/output/bluetooth_address.hpp"
 #include "services/output/interfaces.hpp"
 #include "services/output/output.hpp"
 #include "services/output/test_fakes.hpp"
 #include "services/playback/player_state.hpp"
+#include "utils/bluetooth_address.hpp"
 #include <catch2/catch_test_macros.hpp>
 
 namespace diskos::output {
@@ -27,7 +27,7 @@ using Outcomes = std::vector<Outcome>;
 const Clock::time_point kStart = Clock::time_point{} + 100s;
 
 // Built before Catch2 starts, so without REQUIRE: value() throws if it is not an address.
-const BluetoothAddress kSpeaker = BluetoothAddress::from("30:82:16:AB:38:A0").value();
+const utils::BluetoothAddress kSpeaker = utils::BluetoothAddress::from("30:82:16:AB:38:A0").value();
 const Output kOnSpeaker = Bluetooth{.device = kSpeaker};
 
 // The answer to a state request from a player that is idle.
@@ -222,6 +222,33 @@ TEST_CASE(
     CHECK(left == Outcomes{switched(InternalDac{})});
     CHECK(fixture.log() == expected);
     CHECK(fixture.router().desired() == Output{InternalDac{}});
+}
+
+TEST_CASE("OutputRouter leaves a sink the player no longer lists", "[output][router]") {
+    Fixture fixture{kOnSpeaker};
+    fixture.playback().set_play_state(PlayState::Playing);
+    fixture.router().on_report(player::BluetoothSinksReport{.sinks = {kSpeaker}}, kStart);
+    const Outcomes listed = fixture.at(0ms);
+    const Log while_listed = fixture.log();
+    fixture.router().on_report(player::BluetoothSinksReport{}, kStart + 1s);
+    (void)fixture.at(1s);
+
+    CHECK(listed.empty());
+    CHECK(while_listed.empty());
+    CHECK(fixture.log() == Log{"0666000C0006", "reset"});
+    CHECK(fixture.router().desired() == Output{InternalDac{}});
+}
+
+TEST_CASE("OutputRouter ignores the player's sinks while on another output", "[output][router]") {
+    // The list is empty until the move to the speaker starts the player's Bluetooth.
+    Fixture fixture;
+    fixture.router().bluetooth_connected(kSpeaker);
+    fixture.router().on_report(player::BluetoothSinksReport{}, kStart);
+    (void)fixture.at(0ms);
+
+    CHECK(fixture.router().desired() == kOnSpeaker);
+    CHECK(fixture.log().front() == "0666000C0006");
+    CHECK(fixture.log().size() > 2);
 }
 
 TEST_CASE("OutputRouter makes a move off a lost sink a Departure", "[output][router]") {

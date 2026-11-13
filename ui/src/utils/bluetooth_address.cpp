@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 diskOS contributors
-#include "services/output/bluetooth_address.hpp"
+#include "utils/bluetooth_address.hpp"
 
-namespace diskos::output {
+namespace diskos::utils {
 namespace {
 
 /** The uppercase form of the hex digit `c`, or nullopt if it is not one. */
@@ -41,4 +41,4 @@ std::optional<BluetoothAddress> BluetoothAddress::from(std::string_view text) no
     return BluetoothAddress{canonical};
 }
 
-}  // namespace diskos::output
+}  // namespace diskos::utils

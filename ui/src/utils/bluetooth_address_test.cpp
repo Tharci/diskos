@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 diskOS contributors
-#include "services/output/bluetooth_address.hpp"
+#include "utils/bluetooth_address.hpp"
 
 #include <optional>
 
 #include <catch2/catch_test_macros.hpp>
 
-namespace diskos::output {
+namespace diskos::utils {
 namespace {
 
-TEST_CASE("BluetoothAddress reads either case into uppercase", "[output][bluetooth_address]") {
+TEST_CASE("BluetoothAddress reads either case into uppercase", "[utils][bluetooth_address]") {
     const auto lower = BluetoothAddress::from("a4:c1:38:0f:9e:2b");
     const auto upper = BluetoothAddress::from("A4:C1:38:0F:9E:2B");
     const auto mixed = BluetoothAddress::from("a4:C1:38:0f:9E:2b");
@@ -22,7 +22,7 @@ TEST_CASE("BluetoothAddress reads either case into uppercase", "[output][bluetoo
 
 TEST_CASE(
         "BluetoothAddress rejects anything but six pairs of hex digits",
-        "[output][bluetooth_address]"
+        "[utils][bluetooth_address]"
 ) {
     CHECK_FALSE(BluetoothAddress::from("").has_value());
     CHECK_FALSE(BluetoothAddress::from("A4:C1:38:0F:9E").has_value());
@@ -36,4 +36,4 @@ TEST_CASE(
 }
 
 }  // namespace
-}  // namespace diskos::output
+}  // namespace diskos::utils

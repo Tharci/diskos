@@ -8,7 +8,7 @@ One folder per area. A folder is created with its first module. Every module may
 
 | Folder      | Holds                                                       | May use                 |
 |-------------|-------------------------------------------------------------|-------------------------|
-| `utils/`    | Small general helpers with no diskOS knowledge (number parsing) | no other module     |
+| `utils/`    | Small general helpers with no diskOS knowledge (number parsing, Bluetooth addresses) | no other module     |
 | `player/`   | The stock player's protocol: frames, messages, its state    | `utils/`                |
 | `services/` | Playback, library, books, Bluetooth, Wi-Fi: logic and state | `player/`, other services (no cycles) |
 | `platform/` | The device: message queues, files, input, display, processes | `player/`, `services/` (implements their interfaces) |

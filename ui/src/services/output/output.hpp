@@ -4,7 +4,7 @@
 
 #include <variant>
 
-#include "services/output/bluetooth_address.hpp"
+#include "utils/bluetooth_address.hpp"
 
 namespace diskos::output {
 
@@ -25,7 +25,7 @@ struct UsbAudio {
 
 /** A Bluetooth sink: a speaker or headphones. */
 struct Bluetooth {
-    BluetoothAddress device;
+    utils::BluetoothAddress device;
 
     friend bool operator==(const Bluetooth&, const Bluetooth&) = default;
 };

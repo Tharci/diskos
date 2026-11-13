@@ -8,8 +8,8 @@
 #include <vector>
 
 #include "player/commands.hpp"
-#include "services/output/bluetooth_address.hpp"
 #include "services/output/output.hpp"
+#include "utils/bluetooth_address.hpp"
 #include <catch2/catch_test_macros.hpp>
 
 namespace diskos::output {
@@ -49,7 +49,7 @@ Plan plan(const std::optional<Output>& from, const Output& to) {
 }
 
 Output bluetooth(const char* address) {
-    const auto device = BluetoothAddress::from(address);
+    const auto device = utils::BluetoothAddress::from(address);
     REQUIRE(device.has_value());
     return Bluetooth{.device = *device};
 }

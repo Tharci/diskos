@@ -13,8 +13,8 @@
 #include <utility>
 #include <variant>
 
-#include "services/output/bluetooth_address.hpp"
 #include "services/output/output.hpp"
+#include "utils/bluetooth_address.hpp"
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -87,7 +87,7 @@ std::optional<Output> output_from(std::string_view text) {
     if (!text.starts_with(kBluetooth)) {
         return std::nullopt;
     }
-    const auto device = output::BluetoothAddress::from(text.substr(kBluetooth.size()));
+    const auto device = utils::BluetoothAddress::from(text.substr(kBluetooth.size()));
     return device ? std::optional<Output>{output::Bluetooth{.device = *device}} : std::nullopt;
 }
 

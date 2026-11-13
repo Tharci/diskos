@@ -342,14 +342,15 @@ static int bt_mac_valid(const char *mac){
 
 static int bt_info_prop(const char *buf, const char *key, char *out, int cap);
 /* A missing PCM is not a missing radio link (codec rebuilds remove PCMs).
- * Return 1 for confirmed down, 0 for connected, -1 for unknown. */
+ * Return 1 for confirmed down, 0 for connected, -1 for unknown, -2 while the query still runs: run_cap_bounded()
+ * starts it on one call and has its answer on a later one, so the first call for a MAC is always pending. */
 static int bt_link_disconnected(const char *mac, int timeout_ms){
     if(timeout_ms <= 0 || !bt_mac_valid(mac)) return -1;
     char cmd[160], info[4097], value[16], device[32];
     const char *marker = "\nDISKOS_INFO_DONE\n";
     snprintf(cmd, sizeof cmd, "bluetoothctl info %s 2>/dev/null && printf '\\nDISKOS_INFO_DONE\\n'", mac);
     bt_capture_drop_except(cmd);
-    run_cap_bounded(cmd, info, sizeof info, timeout_ms);
+    if(!run_cap_bounded(cmd, info, sizeof info, timeout_ms)) return -2;
     char *done = strstr(info, marker);
     if(!done || done[strlen(marker)]) return -1;
     *done = 0;
@@ -420,7 +421,10 @@ static void bt_autoroute_poll_cb(lv_timer_t *t){
         if(disconnected == 0){ misses = absent_polls = 0; return; }
         if(absent_polls < 10) absent_polls++;
         if(disconnected < 0){
-            misses = 0;
+            /* Only a completed unknown answer breaks a run of confirmed-down polls. A pending query is no answer:
+             * every second look at the link is one, and counting it as unknown left only the 10-list fallback
+             * (60 s at one completed list per two ticks, seen on the Disc after the output cutover). */
+            if(disconnected == -1) misses = 0;
             /* Ten consecutive successful lists missing this PCM: 30 seconds at
              * the 3-second cadence. Brief rebuild gaps do not qualify;
              * connected evidence or a returning PCM resets the grace. */

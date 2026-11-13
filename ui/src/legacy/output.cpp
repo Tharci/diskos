@@ -18,12 +18,12 @@
 #include "legacy/player_state.hpp"
 #include "platform/route_store.hpp"
 #include "platform/usb_dac.hpp"
-#include "services/output/bluetooth_address.hpp"
 #include "services/output/interfaces.hpp"
 #include "services/output/output.hpp"
 #include "services/output/output_router.hpp"
 #include "services/playback/player_controller.hpp"
 #include "services/playback/player_state.hpp"
+#include "utils/bluetooth_address.hpp"
 
 namespace diskos::legacy {
 namespace {
@@ -160,7 +160,7 @@ std::optional<Output> output_of(diskos_output_kind kind, const char* mac) {
         case DISKOS_OUTPUT_USB_AUDIO:
             return output::UsbAudio{};
         case DISKOS_OUTPUT_BLUETOOTH: {
-            const auto device = output::BluetoothAddress::from(mac != nullptr ? mac : "");
+            const auto device = utils::BluetoothAddress::from(mac != nullptr ? mac : "");
             return device ? std::optional<Output>{output::Bluetooth{.device = *device}}
                           : std::nullopt;
         }
@@ -220,7 +220,7 @@ void tick(Bridge& bridge) {
 }
 
 /** Note that `device` is gone, then tick, so a Departure sends its first 0666 at once. */
-void lose(Bridge& bridge, const output::BluetoothAddress& device) {
+void lose(Bridge& bridge, const utils::BluetoothAddress& device) {
     bridge.router().bluetooth_lost(device);
     tick(bridge);
 }
@@ -258,7 +258,7 @@ extern "C" diskos_output_selection diskos_output_select(
 extern "C" void diskos_output_bluetooth_connected(const char* mac) {
     using namespace diskos::legacy;
     Bridge* const bridge = started();
-    const auto device = diskos::output::BluetoothAddress::from(mac != nullptr ? mac : "");
+    const auto device = diskos::utils::BluetoothAddress::from(mac != nullptr ? mac : "");
     if (bridge != nullptr && device) {
         bridge->router().bluetooth_connected(*device);
     }
@@ -267,7 +267,7 @@ extern "C" void diskos_output_bluetooth_connected(const char* mac) {
 extern "C" void diskos_output_bluetooth_lost(const char* mac) {
     using namespace diskos::legacy;
     Bridge* const bridge = started();
-    const auto device = diskos::output::BluetoothAddress::from(mac != nullptr ? mac : "");
+    const auto device = diskos::utils::BluetoothAddress::from(mac != nullptr ? mac : "");
     if (bridge != nullptr && device) {
         lose(*bridge, *device);
     }
