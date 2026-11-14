@@ -89,7 +89,9 @@ extern "C" int diskos_playback_set_play_mode(int mode) {
     return status(player_controller().set_play_mode(static_cast<PlayMode>(mode)));
 }
 
-extern "C" int diskos_playback_play_list(int list_type, unsigned position, const char* name) {
+extern "C" int diskos_playback_play_list(
+        int list_type, unsigned position, const char* name, uint32_t start_ms
+) {
     using namespace diskos::legacy;
     using diskos::player::ListName;
     constexpr unsigned kMaxPosition = 0xFFFF;
@@ -103,7 +105,11 @@ extern "C" int diskos_playback_play_list(int list_type, unsigned position, const
             .position = static_cast<std::uint16_t>(position),
             .name = *list_name,
     };
-    return status(player_controller().play_list(list, diskos::playback::PlayerState::Clock::now()));
+    return status(
+            player_controller().play_list(
+                    list, diskos::playback::PlayerState::Clock::now(), start_ms
+            )
+    );
 }
 
 extern "C" int diskos_playback_starting(void) {

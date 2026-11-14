@@ -1453,7 +1453,8 @@ static uint32_t g_book_noadopt_until = 0;  /* after an explicit play, don't let 
 /* build_idx: the 0100 start index sent when the list is (re)built; -1 = the 0-based position (pos1-1). A jump
  * inside the already-loaded list always uses pos1. */
 /* Returns 1 if the play frame was sent, 0 if it was refused or the send failed. */
-static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_idx){
+/* start_ms: continue the first track from there (diskos_playback_play_list), 0 for its start. */
+static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_idx, uint32_t start_ms){
     if(cast_on() && build_idx < 0 && cast_list_type(list_type)) return cast_select_list(list_type, name, pos1, 0);   /* Cast 14e2 */
     if(local_start_refuse()) return 0;   /* Cast 14a: first, before any other check, write or frame */
     if(diskos_output_busy()){ ui_toast("Switching output - try again"); return 0; }   /* an output switch (0666 re-init) is in flight or recovering */
@@ -1478,7 +1479,7 @@ static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_
     {   /* always rebuild: the player's queue can change under us (Play Through Folders), so no type-0 shortcut */
         unsigned position = (unsigned)(build_idx >= 0 ? build_idx : pos1 - 1);
         track_state_t cur; ipc_get_state(&cur);   /* snapshot BEFORE the send: the player's reply may already update the state */
-        if(diskos_playback_play_list(list_type, position, name) == 0){
+        if(diskos_playback_play_list(list_type, position, name, start_ms) == 0){
             sent = 1;
             fprintf(stderr,"play(build) type=%d pos=%u name='%s'\n", list_type, position, name);
             /* rebuild can take seconds - acknowledge + arm completion/timeout.
@@ -1493,7 +1494,7 @@ static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_
     fflush(stderr);
     return sent;
 }
-int ui_play_list(int list_type, const char *name, int pos1){ return ui_play_list_ex(list_type, name, pos1, -1); }
+int ui_play_list(int list_type, const char *name, int pos1){ return ui_play_list_ex(list_type, name, pos1, -1, 0); }
 /* V2.57 favourites: play stock's type-6 queue from the favourite at 1-based row pos1 of the stock-ordered list
  * (mdb_favorites stock_order), whose MY_LOVE.ID is love_id. The build starts at that ID (the player's contract);
  * a jump inside the loaded favourites queue uses the row. */
@@ -1504,7 +1505,7 @@ int ui_play_favorite(int love_id, int pos1){
     /* prove this exact track starts before caching scope; a row gone since the list filled would only be refused */
     char lpath[256];
     if(!mdb_love_path(love_id, lpath, sizeof lpath)){ ui_toast("Couldn't find that song"); return 0; }
-    return ui_play_list_ex(6, "", pos1, love_id);
+    return ui_play_list_ex(6, "", pos1, love_id, 0);
 }
 /* Play a custom playlist (list_type 5) by its id, from 1-based track pos. */
 int ui_play_playlist(long pid, int pos){
@@ -1528,7 +1529,10 @@ int ui_play_playlist(long pid, int pos){
 /* Up Next: play the song at 1-based position ord1 of the CURRENT queue (LIST_SONG_0 ID order - the same index in
  * shuffle, device-verified). A type-0 jump: no rebuild, so the loaded scope stays valid. Refused while a rebuild is
  * pending (the list being jumped in may not be the one on screen). Same local-play preamble rule as ui_play_list. */
-int ui_queue_jump(int ord1){
+static int queue_jump_at(int ord1, uint32_t start_ms);
+int ui_queue_jump(int ord1){ return queue_jump_at(ord1, 0); }
+/* As ui_queue_jump, continuing the track from start_ms (0 for its start). */
+static int queue_jump_at(int ord1, uint32_t start_ms){
     if(local_start_refuse()) return -1;   /* Cast 14a: before the play preamble and the 0100 jump. Up Next while casting never gets here (14f: upnext.c posts a JUMP with cw_jump); this stays the guard against local audio on top of the receiver */
     if(diskos_output_busy()){ ui_toast("Switching output - try again"); return -1; }
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback first"); return -1; }
@@ -1536,7 +1540,7 @@ int ui_queue_jump(int ord1){
     if(ord1 < 1 || ord1 > 0xFFFF) return -1;
     ui_cancel_book_resume();
     ui_disarm_book_eoc();
-    int rc = diskos_playback_play_list(0, (unsigned)(ord1 - 1), NULL);   /* type 0: a row of the current queue */
+    int rc = diskos_playback_play_list(0, (unsigned)(ord1 - 1), NULL, start_ms);   /* type 0: a row of the current queue */
     fprintf(stderr, "queue jump pos=%d (rc=%d)\n", ord1, rc); fflush(stderr);
     return rc;
 }
@@ -1554,12 +1558,12 @@ int ui_play_plan(mdb_plan_t *plan, int song_id){
         if(pos < 1){ ui_toast("Couldn't find that song"); return 0; }
         g_book_single_mode = 0;
         send_play_mode(cfg_get_int("work_mode", 0));
-        return ui_play_list_ex(5, "", pos, -1);
+        return ui_play_list_ex(5, "", pos, -1, 0);
     }
     if(plan->list_type != 2 && plan->list_type != 3 && plan->list_type != 7){ ui_toast("Couldn't play that list"); return 0; }
     int pos = mdb_plan_pos(plan, song_id);
     if(pos < 1){ ui_toast("Couldn't find that song"); return 0; }
-    return ui_play_list_ex(plan->list_type, plan->name, pos, -1);
+    return ui_play_list_ex(plan->list_type, plan->name, pos, -1, 0);
 }
 /* Favourite/unfavourite the CURRENT song (0104: 1=love -> MY_LOVE, 0=unlove). */
 /* 14e2b: 0104 acts on the LOCAL player's current song, which is not the Cast track the Disc shows. The only id-based favourites write that exists is
@@ -3477,20 +3481,18 @@ int ui_cast_pick_request(const char *host, int port){
     snprintf(g_pickreq.host, sizeof g_pickreq.host, "%s", host); g_pickreq.port = port; g_pickreq.pend = 1;
     return 0;
 }
-/* A repeated filename is still a fresh load when a new complete A2 arrives. */
-static unsigned beam_local_report(void){
-    track_state_t report; unsigned serial, toggle, after;
-    (void)ipc_resume_snapshot(&report, &serial, &toggle, &after);
-    return serial;
-}
-static int beam_local_ready(unsigned before, const pb_view *view, int id){
-    track_state_t report; unsigned serial, toggle, after;
-    return ipc_resume_snapshot(&report, &serial, &toggle, &after) &&
-        serial != before && report.have_track && report.player_confirmed && !report.provisional && report.state == 0 &&
-        !strcmp(report.path, view->path) && (!id || (report.pos_id_valid && report.pos_id_raw == (uint64_t)id));
+/* Play the track a Beam left off on the Disc, from where it was: the queue row `id`/`ord` when it is still that
+ * track, else the track alone in the reserved slot. The playback controller seeks once it plays (play_list's start
+ * position). 1 if the play was sent. */
+static int beam_local_resume(int id, int ord, const pb_view *view){
+    uint32_t start = view->position_ms > 0 ? (uint32_t)view->position_ms : 0;
+    int started = id ? mdb_queue_row_valid(id, ord, view->path) == 1 && queue_jump_at(ord, start) == 0
+                     : mdb_reserved_slot_set(view->path) && ui_play_list_ex(5, "", 1, -1, start);
+    if(started) ui_np_hold_return(view->path, view->position_ms);
+    return started;
 }
 /* Explicit return only: sleep, reload and output teardown never start Local. */
-static struct { int pending, id, ord; unsigned generation, report_serial, attempt, stop_seq, transport; uint32_t deadline, probe_at; pb_view view; } g_cast_return;
+static struct { int pending, id, ord; unsigned generation, attempt, stop_seq; pb_view view; } g_cast_return;
 int ui_cast_return(void){
     if(playback_source() != PB_SRC_CAST || !g_cast_on || !g_ho_sess || g_cast_return.pending) return -1;
     cs_snapshot ss; cast_session_snapshot(g_ho_sess, &ss);
@@ -3511,38 +3513,13 @@ static void cast_return_tick(const track_state_t *st){
     if(!g_cast_return.pending) return;
     if(ho_attempt(&g_ho) != g_cast_return.attempt){ g_cast_return.pending = 0; return; }
     if(ipc_instance() != g_cast_return.generation){ g_cast_return.pending = 0; ui_beam_refuse("Player restarted. Press play to continue."); return; }
-    if(g_cast_return.pending == 1){
-        if(ho_get(&g_ho) != HO_LOCAL) return;
-        g_cast_return.pending = 0;
-        cs_snapshot ss; cast_session_snapshot(g_ho_sess, &ss);
-        if(ss.stop_seq != g_cast_return.stop_seq || ss.stop_state != CS_JOB_OK){ ui_beam_refuse("Receiver stop was not confirmed. Stop it before playing on Disc."); return; }
-        if(!cast_sd_open() || ui_receiver_in_use() || local_start_refuse()){ ui_beam_refuse("Disc playback is unavailable. Check the card and Audio Source."); return; }
-        int started = g_cast_return.id
-            ? mdb_queue_row_valid(g_cast_return.id, g_cast_return.ord, g_cast_return.view.path) == 1 && ui_queue_jump(g_cast_return.ord) == 0
-            : mdb_reserved_slot_set(g_cast_return.view.path) && ui_play_list(5, "", 1);
-        if(!started){ ui_beam_refuse("Couldn't start playback. Choose the track on the Disc."); return; }
-        /* Stock handles 0100 before 0103; do not wait for an A2 poll. */
-        if(ui_seek_to(g_cast_return.view.position_ms) < 0) ui_beam_refuse("Couldn't seek. Try again on the Disc.");
-        else ui_np_hold_return(g_cast_return.view.path, g_cast_return.view.position_ms);
-        g_cast_return.pending = 2; g_cast_return.deadline = lv_tick_get() + 5000;
-        g_cast_return.report_serial = beam_local_report();
-        g_cast_return.transport = ipc_transport_seq();
-        /* The load may report paused before it begins playing. Ask for fresh
-         * state until ready; ordinary position frames do not refresh A2. */
-        ipc_send_probe("02020008"); g_cast_return.probe_at = lv_tick_get() + 250;
-        fprintf(stderr, "Cast return: position=%ld id=%d ord=%d report=%u\n", g_cast_return.view.position_ms, g_cast_return.id, g_cast_return.ord, g_cast_return.report_serial);
-    } else if(ipc_transport_seq() != g_cast_return.transport){
-        g_cast_return.pending = 0;
-    } else if((int32_t)(lv_tick_get() - g_cast_return.deadline) >= 0){
-        track_state_t report; unsigned serial, toggle, after;
-        int valid = ipc_resume_snapshot(&report, &serial, &toggle, &after);
-        fprintf(stderr, "Cast return timeout: report=%u before=%u valid=%d track=%d state=%d id=%d want=%d path=%d\n", serial, g_cast_return.report_serial, valid, report.have_track, report.state, report.pos_id, g_cast_return.id, !strcmp(report.path, g_cast_return.view.path));
-        g_cast_return.pending = 0; ui_beam_refuse("Couldn't resume playback. Choose the track on the Disc.");
-    } else if(beam_local_ready(g_cast_return.report_serial, &g_cast_return.view, g_cast_return.id)){
-        g_cast_return.pending = 0;
-    } else if((int32_t)(lv_tick_get() - g_cast_return.probe_at) >= 0){
-        ipc_send_probe("02020008"); g_cast_return.probe_at = lv_tick_get() + 250;
-    }
+    if(ho_get(&g_ho) != HO_LOCAL) return;
+    g_cast_return.pending = 0;
+    cs_snapshot ss; cast_session_snapshot(g_ho_sess, &ss);
+    if(ss.stop_seq != g_cast_return.stop_seq || ss.stop_state != CS_JOB_OK){ ui_beam_refuse("Receiver stop was not confirmed. Stop it before playing on Disc."); return; }
+    if(!cast_sd_open() || ui_receiver_in_use() || local_start_refuse()){ ui_beam_refuse("Disc playback is unavailable. Check the card and Audio Source."); return; }
+    if(!beam_local_resume(g_cast_return.id, g_cast_return.ord, &g_cast_return.view)){ ui_beam_refuse("Couldn't start playback. Choose the track on the Disc."); return; }
+    fprintf(stderr, "Cast return: position=%ld id=%d ord=%d\n", g_cast_return.view.position_ms, g_cast_return.id, g_cast_return.ord);
 }
 int ui_cast_phase(void){ if(g_sender_pending || aps_sender_active(&g_sender)) return g_sender.phase == APSS_RUNNING && ho_get(&g_ho) == HO_CASTING ? 2 : 1; return g_pickreq.pend ? 1 : ho_get(&g_ho) == HO_LOCAL ? 0 : ho_get(&g_ho) == HO_CASTING ? 2 : 1; }
 static void ho_tick(const track_state_t *st, int playing);
@@ -3675,7 +3652,7 @@ static int sender_reload_ready(void){
     if(!aps_sender_active(&g_sender)) return 1;
     aps_sender_cancel(&g_sender, lv_tick_get()); return 0;
 }
-static struct { int pending, id, ord, force; uint32_t deadline, probe_at; unsigned generation, report, transport; pb_view view; } g_sender_return;
+static struct { int pending, id, ord, force; pb_view view; } g_sender_return;
 /* Receiver volume from the volume keys: volkeys.c counts the presses (the stock gesture codes never reach the player
  * or us), and the AirPlay/Cast sessions live on this loop. */
 static void sender_keys(void){
@@ -3742,57 +3719,13 @@ static int sender_dispatch(const track_state_t *st, int playing){
     if(volume != last_volume){ last_volume = volume; ui_refresh_remote_volume(); }
     power_set_hold(POWER_HOLD_AIRPLAY, aps_sender_active(&g_sender));
     if(!aps_sender_active(&g_sender) && g_sender_return.pending){
-        if(g_sender_return.pending == 1){
-            g_sender_return.pending = 0;
-            if(!g_sender.stop_confirmed && !g_sender_return.force) ui_toast("TV stop was not confirmed");
-            else if(!cast_sd_open() || ui_receiver_in_use() || local_start_refuse()) ui_toast("Disc playback is unavailable");
-            else {
-                int started;
-                if(g_sender_return.id){
-                    started = mdb_queue_row_valid(g_sender_return.id, g_sender_return.ord, g_sender_return.view.path) == 1 &&
-                              ui_queue_jump(g_sender_return.ord) == 0;
-                } else {
-                    /* Explicit single-track choice. Stock's type-5 slot cannot
-                     * preserve arbitrary order or duplicate occurrences. */
-                    started = mdb_reserved_slot_set(g_sender_return.view.path) && ui_play_list(5, "", 1);
-                }
-                if(!started) ui_toast("Couldn't start playback");
-                else {
-                    /* Stock handles 0100 before 0103; do not wait for an A2 poll. */
-                    if(ui_seek_to(g_sender_return.view.position_ms) < 0) ui_toast("Couldn't seek - try again");
-                    else ui_np_hold_return(g_sender_return.view.path, g_sender_return.view.position_ms);
-                    track_state_t ready; unsigned toggle, after_report;
-                    g_sender_return.pending = 2; g_sender_return.deadline = now + 5000;
-                    g_sender_return.generation = ipc_instance();
-                    g_sender_return.transport = ipc_transport_seq();
-                    /* Reloading the same track does not change path_seq. Wait
-                     * for a complete player report received after the start. */
-                    ipc_resume_snapshot(&ready, &g_sender_return.report, &toggle, &after_report);
-                    ipc_send_probe("02020008"); g_sender_return.probe_at = now + 250;
-                    fprintf(stderr, "AirPlay return: position=%ld id=%d ord=%d report=%u\n", g_sender_return.view.position_ms, g_sender_return.id, g_sender_return.ord, g_sender_return.report);
-                }
-            }
-        } else if(ipc_instance() != g_sender_return.generation){
-            g_sender_return.pending = 0; ui_toast("Player restarted - press play");
-        } else if(ipc_transport_seq() != g_sender_return.transport){
-            g_sender_return.pending = 0;
-        } else if((int32_t)(now - g_sender_return.deadline) >= 0){
-            track_state_t report; unsigned serial, toggle, after;
-            int valid = ipc_resume_snapshot(&report, &serial, &toggle, &after);
-            fprintf(stderr, "AirPlay return timeout: report=%u before=%u valid=%d track=%d state=%d id=%d want=%d path=%d\n", serial, g_sender_return.report, valid, report.have_track, report.state, report.pos_id, g_sender_return.id, !strcmp(report.path, g_sender_return.view.path));
-            g_sender_return.pending = 0; ui_toast("Couldn't start playback");
-        } else {
-            track_state_t ready; unsigned report, toggle, after_report;
-            if(ipc_resume_snapshot(&ready, &report, &toggle, &after_report) &&
-               report != g_sender_return.report && ready.have_track && ready.player_confirmed &&
-               !ready.provisional && ready.player_instance == g_sender_return.generation && ready.state == 0 &&
-               !strcmp(ready.path, g_sender_return.view.path) &&
-               (!g_sender_return.id || (ready.pos_id_valid && ready.pos_id_raw == (uint64_t)g_sender_return.id))){
-                g_sender_return.pending = 0;
-            } else if((int32_t)(now - g_sender_return.probe_at) >= 0){
-                ipc_send_probe("02020008"); g_sender_return.probe_at = now + 250;
-            }
-        }
+        g_sender_return.pending = 0;
+        if(!g_sender.stop_confirmed && !g_sender_return.force) ui_toast("TV stop was not confirmed");
+        else if(!cast_sd_open() || ui_receiver_in_use() || local_start_refuse()) ui_toast("Disc playback is unavailable");
+        /* Without a queue row: an explicit single-track choice, as stock's type-5 slot cannot preserve arbitrary order
+         * or duplicate occurrences. */
+        else if(!beam_local_resume(g_sender_return.id, g_sender_return.ord, &g_sender_return.view)) ui_toast("Couldn't start playback");
+        else fprintf(stderr, "AirPlay return: position=%ld id=%d ord=%d\n", g_sender_return.view.position_ms, g_sender_return.id, g_sender_return.ord);
     }
     return aps_sender_active(&g_sender);
 }

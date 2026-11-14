@@ -81,9 +81,6 @@ static inline const char *ipc_display_title(const track_state_t *st){
 int  ipc_start(void);                  /* start the connection to the player (legacy/player_link.h); 0=ok */
 void ipc_get_state(track_state_t *out);
 int  ipc_local_playing(void);          /* 1 while the player plays or loads a track (PlayerState::is_playing); call each tick */
-/* Read-only complete A2 plus last accepted user toggle epoch and its A2 boundary.
- * Raw reply state 0=playing, 1=paused. Short replies carry have_track=0. */
-int ipc_resume_snapshot(track_state_t *out, unsigned *serial, unsigned *toggle, unsigned *after_report);
 void ipc_seed_state(const track_state_t *s);  /* startup resume-state seed */
 #ifdef DISKOS_HOST
 /* Renderer input is an explicit player snapshot, including readiness and identity. */

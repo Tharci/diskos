@@ -17,6 +17,7 @@ struct Progress {
     std::optional<player::PlayerInstance> instance{};
     std::optional<Track> track{};
     bool playing = false;
+    bool loading = false;
     std::optional<std::uint32_t> position_ms{};
     std::optional<PlayerState::Clock::time_point> position_time{};
 };
@@ -28,7 +29,7 @@ PlayerController::SendResult PlayerController::toggle(Clock::time_point now) {
 }
 
 PlayerController::SendResult PlayerController::play_list(
-        const player::PlayListCommand& list, Clock::time_point now
+        const player::PlayListCommand& list, Clock::time_point now, std::uint32_t start_ms
 ) {
     restore_.reset();
     const auto [idle, instance] = state_->with([](const PlayerState& state) {
@@ -42,6 +43,9 @@ PlayerController::SendResult PlayerController::play_list(
     SendResult sent = sender_->send(list, instance);
     if (sent) {
         state_->with([now](PlayerState& state) { state.request_list(now); });
+        if (start_ms >= kToleranceMs) {
+            restore_ = PendingRestore{.position_ms = start_ms, .instance = instance};
+        }
     }
     return sent;
 }
@@ -87,7 +91,7 @@ std::optional<PlaybackSnapshot> PlayerController::snapshot() const {
             });
     // Until a restore lands, the player's position is not where the user is: it is unknown after
     // the output reset, or the start of the track the restore is about to seek in.
-    if (taken && restore_ && same_track(taken->track, restore_->track)) {
+    if (taken && restore_ && restore_->track && same_track(taken->track, *restore_->track)) {
         taken->position_ms = restore_->position_ms;
     }
     return taken;
@@ -139,13 +143,25 @@ void PlayerController::advance(Clock::time_point now) {
                 .instance = state.instance(),
                 .track = state.track(),
                 .playing = state.play_state() == PlayState::Playing,
+                .loading = state.play_state() == PlayState::Loading,
                 .position_ms = state.position_ms(),
                 .position_time = state.position_time(),
         };
     });
-    if (progress.instance != pending.instance
-        || (progress.track && !same_track(*progress.track, pending.track))) {
-        restore_.reset();  // Another player or another track: the restore is moot
+    if (progress.instance != pending.instance) {
+        restore_.reset();  // Another player: the restore is moot
+        return;
+    }
+    if (!pending.track) {
+        if (!progress.playing) {
+            if (!progress.loading) {
+                restore_.reset();  // The play did not start
+            }
+            return;
+        }
+        pending.track = progress.track;  // The track the play started
+    } else if (progress.track && !same_track(*progress.track, *pending.track)) {
+        restore_.reset();  // Another track: the restore is moot
         return;
     }
     if (!progress.track || !progress.playing) {

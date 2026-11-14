@@ -38,11 +38,6 @@ static unsigned g_rx_frames = 0; /* [g_recov_mu] count of /ui frames received FR
                                   * cold-boot /ui reopen firing (see ipc_rx_frames / main.c initial apply). */
 static unsigned g_instance = 0; /* [g_recov_mu] the player instance (legacy/player_link.h) last delivered: 0 before
                                  * the first, one more after each player restart. See ipc_instance(). */
-/* Complete A2 evidence, separate from presentation and position updates. */
-static track_state_t g_a2_report;
-static unsigned g_a2_serial;
-/* Main-thread send evidence only; no command or player-state mutation. */
-static unsigned g_resume_toggle, g_resume_after_report;
 static int g_confirmed;         /* [g_recov_mu] accepted a2 state report from this player instance */
 static uint64_t g_mode_change_sequence; /* [g_recov_mu] durable departures */
 static uint64_t g_arm_next, g_arm_request, g_arm_ack, g_arm_sequence; /* [g_recov_mu] */
@@ -57,7 +52,6 @@ static int g_player_mode = -1;   /* [g_recov_mu] last a607 external-mode announc
                                   * Reset to -1 on /ui reopen (new player instance). See ipc_player_mode(). */
 
 /* ---- helpers ---- */
-static track_state_t g_a2_candidate;
 static char g_stock_title[IPC_TITLE_CAPACITY];
 static int g_title_frozen, g_title_stock;
 static uint64_t g_title_revision;
@@ -413,18 +407,10 @@ static void parse_frame(const char*buf,int n){
         if(update.track || update.details) publish_track_locked(update.track);
         g_state.seq++;
         if(strcmp(oldpath, g_state.path) != 0) g_state.path_seq = g_state.seq;   /* track changed -> new identity epoch */
-        g_a2_candidate = g_state;
-        if(!update.full) g_a2_candidate.have_track = 0;   /* a state-only report cannot show that a track is loaded */
         pthread_mutex_unlock(&g_mu);
-        pthread_mutex_lock(&g_recov_mu);
         if(update.accepted){
-            g_confirmed=1;
-            pthread_mutex_lock(&g_mu);
-            g_a2_report=g_a2_candidate;
-            g_a2_serial++;
-            pthread_mutex_unlock(&g_mu);
+            pthread_mutex_lock(&g_recov_mu); g_confirmed=1; pthread_mutex_unlock(&g_recov_mu);
         }
-        pthread_mutex_unlock(&g_recov_mu);
     } else if(report.kind == DISKOS_REPORT_VOLUME){
         pthread_mutex_lock(&g_mu); g_state.volume=(int)report.value; g_state.volume_seq++; pthread_mutex_unlock(&g_mu);
     } else if(report.kind == DISKOS_REPORT_SOURCE){
@@ -579,17 +565,6 @@ void ipc_source_cancel_arm(uint64_t id){
 unsigned ipc_instance(void){
     pthread_mutex_lock(&g_recov_mu); unsigned r=g_instance; pthread_mutex_unlock(&g_recov_mu);
     return r;
-}
-/* Read-only readiness evidence: complete numeric A2 from this queue instance.
- * A2 0=playing, 1=paused, 2=stopped (V2.57 0x4248c0..0x4249f0).
- * Do not substitute presentation state or a position frame for this report. */
-int ipc_resume_snapshot(track_state_t *out, unsigned *serial, unsigned *toggle, unsigned *after_report){
-    pthread_mutex_lock(&g_recov_mu);
-    *out=g_a2_report; *serial=g_a2_serial;
-    *toggle=g_resume_toggle; *after_report=g_resume_after_report;
-    int valid=g_confirmed && out->player_instance==g_instance;
-    pthread_mutex_unlock(&g_recov_mu);
-    return valid;
 }
 void ipc_get_state(track_state_t*out){
     pthread_mutex_lock(&g_mu); *out=g_state; pthread_mutex_unlock(&g_mu);
@@ -776,19 +751,7 @@ unsigned ipc_transport_seq(void){ return g_transport_seq; }
 int ipc_send_cmd(const char*frame){
     if(!strncmp(frame,"0100",4) || !strncmp(frame,"0103",4) || !strncmp(frame,"0201",4))
         g_transport_seq++; /* cancel recovery even if the transport send fails */
-    /* Capture intent before sending: a toggle of externally playing audio is
-     * Pause and must not become a deferred position restore. */
-    pthread_mutex_lock(&g_recov_mu);
-    int pause=g_confirmed && g_a2_report.player_instance==g_instance &&
-              g_a2_report.player_confirmed && !g_a2_report.provisional && g_a2_report.state==0;
-    pthread_mutex_unlock(&g_recov_mu);
-    int rc = ipc_send_internal(frame, SEND_USER, ipc_instance());
-    if(rc == 0 && !strcmp(frame,"0201000C0000")){
-        pthread_mutex_lock(&g_recov_mu);
-        g_resume_toggle=pause ? 0 : g_transport_seq; g_resume_after_report=g_a2_serial;
-        pthread_mutex_unlock(&g_recov_mu);
-    }
-    return rc;
+    return ipc_send_internal(frame, SEND_USER, ipc_instance());
 }
 /* background send (state-sync / health probe): silent, never toasts. */
 int ipc_send_probe(const char*frame){ return ipc_send_internal(frame, SEND_PROBE, ipc_instance()); }

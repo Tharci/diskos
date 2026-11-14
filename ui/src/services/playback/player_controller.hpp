@@ -73,11 +73,18 @@ public:
      * Play `list`, cancelling a pending restore. When nothing plays (the state is not Playing or
      * Loading), the preparer readies the player first. The state is Loading once it is sent
      * (PlayerState::request_list()).
+     *
+     * With `start_ms` (at least kRestoreTolerance), the track it starts continues from there, as a
+     * restore does: advance() seeks once that track plays, the first one that plays after the
+     * request. It is dropped like a restore, and when the play does not start (the state leaves
+     * Loading for anything but Playing).
      * Returns, without sending the play:
      *  - the preparer's SendError, if it could not ready the player
      * and otherwise SendError::Failed or WrongInstance if the play was not sent.
      */
-    [[nodiscard]] SendResult play_list(const player::PlayListCommand& list, Clock::time_point now);
+    [[nodiscard]] SendResult play_list(
+            const player::PlayListCommand& list, Clock::time_point now, std::uint32_t start_ms = 0
+    );
 
     /**
      * Skip to the next track in the queue, cancelling a pending restore.
@@ -159,7 +166,7 @@ public:
 private:
     /** A restore waiting for the track to play, or for its seek to land. */
     struct PendingRestore {
-        Track track{};
+        std::optional<Track> track{};  // None: the track a play starts, once it plays
         std::uint32_t position_ms = 0;
         std::optional<player::PlayerInstance> instance{};
         int seek_attempts = 0;

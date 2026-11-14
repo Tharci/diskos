@@ -23,6 +23,7 @@ namespace diskos::playback {
 namespace {
 
 using player::ReportedPlayState;
+using namespace std::chrono_literals;
 
 constexpr PlayerState::Clock::time_point kNow{};
 
@@ -484,6 +485,47 @@ TEST_CASE(
 
     CHECK(played == std::unexpected{player::SendError::Failed});
     CHECK(fixture.play_state() == PlayState::Playing);
+}
+
+TEST_CASE(
+        "PlayerController continues a list play's track from a start position",
+        "[playback][player_controller]"
+) {
+    // A Beam return: the album from the track and position the TV played.
+    Fixture fixture{ReportedPlayState::Paused};
+    const bool played = fixture.controller().play_list(kAlbum, kNow, kAt).has_value();
+    const auto step = [&fixture](const player::Report& report, std::chrono::seconds at) {
+        fixture.apply(report, kNow + at);
+        fixture.controller().advance(kNow + at);
+    };
+    step(reported(ReportedPlayState::Paused), 0s);  // The track it leaves
+    step(player::TrackReport{.song = kOtherSong, .state = ReportedPlayState::Stopped}, 1s);
+    const std::size_t before_playing = fixture.sender().frames().size();
+    step(reported(ReportedPlayState::Playing), 2s);
+    step(position(kAt + 1000), 4s);
+    step(position(kAt + 2000), 5s);
+    const std::vector<std::string> expected{kPrepared, kPlayAlbum, kSeekBack};
+
+    CHECK(played);
+    CHECK(before_playing == 2);
+    CHECK(fixture.sender().frames() == expected);
+}
+
+TEST_CASE(
+        "PlayerController drops a start position when the play does not start",
+        "[playback][player_controller]"
+) {
+    Fixture fixture{ReportedPlayState::Paused};
+    REQUIRE(fixture.controller().play_list(kAlbum, kNow, kAt).has_value());
+    fixture.apply(reported(ReportedPlayState::Stopped));  // A file it could not open
+    fixture.controller().advance(kNow);
+    const bool resumed = fixture.controller().toggle(kNow).has_value();
+    fixture.apply(reported(ReportedPlayState::Playing));
+    fixture.controller().advance(kNow);
+    const std::vector<std::string> expected{kPrepared, kPlayAlbum, kPlayPause};
+
+    CHECK(resumed);
+    CHECK(fixture.sender().frames() == expected);
 }
 
 TEST_CASE("PlayerController pauses only what plays", "[playback][player_controller]") {
