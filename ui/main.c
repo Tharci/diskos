@@ -551,7 +551,7 @@ int ui_receiver_exit_needs_confirm(void){
     /* A queued AirPlay start remains possible until fresh evidence says
      * otherwise. Pending/failed UI state alone proves no departure. */
     return !e.valid || e.mode < 0 ||
-        (e.generation == g_rxsw.gen &&
+        (e.instance == g_rxsw.gen &&
          e.sequence <= g_rxsw.sent_sequence);
 }
 
@@ -1033,14 +1033,14 @@ static void opus_title_tick(void){
     for(unsigned polls=0;;polls++){
         track_state_t *s=&event.state;
         if(token!=s->playback_token){ otw_identity_end(worker); token=s->playback_token; active=0; }
-        otw_player_generation(worker,s->player_generation);
+        otw_player_generation(worker,s->player_instance);
         if(s->player_confirmed && (active || !s->title_ready)){
             active=1;
             unsigned flags=((s->is_cue_valid && s->is_sacd_valid) ||
                 (s->is_cue_valid && s->is_cue) || (s->is_sacd_valid && s->is_sacd) ? OTW_KIND_KNOWN : 0) |
                 (s->is_cue_valid && s->is_cue ? OTW_CUE : 0) |
                 (s->is_sacd_valid && s->is_sacd ? OTW_SACD : 0);
-            otw_identity id={s->player_generation,s->song_id_raw,s->pos_id_raw,s->song_id_valid,s->pos_id_valid};
+            otw_identity id={s->player_instance,s->song_id_raw,s->pos_id_raw,s->song_id_valid,s->pos_id_valid};
             otw_submit(worker,id,s->path,event.player_title,flags);
         }
         /* Bound retries under sustained RX changes, after reconciling the latest evidence. */
@@ -1103,7 +1103,7 @@ static void play_request_arm(const track_state_t *cur, int was_playing){
     g_play_pre.request = g_play_pre.at = g_play_pending;
     g_play_pre.pos_seq = cur->pos_seq;
     g_play_pre.position = cur->position_ms;
-    g_play_pre.generation = cur->player_generation;
+    g_play_pre.generation = cur->player_instance;
     g_play_pre.transport = ipc_transport_seq();
     g_play_pre.token = cur->playback_token;
     g_play_pre.duration = cur->duration_ms;
@@ -1166,7 +1166,7 @@ static int play_start_failed(const track_state_t *st){
             pos_at = now;
             pos_seq = st->pos_seq;
             position = st->position_ms;
-            generation = st->player_generation;
+            generation = st->player_instance;
             transport = ipc_transport_seq();
             token = st->playback_token;
             duration = st->duration_ms;
@@ -1175,7 +1175,7 @@ static int play_start_failed(const track_state_t *st){
     }
 
     /* A new player or another transport attempt supersedes this request. */
-    if(generation != st->player_generation ||
+    if(generation != st->player_instance ||
        transport != ipc_transport_seq()){
         g_play_pending = 0;
         active = 0;
@@ -1743,7 +1743,7 @@ int ui_play_book(const char *path, long resume_ms){
 static int book_track_evidence(unsigned *gen){
     if(!ipc_confirmed_snapshot(gen)) return 0;
     track_state_t st; ipc_get_state(&st);
-    return st.have_track && st.player_confirmed && !st.provisional && st.player_generation == *gen;
+    return st.have_track && st.player_confirmed && !st.provisional && st.player_instance == *gen;
 }
 
 /* ~400ms: confirm the book loaded, apply resume once, then checkpoint + detect finish. */
@@ -1763,7 +1763,7 @@ static void book_tick(lv_timer_t *t){
             int expired = !g_book_confirmed &&
                 (int32_t)(lv_tick_get() - g_book_deadline) >= 0;
             int ended = g_book_confirmed && ipc_confirmed_snapshot(&gen) &&
-                st.player_generation == gen && !st.have_track;
+                st.player_instance == gen && !st.have_track;
             if(expired || ended){
                 g_book_ckpt_ok = 0;
                 ui_cancel_book_resume();
@@ -3162,7 +3162,7 @@ int ui_theme_reload(const char *screen){
     return -1;
 }
 static void player_reconnected(void){
-    unsigned gen = ipc_generation();
+    unsigned gen = ipc_instance();
     if(g_audio_armed && gen == g_audio_gen) return;
     /* A player restart stopped the book (the fresh player is idle) while our session is still set -
      * and a stale book-path in the reconnected state could keep book_tick treating it as playing,
@@ -3501,7 +3501,7 @@ int ui_cast_return(void){
     if(cw_view_get(g_cw, &v) && v.src == CQ_SRC_LIVE && v.cnt){
         g_cast_return.id = v.id[0]; g_cast_return.ord = v.occ[0] + 1;
     }
-    g_cast_return.generation = ipc_generation();
+    g_cast_return.generation = ipc_instance();
     g_cast_return.attempt = ho_attempt(&g_ho);
     g_cast_return.stop_seq = ss.stop_seq + (ss.stop_state == CS_JOB_PENDING ? 0u : 1u);
     g_cast_return.pending = 1; ui_cast_end_request(); return 0;
@@ -3510,7 +3510,7 @@ static void cast_return_tick(const track_state_t *st){
     (void)st;
     if(!g_cast_return.pending) return;
     if(ho_attempt(&g_ho) != g_cast_return.attempt){ g_cast_return.pending = 0; return; }
-    if(ipc_generation() != g_cast_return.generation){ g_cast_return.pending = 0; ui_beam_refuse("Player restarted. Press play to continue."); return; }
+    if(ipc_instance() != g_cast_return.generation){ g_cast_return.pending = 0; ui_beam_refuse("Player restarted. Press play to continue."); return; }
     if(g_cast_return.pending == 1){
         if(ho_get(&g_ho) != HO_LOCAL) return;
         g_cast_return.pending = 0;
@@ -3576,7 +3576,7 @@ static int ap_x_busy(void){   /* the same test cast_pick uses before it replaces
 static void ap_x_say(ho_msg m){ ho_x_msg(NULL, m); }
 static const ap_cfg AP_CFG = { AIRPLAY_PROOF_HELPER, NULL, ap_x_pause, ap_x_busy, ap_x_say, NULL, 0, 0, 0, 0, modes_local_teardown };
 static ho_local ap_local(const track_state_t *st, int playing){
-    ho_local l = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_generation(), st->playback_token,
+    ho_local l = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_instance(), st->playback_token,
                    st->position_ms, st->duration_ms, st->path, st->title, st->artist, st->album, ui_get_source_mode() };
     return l;
 }
@@ -3706,7 +3706,7 @@ static int sender_dispatch(const track_state_t *st, int playing){
     sender_keys();
     if(g_sender_pending){
         g_sender_pending = 0;
-        ho_local local = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_generation(), st->playback_token,
+        ho_local local = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_instance(), st->playback_token,
             st->position_ms, st->duration_ms, st->path, st->title, st->artist, st->album, ui_get_source_mode() };
         if(ui_receiver_in_use() || diskos_output_busy() || !ui_cast_keys_ok() || AP_PROOF_BUSY() ||
            ho_get(&g_ho) != HO_LOCAL || g_pickreq.pend || mdb_is_book_path(st->path) || aps_sender_begin(&g_sender, &g_sender_target, &local, now))
@@ -3719,7 +3719,7 @@ static int sender_dispatch(const track_state_t *st, int playing){
         else ui_cast_set_device(g_sender_target.name);
     }
     if(aps_sender_active(&g_sender)){
-        ho_local local = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_generation(), st->playback_token,
+        ho_local local = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_instance(), st->playback_token,
             st->position_ms, st->duration_ms, st->path, st->title, st->artist, st->album, ui_get_source_mode() };
         if(g_sender.phase == APSS_PREPARING){
             g_sender.pos_id = st->pos_id; g_sender.mode = ui_play_mode_now();
@@ -3763,7 +3763,7 @@ static int sender_dispatch(const track_state_t *st, int playing){
                     else ui_np_hold_return(g_sender_return.view.path, g_sender_return.view.position_ms);
                     track_state_t ready; unsigned toggle, after_report;
                     g_sender_return.pending = 2; g_sender_return.deadline = now + 5000;
-                    g_sender_return.generation = ipc_generation();
+                    g_sender_return.generation = ipc_instance();
                     g_sender_return.transport = ipc_transport_seq();
                     /* Reloading the same track does not change path_seq. Wait
                      * for a complete player report received after the start. */
@@ -3772,7 +3772,7 @@ static int sender_dispatch(const track_state_t *st, int playing){
                     fprintf(stderr, "AirPlay return: position=%ld id=%d ord=%d report=%u\n", g_sender_return.view.position_ms, g_sender_return.id, g_sender_return.ord, g_sender_return.report);
                 }
             }
-        } else if(ipc_generation() != g_sender_return.generation){
+        } else if(ipc_instance() != g_sender_return.generation){
             g_sender_return.pending = 0; ui_toast("Player restarted - press play");
         } else if(ipc_transport_seq() != g_sender_return.transport){
             g_sender_return.pending = 0;
@@ -3785,7 +3785,7 @@ static int sender_dispatch(const track_state_t *st, int playing){
             track_state_t ready; unsigned report, toggle, after_report;
             if(ipc_resume_snapshot(&ready, &report, &toggle, &after_report) &&
                report != g_sender_return.report && ready.have_track && ready.player_confirmed &&
-               !ready.provisional && ready.player_generation == g_sender_return.generation && ready.state == 0 &&
+               !ready.provisional && ready.player_instance == g_sender_return.generation && ready.state == 0 &&
                !strcmp(ready.path, g_sender_return.view.path) &&
                (!g_sender_return.id || (ready.pos_id_valid && ready.pos_id_raw == (uint64_t)g_sender_return.id))){
                 g_sender_return.pending = 0;
@@ -3801,7 +3801,7 @@ static void ho_tick(const track_state_t *st, int playing){
     cast_return_tick(st);
     if(ho_get(&g_ho) == HO_LOCAL && !g_pickreq.pend){ if(!*ui_beam_error() && !ui_airplay_error()) g_beam_dev[0] = 0; cast_tick(st, NULL); return; }   /* 17b: no session and no request: no device name either */
     const ho_sink k = { &g_ho, ho_x_pause, ho_x_load, ho_x_play, ho_x_stop, ho_x_revoke, ho_x_release, ho_x_cast, ho_x_msg, ho_x_teardown };
-    const ho_local l = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_generation(), st->playback_token,
+    const ho_local l = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_instance(), st->playback_token,
                          st->position_ms, st->duration_ms, st->path, st->title, st->artist, st->album, ui_get_source_mode() };
     ho_event ev = { HO_EV_LOCAL, ho_attempt(&g_ho), &l, NULL, 0 };
     ho_step(&g_ho, lv_tick_get(), &ev, &k);

@@ -25,9 +25,9 @@ void receiver_uncertain(void){
 void receiver_get_snapshot(receiver_snapshot *out){
     ipc_source_evidence e;
     ipc_source_snapshot(&e);
-    if(!receiver_available() || !e.valid || e.generation!=g_receiver.generation){
+    if(!receiver_available() || !e.valid || e.instance!=g_receiver.generation){
         receiver_uncertain();
-        g_receiver.generation=e.generation;
+        g_receiver.generation=e.instance;
         g_receiver.source_sequence=e.sequence;
     } else {
         if(g_receiver.phase==RECEIVER_PENDING_ARM && e.arm_id==g_arm_id){
@@ -60,7 +60,7 @@ void receiver_get_snapshot(receiver_snapshot *out){
     }
     /* No transition armed and nothing selected: watch for an already selected source (UI restart, player replacement). */
     if(g_observe && g_receiver.phase==RECEIVER_UNCERTAIN && !g_arm_id && !g_obs_id && receiver_available() && e.valid)
-        g_obs_id=ipc_observe_arm(e.generation);
+        g_obs_id=ipc_observe_arm(e.instance);
     *out=g_receiver;
 }
 /* The caller owns the receiver (a transition or a failed one): adoption is off and a pending observation is dropped.

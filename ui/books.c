@@ -230,7 +230,7 @@ static void chap_row_cb(lv_event_t *e){
     track_state_t st; ipc_get_state(&st);
     const bookmeta_snapshot *m = ui_bookmeta_snapshot(&st);
     if(!m || m->request_generation != g_chlist_request ||
-       st.playback_token != g_chlist_token || st.player_generation != g_chlist_player ||
+       st.playback_token != g_chlist_token || st.player_instance != g_chlist_player ||
        strcmp(st.path, g_chlist_path) != 0){ screen_show(SCR_NOWPLAYING); return; }
     long tgt = g_chlist[i].start_ms;
     if(st.duration_ms > 0 && tgt >= st.duration_ms) tgt = st.duration_ms - 1;   /* clamp to a valid position */
@@ -256,12 +256,12 @@ void chapters_update(const track_state_t *current){
     uint64_t request = m ? m->request_generation : 0;
     bookmeta_state state = m ? m->state : BOOKMETA_NONE;
     if(!strcmp(g_chlist_path, st.path) && g_chlist_token == st.playback_token &&
-       g_chlist_player == st.player_generation && g_chlist_request == request &&
+       g_chlist_player == st.player_instance && g_chlist_request == request &&
        g_chlist_state == state) return;
     lv_obj_clean(g_chap_list);
     g_chlist_n = 0;
     snprintf(g_chlist_path, sizeof g_chlist_path, "%s", st.path);
-    g_chlist_token = st.playback_token; g_chlist_player = st.player_generation;
+    g_chlist_token = st.playback_token; g_chlist_player = st.player_instance;
     g_chlist_request = request; g_chlist_state = state;
     if(!st.have_track || !mdb_is_book_path(st.path)){ chap_empty("No audiobook playing"); return; }
     if(m && m->state == BOOKMETA_PENDING){ chap_empty("Loading chapters..."); return; }

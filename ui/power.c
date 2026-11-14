@@ -306,9 +306,9 @@ static int read_temp_tenths(int *out){
 void power_tick(uint32_t last_input_ms, int playing){
     static uint32_t last; static int have_last, temp_state;
     power_shutdown_tick();
-    { static unsigned pg; static int pg_set; unsigned g = ipc_generation();
-      if(pg_set && g != pg) power_shutdown_new_generation();   /* the player restarted: a pending stock power-off is gone */
-      pg = g; pg_set = 1; }
+    { static unsigned pg; unsigned g = ipc_instance();   /* 0 = no player instance yet */
+      if(pg != 0 && g != pg) power_shutdown_new_generation();   /* the player restarted: a pending stock power-off is gone */
+      pg = g; }
     uint32_t now = lv_tick_get();
     int receiver_mode = ipc_player_mode();
     static uint32_t usb_last;
@@ -327,7 +327,7 @@ void power_tick(uint32_t last_input_ms, int playing){
                    ui_receiver_active() || selected_mode == 2 ||
                    receiver_mode == 6 || receiver_mode == 10);
     if(power_supported()){
-        take_generation(ipc_generation()); /* invalidate ownership before idle expiry */
+        take_generation(ipc_instance()); /* invalidate ownership before idle expiry */
         if(g_have_key && (int32_t)(g_key_ms - last_input_ms) > 0) last_input_ms = g_key_ms;
         /* Owner decision 9 (HOLD): a selected receiver counts like playback for the idle timer - idle power-off does not
          * fire while it is up (screen-off and an explicit Shut down still work), and the countdown restarts from Return to

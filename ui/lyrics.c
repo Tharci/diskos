@@ -447,7 +447,7 @@ void lyrics_open(void)
     g_req++;   /* path/view request supersedes any in-flight fetch */
     g_local_done = g_local_found = 0;
     g_title_pending = st.have_track && !st.title_ready;
-    g_token = st.playback_token; g_generation = st.player_generation;
+    g_token = st.playback_token; g_generation = st.player_instance;
     snprintf(g_path, sizeof g_path, "%s", st.path);
     lyrics_query(&st);
     if(needs_db) mdb_ui_read_end();
@@ -461,8 +461,8 @@ void lyrics_open(void)
 static void lyrics_commit_title(const track_state_t *st)
 {
     if(!st->have_track){ g_title_pending = 0; return; }
-    if(st->playback_token != g_token || st->player_generation != g_generation){
-        g_token = st->playback_token; g_generation = st->player_generation;
+    if(st->playback_token != g_token || st->player_instance != g_generation){
+        g_token = st->playback_token; g_generation = st->player_instance;
         g_title_pending = !st->title_ready;
     }
     if(!g_title_pending || !st->title_ready || strcmp(st->path, g_path)) return;

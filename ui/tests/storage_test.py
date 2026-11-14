@@ -82,7 +82,7 @@ static int g_sender_pending;
 /* Current Local evidence, no receiver session: the receiver guard is OPEN. */
 int receiver_available(void){ return 1; }
 void ipc_source_snapshot(ipc_source_evidence *out){
-    *out = (ipc_source_evidence){ .generation=1, .sequence=1, .mode=8, .valid=1 };
+    *out = (ipc_source_evidence){ .instance=1, .sequence=1, .mode=8, .valid=1 };
 }
 typedef void lv_timer_t;
 static uint32_t test_clock;

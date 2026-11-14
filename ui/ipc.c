@@ -36,26 +36,25 @@ static unsigned g_rx_frames = 0; /* [g_recov_mu] count of /ui frames received FR
                                   * player->UI queue (we O_RDONLY it), so any frame proves the player is up
                                   * and responding - a positive-readiness signal that does NOT depend on the
                                   * cold-boot /ui reopen firing (see ipc_rx_frames / main.c initial apply). */
-static unsigned g_generation = 0; /* [g_recov_mu] the player instance (legacy/player_link.h) minus 1: 0 for the
-                                   * first one, one more after each player restart. Lets the v2.40 work-mode
-                                   * one-shot re-arm after a player restart. See ipc_generation(). */
+static unsigned g_instance = 0; /* [g_recov_mu] the player instance (legacy/player_link.h) last delivered: 0 before
+                                 * the first, one more after each player restart. See ipc_instance(). */
 /* Complete A2 evidence, separate from presentation and position updates. */
 static track_state_t g_a2_report;
 static unsigned g_a2_serial;
 /* Main-thread send evidence only; no command or player-state mutation. */
 static unsigned g_resume_toggle, g_resume_after_report;
-static int g_confirmed;         /* [g_recov_mu] accepted a2 state report this generation */
+static int g_confirmed;         /* [g_recov_mu] accepted a2 state report from this player instance */
 static uint64_t g_mode_change_sequence; /* [g_recov_mu] durable departures */
 static uint64_t g_arm_next, g_arm_request, g_arm_ack, g_arm_sequence; /* [g_recov_mu] */
-static uint64_t g_source_sequence; /* [g_recov_mu] accepted source reports this generation */
+static uint64_t g_source_sequence; /* [g_recov_mu] accepted source reports from this player instance */
 static uint64_t g_obs_id, g_adopt_id; /* [g_recov_mu] observation arm, and the one that adopted */
 static int g_player_mode = -1;   /* [g_recov_mu] last a607 external-mode announced by the player (8=LOCALPLAYER).
-                                  * -1 = none received THIS player generation. NOTE (RE-verified vs v2.57): a607 is
+                                  * -1 = none received THIS player instance. NOTE (RE-verified vs v2.57): a607 is
                                   * NOT a reliable *solicited* readiness oracle - a 0607 query's reply does not come
                                   * back on /ui (design trace: a separate socket transport); the player only announces a607 to /ui after a 0657 mode
                                   * CHANGE. Readiness is established by the a2 probe + settle (main.c); when an a607
                                   * does arrive here, mode==8 is a valid "LOCALPLAYER set" confirmation.
-                                  * Reset to -1 on /ui reopen (new player generation). See ipc_player_mode(). */
+                                  * Reset to -1 on /ui reopen (new player instance). See ipc_player_mode(). */
 
 /* ---- helpers ---- */
 static track_state_t g_a2_candidate;
@@ -83,19 +82,19 @@ static void clear_track(void){
     g_state.sample_rate=0; g_state.is_dsd=0;
 }
 
-/* Receiver publication is serialized with source/generation evidence, never g_mu. */
+/* Receiver publication is serialized with source/instance evidence, never g_mu. */
 static ipc_receiver_meta g_receiver_meta;
 static receiver_art_key g_receiver_art;
 static uint64_t g_receiver_art_revision;
 static uint64_t g_receiver_arm, g_receiver_session;
-static unsigned g_receiver_generation;
+static unsigned g_receiver_instance;
 static int g_receiver_selected;
 /* Local publication has one owner, under g_recov_mu, with no new lock order.
  * RESERVED blocks entry frames but rolls back on cancellation before dispatch.
  * BLOCKED covers sent entry, selection and recovery; RETURN_ARM/READY cover exit.
  * No a1/a2 reaches local publication in these states, including old-queue frames.
  * Fresh Local after the return boundary, an observed AirPlay->Local departure,
- * unsent cancellation, or a new generation opens publication again. READY survives
+ * unsent cancellation, or a new instance opens publication again. READY survives
  * cancellation/retry: stock suppresses duplicate a607 (MP 0x4f1174-0x4f119c), so
  * neither already observed departure nor late Local may require another report.
  * Outside these sessions local publication (publish_track_locked) is unchanged. */
@@ -105,21 +104,21 @@ static struct {
     uint64_t return_arm;
 } g_local_publication;
 static int receiver_owned_locked(void){
-    return g_receiver_arm && g_receiver_generation==g_generation &&
+    return g_receiver_arm && g_receiver_instance==g_instance &&
         g_arm_ack==g_receiver_arm;
 }
 static void receiver_clear_locked(void){
     g_receiver_arm=0; g_receiver_selected=0;
     memset(&g_receiver_meta,0,sizeof g_receiver_meta);
-    diskos_player_reset(DISKOS_PLAYER_RECEIVER, g_generation + 1);
-    g_receiver_meta.generation=g_generation;
+    diskos_player_reset(DISKOS_PLAYER_RECEIVER, g_instance);
+    g_receiver_meta.instance=g_instance;
 }
-void ipc_receiver_begin(unsigned generation, uint64_t arm){
+void ipc_receiver_begin(unsigned instance, uint64_t arm){
     pthread_mutex_lock(&g_recov_mu);
     receiver_clear_locked();
-    g_receiver_meta.generation=generation;
+    g_receiver_meta.instance=instance;
     g_receiver_meta.session_revision=++g_receiver_session;
-    g_receiver_generation=generation; g_receiver_arm=arm;
+    g_receiver_instance=instance; g_receiver_arm=arm;
     if(g_local_publication.state==LOCAL_OPEN)
         g_local_publication.state=g_player_mode==10 ? LOCAL_BLOCKED : LOCAL_RESERVED;
     pthread_mutex_unlock(&g_recov_mu);
@@ -136,10 +135,10 @@ void ipc_receiver_end(void){
     }
     pthread_mutex_unlock(&g_recov_mu);
 }
-void ipc_receiver_return(unsigned generation, uint64_t arm){
+void ipc_receiver_return(unsigned instance, uint64_t arm){
     pthread_mutex_lock(&g_recov_mu);
     receiver_clear_locked();
-    if(generation==g_generation){
+    if(instance==g_instance){
         if(g_local_publication.state==LOCAL_RESERVED)
             g_local_publication.state=LOCAL_OPEN;
         if(g_local_publication.state==LOCAL_BLOCKED ||
@@ -152,10 +151,10 @@ void ipc_receiver_return(unsigned generation, uint64_t arm){
 }
 void ipc_receiver_metadata(ipc_receiver_meta *out){
     pthread_mutex_lock(&g_recov_mu);
-    if(g_receiver_meta.generation!=g_generation){
+    if(g_receiver_meta.instance!=g_instance){
         memset(&g_receiver_meta,0,sizeof g_receiver_meta);
-        diskos_player_reset(DISKOS_PLAYER_RECEIVER, g_generation + 1);
-        g_receiver_meta.generation=g_generation; g_receiver_arm=0;
+        diskos_player_reset(DISKOS_PLAYER_RECEIVER, g_instance);
+        g_receiver_meta.instance=g_instance; g_receiver_arm=0;
     }
     *out=g_receiver_meta;
     pthread_mutex_unlock(&g_recov_mu);
@@ -165,10 +164,10 @@ void receiver_art_get(receiver_art_key *out){
     pthread_mutex_lock(&g_recov_mu);
     ipc_receiver_meta *m=&g_receiver_meta;
     *out=g_receiver_art;
-    if(m->generation!=g_generation || out->generation!=m->generation ||
+    if(m->instance!=g_instance || out->generation!=m->instance ||
        out->session!=m->session_revision || out->item!=m->item_revision)
-        *out=(receiver_art_key){g_generation,m->session_revision,m->item_revision,0,0};
-    if(m->generation!=g_generation) out->session=out->item=0;
+        *out=(receiver_art_key){g_instance,m->session_revision,m->item_revision,0,0};
+    if(m->instance!=g_instance) out->session=out->item=0;
     pthread_mutex_unlock(&g_recov_mu);
 }
 
@@ -217,16 +216,16 @@ static int adopt_ready_locked(void){
     return g_obs_id && g_obs_id==g_arm_ack && !g_receiver_arm;
 }
 /* The adopting frame is the one that identifies the source: ownership, selection and wire mode are published with
- * its metadata. A complete frame from the current player also confirms the generation (Return to Local needs it). */
+ * its metadata. A complete frame from the current player also confirms the instance (Return to Local needs it). */
 static void adopt_locked(void){
-    g_receiver_generation=g_generation; g_receiver_arm=g_adopt_id=g_obs_id;
+    g_receiver_instance=g_instance; g_receiver_arm=g_adopt_id=g_obs_id;
     g_receiver_selected=1; g_confirmed=1;
     if(g_local_publication.state==LOCAL_OPEN || g_local_publication.state==LOCAL_RESERVED)
         g_local_publication.state=LOCAL_BLOCKED;
 }
 static void adopt_begin_locked(void){
     receiver_clear_locked();
-    g_receiver_meta.generation=g_generation; g_receiver_meta.session_revision=++g_receiver_session;
+    g_receiver_meta.instance=g_instance; g_receiver_meta.session_revision=++g_receiver_session;
 }
 
 /* Copy the player state's track (legacy/player_state.h) into g_state. Caller holds g_mu.
@@ -268,11 +267,11 @@ static void publish_track_locked(int new_track){
 /* the player's screen sleep/wake ("aa23000C0000" / "...0001", echo_sys_control.c V2.57) and power-off ("aa03"):
  * counters so the main loop sees every event (the latest value wins between its polls) */
 static unsigned g_scr_seq, g_aa03_seq; static int g_scr_on = -1;
-/* Called under g_recov_mu: frame state belongs only to this queue generation. */
-static void screen_new_generation(unsigned generation){
+/* Called under g_recov_mu: frame state belongs only to this player instance. */
+static void screen_new_instance(unsigned instance){
     g_confirmed = 0;
     g_local_publication.state=LOCAL_OPEN; g_local_publication.return_arm=0;
-    g_generation = generation; g_scr_on = -1; g_scr_seq = g_aa03_seq = 0;
+    g_instance = instance; g_scr_on = -1; g_scr_seq = g_aa03_seq = 0;
 }
 /* The stock player's charging report, aa1f (V2.57 mq_player, adc_control.c loop_adc_check_thread; static RE of the
  * fixture binary). The player's charging flag (0x8990ec) is only ever stored as 0 or 1 (0x4f2390, 0x4f27ac, 0x4f27d4,
@@ -284,9 +283,9 @@ static void screen_new_generation(unsigned generation){
  * 12-character form is accepted; any other aa1f frame is counted and ignored and never changes the state. Layout pinned
  * by tests/release/test_parity_power.py; docs/COMMAND_MAP.md "aa1f". Live frames UNVERIFIED. [g_recov_mu] */
 static int g_charge_state = -1; static uint64_t g_charge_at_ms; static unsigned g_charge_seq, g_charge_bad;
-/* Called under g_recov_mu with the generation change: the new player's last-sent value starts over, so an older
+/* Called under g_recov_mu with the instance change: the new player's last-sent value starts over, so an older
  * report says nothing about it (it reports only a change from its own start-up value). */
-static void charge_new_generation(void){ g_charge_state = -1; g_charge_at_ms = 0; }
+static void charge_new_instance(void){ g_charge_state = -1; g_charge_at_ms = 0; }
 /* diskos_boot.log line per received aa1f (raw bytes + decision), at most 8 lines a minute, the rest counted. RX only. */
 static void charge_log(const char *buf, int n, int value, unsigned bad){
     static int have; static uint64_t window; static unsigned lines, dropped;
@@ -325,7 +324,7 @@ static void receiver_position(uint32_t ms){
     g_receiver_meta.pos_item_revision=g_receiver_meta.item_revision; g_receiver_meta.pos_seq++;
 }
 static void conv_on_reply(int ok, unsigned code);   /* still-image conversion (end of file) */
-static void conv_new_generation(unsigned generation);
+static void conv_new_instance(unsigned instance);
 /* A frame the decoder refused changes nothing; the two reports that count malformed frames still count them. */
 static void refused_frame(const char *buf, int n){
     if(n >= 4 && !memcmp(buf, "aa1f", 4)) charge_on_frame(buf, n, -1);
@@ -348,7 +347,7 @@ static void parse_frame(const char*buf,int n){
          * the current item. The key only rejects jobs superseded after receipt. */
         pthread_mutex_lock(&g_recov_mu);
         if(receiver_owned_locked())
-            g_receiver_art=(receiver_art_key){g_receiver_meta.generation,g_receiver_meta.session_revision,
+            g_receiver_art=(receiver_art_key){g_receiver_meta.instance,g_receiver_meta.session_revision,
                 g_receiver_meta.item_revision,++g_receiver_art_revision,
                 g_receiver_meta.item_revision && report.value == 1};
         pthread_mutex_unlock(&g_recov_mu);
@@ -447,8 +446,8 @@ static void parse_frame(const char*buf,int n){
         if(receiver_owned_locked()){
             if(g_receiver_selected && mode!=10){
                 g_receiver_arm=0; memset(&g_receiver_meta,0,sizeof g_receiver_meta);
-                diskos_player_reset(DISKOS_PLAYER_RECEIVER, g_generation + 1);
-                g_receiver_meta.generation=g_generation;
+                diskos_player_reset(DISKOS_PLAYER_RECEIVER, g_instance);
+                g_receiver_meta.instance=g_instance;
             } else if(mode==10) g_receiver_selected=1;
         }
         g_player_mode=mode; g_source_sequence++;
@@ -467,8 +466,8 @@ static void link_connected(unsigned instance){
     g_rx_ready = 1;
     if(restarted) g_reconnected = 1;   /* the main thread resyncs */
     g_player_mode = -1; g_source_sequence = g_mode_change_sequence = 0;
-    g_arm_request = g_arm_ack = 0; g_obs_id = g_adopt_id = 0; screen_new_generation(instance - 1);
-    charge_new_generation();
+    g_arm_request = g_arm_ack = 0; g_obs_id = g_adopt_id = 0; screen_new_instance(instance);
+    charge_new_instance();
     pthread_mutex_unlock(&g_recov_mu);
     pthread_mutex_lock(&g_mu);
     diskos_player_reset(DISKOS_PLAYER_LOCAL, instance);   /* before its first frame: nothing to lose on the first */
@@ -477,10 +476,10 @@ static void link_connected(unsigned instance){
         clear_track(); g_state.playback_token++; g_state.seq++;
         if(had_path) g_state.path_seq=g_state.seq;
     }
-    g_state.player_generation=instance - 1;
+    g_state.player_instance=instance;
     pthread_mutex_unlock(&g_mu);
     if(restarted){
-        conv_new_generation(instance - 1);   /* a conversion in flight died with the old player */
+        conv_new_instance(instance);   /* a conversion in flight died with the old player */
         fprintf(stderr,"ipc: player instance %u connected after a restart\n", instance);
     }
 }
@@ -522,50 +521,50 @@ unsigned ipc_rx_frames(void){
     pthread_mutex_lock(&g_recov_mu); unsigned r=g_rx_frames; pthread_mutex_unlock(&g_recov_mu);
     return r;
 }
-/* Last a607 external-mode reported by the player THIS generation: -1 = none yet (player not confirmed at
+/* Last a607 external-mode reported by the player THIS instance: -1 = none yet (player not confirmed at
  * its command dispatcher), else the mode (8 = LOCALPLAYER). The v2.40 work-mode handshake oracle. */
 int ipc_player_mode(void){
     pthread_mutex_lock(&g_recov_mu); int r=g_player_mode; pthread_mutex_unlock(&g_recov_mu);
     return r;
 }
-/* Player generation: bumps on each /ui reattach (player restart). The v2.40 work-mode one-shot uses this
- * to re-arm after a restart (send the init once per generation). */
-void ipc_screen_snapshot(int *on, unsigned *scr_seq, unsigned *poweroff_seq, unsigned *generation){
+/* Player instance: bumps on each /ui reattach (player restart). The v2.40 work-mode one-shot uses this
+ * to re-arm after a restart (send the init once per instance). */
+void ipc_screen_snapshot(int *on, unsigned *scr_seq, unsigned *poweroff_seq, unsigned *instance){
     pthread_mutex_lock(&g_recov_mu);
     if(on) *on=g_scr_on; if(scr_seq) *scr_seq=g_scr_seq; if(poweroff_seq) *poweroff_seq=g_aa03_seq;
-    if(generation) *generation=g_generation;
+    if(instance) *instance=g_instance;
     pthread_mutex_unlock(&g_recov_mu);
 }
 int ipc_charge_snapshot(ipc_charge_evidence *out){
     ipc_charge_evidence e;
     pthread_mutex_lock(&g_recov_mu);
-    e.state=g_charge_state; e.at_ms=g_charge_at_ms; e.seq=g_charge_seq; e.bad=g_charge_bad; e.generation=g_generation;
+    e.state=g_charge_state; e.at_ms=g_charge_at_ms; e.seq=g_charge_seq; e.bad=g_charge_bad; e.instance=g_instance;
     pthread_mutex_unlock(&g_recov_mu);
     if(out) *out=e;
     return e.state;
 }
 void ipc_source_snapshot(ipc_source_evidence *out){
     pthread_mutex_lock(&g_recov_mu);
-    out->generation=g_generation; out->sequence=g_source_sequence;
+    out->instance=g_instance; out->sequence=g_source_sequence;
     out->mode_change_sequence=g_mode_change_sequence;
     out->arm_id=g_arm_ack; out->arm_sequence=g_arm_sequence; out->adopt_id=g_adopt_id;
     out->mode=g_player_mode; out->valid=g_rx_ready;
     pthread_mutex_unlock(&g_recov_mu);
 }
-uint64_t ipc_source_arm(unsigned generation){
+uint64_t ipc_source_arm(unsigned instance){
     pthread_mutex_lock(&g_recov_mu);
     uint64_t id=0;
-    if(g_rx_ready && g_confirmed && generation==g_generation){
+    if(g_rx_ready && g_confirmed && instance==g_instance){
         id=++g_arm_next; g_arm_request=id; g_arm_ack=0;
     }
     pthread_mutex_unlock(&g_recov_mu);
     if(id) diskos_link_request_drain();
     return id;
 }
-uint64_t ipc_observe_arm(unsigned generation){
+uint64_t ipc_observe_arm(unsigned instance){
     pthread_mutex_lock(&g_recov_mu);
     uint64_t id=0;
-    if(g_rx_ready && generation==g_generation && !g_arm_request && !g_receiver_arm){
+    if(g_rx_ready && instance==g_instance && !g_arm_request && !g_receiver_arm){
         id=++g_arm_next; g_arm_request=g_obs_id=id; g_arm_ack=0;
     }
     pthread_mutex_unlock(&g_recov_mu);
@@ -577,18 +576,18 @@ void ipc_source_cancel_arm(uint64_t id){
     if(id && g_arm_request==id) g_arm_request=g_arm_ack=0;
     pthread_mutex_unlock(&g_recov_mu);
 }
-unsigned ipc_generation(void){
-    pthread_mutex_lock(&g_recov_mu); unsigned r=g_generation; pthread_mutex_unlock(&g_recov_mu);
+unsigned ipc_instance(void){
+    pthread_mutex_lock(&g_recov_mu); unsigned r=g_instance; pthread_mutex_unlock(&g_recov_mu);
     return r;
 }
-/* Read-only readiness evidence: complete numeric A2 from this queue generation.
+/* Read-only readiness evidence: complete numeric A2 from this queue instance.
  * A2 0=playing, 1=paused, 2=stopped (V2.57 0x4248c0..0x4249f0).
  * Do not substitute presentation state or a position frame for this report. */
 int ipc_resume_snapshot(track_state_t *out, unsigned *serial, unsigned *toggle, unsigned *after_report){
     pthread_mutex_lock(&g_recov_mu);
     *out=g_a2_report; *serial=g_a2_serial;
     *toggle=g_resume_toggle; *after_report=g_resume_after_report;
-    int valid=g_confirmed && out->player_generation==g_generation;
+    int valid=g_confirmed && out->player_instance==g_instance;
     pthread_mutex_unlock(&g_recov_mu);
     return valid;
 }
@@ -672,10 +671,11 @@ static void ipc_note_send_error(int policy){
 }
 /* Probes stay silent (background state-sync / health probes and the still-image conversion requests must not raise
  * "Player didn't respond" during the startup connect race); automatic failures notify once per boot. User failures
- * always report. An automatic send goes only to the player instance of its generation: for another one it stays
- * deferred. The link retries a full queue briefly and reopens the queue after a failure. Caller holds g_tx_mu. */
-static int ipc_send_wire_locked(const char*frame, int policy, unsigned generation){
-    const diskos_link_result sent = diskos_link_send(frame, policy == SEND_AUTOMATIC ? generation + 1 : 0);
+ * always report. An automatic send goes only to the player instance it names: for another one (or none) it
+ * stays deferred. The link retries a full queue briefly and reopens the queue after a failure. Caller holds g_tx_mu. */
+static int ipc_send_wire_locked(const char*frame, int policy, unsigned instance){
+    if(policy == SEND_AUTOMATIC && instance == 0) return IPC_SEND_DEFERRED;   /* no player instance to send to yet */
+    const diskos_link_result sent = diskos_link_send(frame, policy == SEND_AUTOMATIC ? instance : 0);
 #ifdef DISKOS_FRAME_LOG
     const char *policy_name = policy == SEND_USER ? "user" : policy == SEND_PROBE ? "probe" : "automatic";
     framelog_tx(frame, strlen(frame), sent == DISKOS_LINK_SENT ? 0 : -1, policy_name);
@@ -707,7 +707,7 @@ static int bt_autonext_mode(void){
     return (n == 10 && !memcmp(buf, "gapless-on", 10)) ||
            (n == 11 && !memcmp(buf, "gapless-on\n", 11));
 }
-static void bt_autonext_generation(unsigned gen){
+static void bt_autonext_instance(unsigned gen){
     if(g_bt_autonext.gen != gen){
         g_bt_autonext.gen = gen;
         g_bt_autonext.active = 0; /* normal reconnect scalar restoration owns the new player */
@@ -721,18 +721,18 @@ static int bt_autonext_restore(int policy, unsigned gen){
     fprintf(stderr, "BT autonext experiment: restored gapless=%d\n", g_bt_autonext.restore);
     return 0;
 }
-static int ipc_send_locked(const char *frame, int policy, unsigned generation){
-    bt_autonext_generation(generation);
+static int ipc_send_locked(const char *frame, int policy, unsigned instance){
+    bt_autonext_instance(instance);
     /* Restore before output mux, work/source mode or USB gadget changes, even
      * between polls. A failed restoration refuses the departure frame. */
     int departure = !strncmp(frame, "0666", 4) || !strncmp(frame, "0657", 4) || !strncmp(frame, "0642", 4);
-    if(departure && bt_autonext_restore(policy, generation) != 0) return -1;
+    if(departure && bt_autonext_restore(policy, instance) != 0) return -1;
     if(g_bt_autonext.active &&
        (!strcmp(frame, "0647000C0000") || !strcmp(frame, "0647000C0001"))){
         g_bt_autonext.restore = frame[11] == '1';
         frame = "0647000C0001";
     }
-    return ipc_send_wire_locked(frame, policy, generation);
+    return ipc_send_wire_locked(frame, policy, instance);
 }
 void ipc_bt_autonext_poll(uint32_t now, int eligible, int preference){
     static uint32_t last;
@@ -744,14 +744,14 @@ void ipc_bt_autonext_poll(uint32_t now, int eligible, int preference){
     if(!enabled && !pending) return; /* only this main-thread poll can activate */
     pthread_mutex_lock(&g_recov_mu);
     pthread_mutex_lock(&g_tx_mu);
-    bt_autonext_generation(g_generation);
+    bt_autonext_instance(g_instance);
     if(g_confirmed){
         if(g_bt_autonext.active && (preference == 0 || preference == 1))
             g_bt_autonext.restore = preference;
         if(!enabled){
-            (void)bt_autonext_restore(SEND_PROBE, g_generation);
+            (void)bt_autonext_restore(SEND_PROBE, g_instance);
         } else if(!g_bt_autonext.active &&
-                  ipc_send_wire_locked("0647000C0001", SEND_PROBE, g_generation) == 0){
+                  ipc_send_wire_locked("0647000C0001", SEND_PROBE, g_instance) == 0){
             g_bt_autonext.restore = preference;
             g_bt_autonext.active = 1;
             fprintf(stderr, "BT autonext experiment: stock gapless on (saved=%d)\n", preference);
@@ -764,9 +764,9 @@ void ipc_bt_autonext_poll(uint32_t now, int eligible, int preference){
 /* One lock covers descriptor inspection, retries, close/reopen and health inspection.
  * Lock order: conversion reservation -> TX, and g_recov_mu -> TX (ipc_send_automatic); TX never enters conversion or
  * RX state. */
-static int ipc_send_internal(const char *frame, int policy, unsigned generation){
+static int ipc_send_internal(const char *frame, int policy, unsigned instance){
     pthread_mutex_lock(&g_tx_mu);
-    int rc = ipc_send_locked(frame, policy, generation);
+    int rc = ipc_send_locked(frame, policy, instance);
     pthread_mutex_unlock(&g_tx_mu);
     return rc;
 }
@@ -779,10 +779,10 @@ int ipc_send_cmd(const char*frame){
     /* Capture intent before sending: a toggle of externally playing audio is
      * Pause and must not become a deferred position restore. */
     pthread_mutex_lock(&g_recov_mu);
-    int pause=g_confirmed && g_a2_report.player_generation==g_generation &&
+    int pause=g_confirmed && g_a2_report.player_instance==g_instance &&
               g_a2_report.player_confirmed && !g_a2_report.provisional && g_a2_report.state==0;
     pthread_mutex_unlock(&g_recov_mu);
-    int rc = ipc_send_internal(frame, SEND_USER, ipc_generation());
+    int rc = ipc_send_internal(frame, SEND_USER, ipc_instance());
     if(rc == 0 && !strcmp(frame,"0201000C0000")){
         pthread_mutex_lock(&g_recov_mu);
         g_resume_toggle=pause ? 0 : g_transport_seq; g_resume_after_report=g_a2_serial;
@@ -791,23 +791,23 @@ int ipc_send_cmd(const char*frame){
     return rc;
 }
 /* background send (state-sync / health probe): silent, never toasts. */
-int ipc_send_probe(const char*frame){ return ipc_send_internal(frame, SEND_PROBE, ipc_generation()); }
+int ipc_send_probe(const char*frame){ return ipc_send_internal(frame, SEND_PROBE, ipc_instance()); }
 /* Snapshot and admission share the recovery lock; receipt is not track ownership. */
-int ipc_confirmed_snapshot(unsigned *generation){
+int ipc_confirmed_snapshot(unsigned *instance){
     pthread_mutex_lock(&g_recov_mu);
-    if(generation) *generation=g_generation;
+    if(instance) *instance=g_instance;
     int confirmed=g_confirmed;
     pthread_mutex_unlock(&g_recov_mu);
     return confirmed;
 }
-int ipc_send_automatic(const char *frame, unsigned generation){
+int ipc_send_automatic(const char *frame, unsigned instance){
     pthread_mutex_lock(&g_recov_mu);
     int r=IPC_SEND_DEFERRED;
-    if(generation==g_generation && g_confirmed){
-        r=ipc_send_internal(frame, SEND_AUTOMATIC, generation);
+    if(instance==g_instance && g_confirmed){
+        r=ipc_send_internal(frame, SEND_AUTOMATIC, instance);
         /* Dispatch and cancellation serialize with RX; a reservation is not a send. */
         if(r==0 && !strcmp(frame,"0657000C000A") &&
-           g_receiver_generation==generation && g_receiver_arm){
+           g_receiver_instance==instance && g_receiver_arm){
             g_local_publication.state=LOCAL_BLOCKED;
             g_local_publication.return_arm=0;
         }
@@ -842,7 +842,7 @@ uint64_t ipc_library_epoch(void){
  * 0x4ddaec(1, "a810", code, NULL): queue index 1 is the /ui queue (0x4dc944 stores the name), and the NULL-string
  * form is snprintf(buf, 13, ...) sent as 12 bytes (0x4ddc54..0x4ddc88), so a code wider than 4 hex digits keeps its
  * first 4: the converter's -1 arrives as FFFF. The reply has no operation id, so correlation is one pending
- * operation + player generation + deadline.
+ * operation + player instance + deadline.
  * Value 5 with a NULL path is the GIF case: no conversion, no reply (mq_player@0x4f16dc: NULL string -> straight to
  * the LOCK_THEME store at 0x4f16b4); see ipc_gif_select. */
 #define CONV_PREFIX "/tmp/sdcard/CustomCover/"   /* mq_ui picker folder, same path it sends (0x6a077c) */
@@ -873,13 +873,13 @@ static int conv_path_ok(const char *p){
                              !strcasecmp(dot,".png") || !strcasecmp(dot,".bmp")) &&
            custom_saver_path_no_symlinks(p);
 }
-/* Caller holds g_conv_mu. PENDING past its deadline or from an older player generation is UNRESOLVED. */
+/* Caller holds g_conv_mu. PENDING past its deadline or from an older player instance is UNRESOLVED. */
 static void conv_settle(void){
     if(g_conv.state != IPC_CONV_PENDING) return;
-    if(g_conv.gen != ipc_generation() || conv_now_ms() >= g_conv.deadline) g_conv.state = IPC_CONV_UNRESOLVED;
+    if(g_conv.gen != ipc_instance() || conv_now_ms() >= g_conv.deadline) g_conv.state = IPC_CONV_UNRESOLVED;
 }
-static void conv_new_generation(unsigned generation){
-    (void)generation;
+static void conv_new_instance(unsigned instance){
+    (void)instance;
     pthread_mutex_lock(&g_conv_mu); conv_settle(); pthread_mutex_unlock(&g_conv_mu);
 }
 /* Main loop (parse_frame). ok = 0 for an a810 the decoder refused. Malformed or unexpected replies change nothing (the deadline
@@ -890,12 +890,12 @@ static void conv_on_reply(int ok, unsigned code){
     if(!ok) g_conv_rejected++;
     else if((g_conv.state != IPC_CONV_PENDING &&
              g_conv.state != IPC_CONV_UNRESOLVED) ||
-            g_conv.gen != ipc_generation()) g_conv_ignored++;   /* nothing outstanding / released / other generation */
+            g_conv.gen != ipc_instance()) g_conv_ignored++;   /* nothing outstanding / released / other instance */
     else { g_conv.code = code; g_conv.state = code ? IPC_CONV_FAILED : IPC_CONV_DONE; }
     pthread_mutex_unlock(&g_conv_mu);
 }
 /* Caller holds g_conv_mu and has settled: an operation is pending, holds an unreleased result, or may still be
- * writing (UNRESOLVED in this player generation). */
+ * writing (UNRESOLVED in this player instance). */
 static int conv_blocked(unsigned gen){
     (void)gen;
     return g_conv.state == IPC_CONV_PENDING || g_conv.state == IPC_CONV_DONE || g_conv.state == IPC_CONV_FAILED ||
@@ -903,13 +903,13 @@ static int conv_blocked(unsigned gen){
 }
 int ipc_conv_busy(void){
     pthread_mutex_lock(&g_conv_mu); conv_settle();
-    int busy = conv_blocked(ipc_generation());
+    int busy = conv_blocked(ipc_instance());
     pthread_mutex_unlock(&g_conv_mu);
     return busy;
 }
 int ipc_apply_reserve(void){
     pthread_mutex_lock(&g_conv_mu); conv_settle();
-    int ok = !g_apply_reserved && !conv_blocked(ipc_generation());
+    int ok = !g_apply_reserved && !conv_blocked(ipc_instance());
     if(ok) g_apply_reserved = 1;
     pthread_mutex_unlock(&g_conv_mu);
     return ok ? 0 : -1;
@@ -922,7 +922,7 @@ void ipc_apply_release(void){
 int ipc_saver_reselect(unsigned style){
     if(style > 5 || !ipc_is_ready()) return -1;
     char frame[13]; snprintf(frame, sizeof frame, "0810000C%04X", style);
-    return ipc_send_internal(frame, SEND_PROBE, ipc_generation());
+    return ipc_send_internal(frame, SEND_PROBE, ipc_instance());
 }
 /* Stock's GIF selection: mq_ui@0x47c628 calls 0x48b28c("0810", 5, NULL), whose NULL-string form is the 12-byte
  * "0810000C0005" (format 0x6a38e0, 0x48b3bc..0x48b3dc; length first, see the conversion above). The lock must be
@@ -930,8 +930,8 @@ int ipc_saver_reselect(unsigned style){
 ipc_gif_select_status ipc_gif_select(void){
     if(!ipc_is_ready()) return IPC_GIF_SELECT_NOT_READY;
     pthread_mutex_lock(&g_conv_mu); conv_settle();
-    ipc_gif_select_status st = conv_blocked(ipc_generation()) ? IPC_GIF_SELECT_BUSY :
-        ipc_send_internal("0810000C0005", SEND_PROBE, ipc_generation()) ? IPC_GIF_SELECT_SEND : IPC_GIF_SELECT_OK;
+    ipc_gif_select_status st = conv_blocked(ipc_instance()) ? IPC_GIF_SELECT_BUSY :
+        ipc_send_internal("0810000C0005", SEND_PROBE, ipc_instance()) ? IPC_GIF_SELECT_SEND : IPC_GIF_SELECT_OK;
     pthread_mutex_unlock(&g_conv_mu);
     return st;
 }
@@ -940,7 +940,7 @@ ipc_conv_start_status ipc_conv_start(const char *src, unsigned *op){
     if(!ipc_is_ready()) return IPC_CONV_START_NOT_READY;
     char frame[CONV_PATH_MAX + 13];
     snprintf(frame, sizeof frame, "0810%04X0005%s", (unsigned)(strlen(src) + 12), src);
-    unsigned gen = ipc_generation();
+    unsigned gen = ipc_instance();
     pthread_mutex_lock(&g_conv_mu);
     conv_settle();
     /* A result must be released first. UNRESOLVED blocks because neither a timeout
@@ -954,7 +954,7 @@ ipc_conv_start_status ipc_conv_start(const char *src, unsigned *op){
     g_conv.op = g_conv_ops;
     unsigned id = g_conv.op;
     pthread_mutex_unlock(&g_conv_mu);
-    if(ipc_send_internal(frame, SEND_PROBE, ipc_generation()) != 0){
+    if(ipc_send_internal(frame, SEND_PROBE, ipc_instance()) != 0){
         pthread_mutex_lock(&g_conv_mu);
         if(g_conv.op == id && g_conv.state == IPC_CONV_PENDING) g_conv.state = IPC_CONV_IDLE;
         pthread_mutex_unlock(&g_conv_mu);
