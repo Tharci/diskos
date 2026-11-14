@@ -80,7 +80,7 @@ set `DISKOS_DEP_OUT` to keep them in a directory shared between build directorie
   `cmake --preset device -B build/profile -DDISKOS_PROFILE=ON && cmake --build build/profile`.
   Options: `DISKOS_PROFILE` (the `prof.c` measurement hooks), `DISKOS_FRAME_LOG` (logs every frame to and from the
   player, byte-exact, to `/tmp/diskos_frames.log` on the Disc), `DISKOS_TEST_OUTPUTS` (shows SPDIF Output and
-  USB Audio), `DISKOS_TEST_BT_PREPARE` (the Bluetooth preparation experiment).
+  USB Audio).
 - **Checks:** `tools/check_theme.py` (colours and fonts only through theme roles) runs before every link of
   `mq_ui` and as a pre-commit hook; `tools/check_punct.py` (no punctuation the device fonts lack) runs as a
   pre-commit hook.
@@ -99,12 +99,15 @@ cmake --preset host && cmake --build --preset host && ctest --preset host   # AS
 
 ## Build in Docker (recommended)
 
+For development, use the dev container, which is this image plus the editor and device tools: see
+[`docs/DEV_WORKFLOW.md`](../docs/DEV_WORKFLOW.md). The commands below use the image directly.
+
 The container builds the cross compiler from musl-cross-make at a pinned commit, with source-download
 hashes from that recipe, and carries CMake, Ninja, Python, the stock helper's compiler, and for the C++
 modules the host's GCC 14, Catch2 v3 and clang-tidy:
 
 ```sh
-docker build -t diskos-ui-builder .                                  # from this ui/ directory
+docker build --target builder -t diskos-ui-builder .                 # from this ui/ directory
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" -v /path/to/inputs:/inputs:ro \
   -e STOCK_AV_HEADERS=/inputs/ffmpeg-4.2.2.tar.xz -e STOCK_SYSROOT=/inputs/stock-v257 \
   diskos-ui-builder sh -c 'cmake --preset device && cmake --build --preset device'

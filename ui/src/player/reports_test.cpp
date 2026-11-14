@@ -6,7 +6,9 @@
 #include <optional>
 #include <string_view>
 #include <variant>
+#include <vector>
 
+#include "utils/bluetooth_address.hpp"
 #include <catch2/catch_test_macros.hpp>
 
 namespace diskos::player {
@@ -117,6 +119,47 @@ TEST_CASE("decode_report reads exactly the state-only a202 form", "[player][repo
     CHECK(decode_report(R"(a2020014{"state":01})") == std::unexpected(BadBody));
     CHECK(decode_report(R"(a2020014{"state": 1})") == std::unexpected(BadBody));
     CHECK(decode_report(R"(a2020014{"state":1,})") == std::unexpected(BadBody));
+}
+
+// As captured on 2026-11-07, with the address replaced.
+TEST_CASE("decode_report reads the connected Bluetooth sinks", "[player][report]") {
+    const auto speaker = utils::BluetoothAddress::from("A4:C1:38:0F:9E:2B");
+    const auto headphones = utils::BluetoothAddress::from("00:1B:66:C2:7D:01");
+    const auto none = decode_as<BluetoothSinksReport>("a6c400100000[{}]");
+    const auto one = decode_as<BluetoothSinksReport>(
+            R"(a6c400460001[{"id":1,"addr":"a4:c1:38:0f:9e:2b","name":"","status":0}])"
+    );
+    const auto two = decode_as<BluetoothSinksReport>(
+            R"(a6c400860002[{"id":1,"addr":"A4:C1:38:0F:9E:2B","name":"Kitchen","status":0},)"
+            R"({"id":2,"addr":"00:1B:66:C2:7D:01","name":"","status":1}])"
+    );
+
+    REQUIRE(speaker.has_value());
+    REQUIRE(headphones.has_value());
+    REQUIRE(none.has_value());
+    REQUIRE(one.has_value());
+    REQUIRE(two.has_value());
+    CHECK(none->sinks.empty());
+    CHECK(one->sinks == std::vector{*speaker});
+    CHECK(two->sinks == std::vector{*speaker, *headphones});
+}
+
+TEST_CASE("decode_report rejects malformed Bluetooth sink lists", "[player][report]") {
+    const auto error = [](std::string_view frame) {
+        return decode_report(frame).error();
+    };
+
+    CHECK(error("a6c4000C0000") == ReportError::BadBody);
+    CHECK(error("a6c400100001[{}]") == ReportError::BadBody);
+    CHECK(error("a6c4000E0000[]") == ReportError::BadBody);
+    CHECK(error(R"(a6c400460000[{"id":1,"addr":"A4:C1:38:0F:9E:2B","name":"","status":0}])")
+          == ReportError::BadBody);
+    CHECK(error(R"(a6c400470001[{"id":1,"addr":"A4:C1:38:0F:9E:2B","name":"","status":0},])")
+          == ReportError::BadBody);
+    CHECK(error(R"(a6c400460001[{"id":x,"addr":"A4:C1:38:0F:9E:2B","name":"","status":0}])")
+          == ReportError::BadBody);
+    CHECK(error(R"(a6c400460001[{"id":1,"addr":"A4-C1-38-0F-9E-2B","name":"","status":0}])")
+          == ReportError::BadValue);
 }
 
 }  // namespace

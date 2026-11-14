@@ -33,9 +33,9 @@ done
 SSH=(sshpass -e ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8)
 
 if ! "${SSH[@]}" "root@$IP" 'test -x /usr/data/tinj'; then
-  echo "tinj not found on device (/usr/data/tinj). Build it once and push it:" >&2
-  echo "  docker run --rm -v \"\$PWD:/src\" -w /src diskos-ui-builder sh -c '\${CROSS}gcc -O2 -static -o tinj tinj.c'" >&2
-  echo "  sshpass -e scp tinj root@\"\$DISKOS_IP\":/usr/data/tinj   # with SSHPASS=\$DISKOS_PW exported" >&2
+  echo "tinj not found on device (/usr/data/tinj). Build it once and push it (see tools/README.md):" >&2
+  echo "  \${CROSS}gcc -O2 -static -o tools/tinj tools/tinj.c   # in the dev container, from the repository root" >&2
+  echo "  sshpass -e scp tools/tinj root@\"\$DISKOS_IP\":/usr/data/tinj   # with SSHPASS=\$DISKOS_PW exported" >&2
   echo "  sshpass -e ssh root@\"\$DISKOS_IP\" chmod 755 /usr/data/tinj" >&2
   exit 1
 fi

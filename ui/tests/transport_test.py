@@ -32,8 +32,7 @@ static long g_seek_target_ms,requested_seek;
 static uint32_t g_seek_hold_until;
 static char *btn_pp="";
 static char toast[100],glyph[20];
-static void ui_note_transport_sent(void){}
-static int modes_output_busy(void){ return 0; }   /* no output switch in flight: the transport path is under test */
+static int diskos_output_busy(void){ return 0; }   /* no output move in flight: the transport path is under test */
 static int ui_receiver_active(void){ return 0; }   /* Local transport under test: no receiver owns playback */
 static int ui_receiver_transport(const char *c){ (void)c; return -1; }
 static int cancel_ok=1,cancels; static int scanner_cancel(void){ cancels++; return cancel_ok; }   /* Rescan during a scan = Stop */

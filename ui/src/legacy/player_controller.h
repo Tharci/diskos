@@ -21,6 +21,19 @@ int diskos_playback_set_volume(int level);        /* 0..120 (VOL_MAX) */
 int diskos_playback_set_play_mode(int mode);      /* 0..4, as the 0102 command and PlayMode */
 int diskos_playback_set_favourite(int favourite); /* 1 to mark, 0 to unmark */
 
+/* Play the list `list_type` (0 to 8, or 10: ListType, the 0100 command) named `name` (may be
+ * NULL for none) from its 0-based `position` (at most 0xFFFF), and its first track from
+ * `start_ms` (0 for the start; PlayerController::play_list). When nothing plays, the output
+ * router readies the player first (its play preamble), and no play is sent if it could not. The
+ * local PlayerState is Loading once it is sent. */
+int diskos_playback_play_list(
+        int list_type, unsigned position, const char* name, uint32_t start_ms
+);
+
+/* Check whether a play is starting: the local PlayerState is Loading (a list play or a resume
+ * was sent, or a new track was reported, and it is not playing yet). 1 or 0. */
+int diskos_playback_starting(void);
+
 #ifdef __cplusplus
 }
 #endif

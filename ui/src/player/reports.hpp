@@ -9,17 +9,20 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "player/frame.hpp"
 #include "player/modes.hpp"
+#include "utils/bluetooth_address.hpp"
 
 /**
  * What the stock player reports on the /ui queue, decoded from its frames.
  *
  * Each report is a struct with its tag (kTag) and a decode() of its body; decode_report() picks
  * the struct by the frame's tag. A fixed-layout report has a 4-hex-digit value as its whole body
- * (position: 8 digits). a202 carries the play state or the current track. The Bluetooth reports
- * (a6xx) are not decoded yet and come back as UnknownReport.
+ * (position: 8 digits). a202 carries the play state or the current track, a6c4 the
+ * connected Bluetooth sinks. The other Bluetooth reports (a6b3, a6c6) are not decoded yet and
+ * come back as UnknownReport.
  */
 namespace diskos::player {
 
@@ -198,6 +201,31 @@ struct TrackReport {
 };
 
 /**
+ * a6c4: the Bluetooth sinks the player is connected to, each time that changes.
+ *
+ * It follows a sink's connection by about a second (after the 06c1 Bluetooth start), and its loss
+ * with an empty list: within 9 s of earphones going into their case, while the player kept playing
+ * into the dead link (Disc captures, 2026-11-01 and 2026-11-07). The 4-digit value counts the
+ * sinks; an empty list is written `[{}]`, a sink as
+ * `{"id":1,"addr":"<address>","name":"","status":0}`. What id and status mean is not known, and the
+ * name was empty in every capture, so only the addresses are kept. More than one sink was never
+ * captured: they are read as comma-separated.
+ */
+struct BluetoothSinksReport {
+    static constexpr std::string_view kTag = "a6c4";
+    std::vector<utils::BluetoothAddress> sinks{};
+
+    /**
+     * Decode an a6c4 body.
+     * Returns:
+     *  - BadBody, if it does not have the layout above or lists another number of sinks than
+     *    its value says
+     *  - BadValue, for an address that is not one
+     */
+    [[nodiscard]] static Decoded<BluetoothSinksReport> decode(std::string_view body);
+};
+
+/**
  * Any other report, with views into the decoded bytes.
  * Includes aa1c, a824 and a60a, which appear around every track
  *  and source change but whose meaning is not known.
@@ -222,7 +250,8 @@ using Report = std::variant<
         BatteryReport,
         ConversionReport,
         PlayStateReport,
-        TrackReport>;
+        TrackReport,
+        BluetoothSinksReport>;
 
 /**
  * Decode one frame received on /ui.

@@ -4,8 +4,10 @@
 
 #include <cstdint>
 #include <expected>
+#include <optional>
 
 #include "player/commands.hpp"
+#include "player/player_instance.hpp"
 
 namespace diskos::player {
 
@@ -26,8 +28,15 @@ public:
     CommandSender& operator=(CommandSender&&) = delete;
     virtual ~CommandSender() = default;
 
-    /** Send `command`. Returns SendError::Failed if it was not queued. */
-    [[nodiscard]] virtual std::expected<void, SendError> send(const Command& command) = 0;
+    /**
+     * Send `command`; with `instance`, only if that player instance is still the connected one.
+     * Returns:
+     *  - SendError::WrongInstance if `instance` is given and is not the connected one
+     *  - SendError::Failed if it was not queued
+     */
+    [[nodiscard]] virtual std::expected<void, SendError> send(
+            const Command& command, std::optional<PlayerInstance> instance = std::nullopt
+    ) = 0;
 };
 
 }  // namespace diskos::player

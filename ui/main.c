@@ -37,7 +37,6 @@
 #include "wifi.h"
 #include "anim.h"
 #include "ipc.h"
-#include "bt_prepare.h"
 #include "opustitle_worker.h"
 #include "fwcaps.h"
 #include "musicdb.h"
@@ -47,6 +46,7 @@
 #include "lastfm.h"
 #include "scanner.h"
 #include "playback.h"
+#include "legacy/output.h"
 #include "legacy/player_controller.h"
 #include "cast_bridge.h"
 #include "cast_handoff.h"
@@ -411,9 +411,7 @@ static void hwclock_save_tick(lv_timer_t *t);   /* defined below: starts the RTC
  * EQ       : 0689 000C <4-hex preset> (selector - verify)
  * RESCAN   : 0622000C0001 (NAS-family; unverified) */
 int ui_local_playback_allowed(void);   /* defined with the launch verdict, below */
-static void route_loss_invalidate_seek(void);
 int ui_seek_to(long ms){
-    route_loss_invalidate_seek();
     /* A seek drives the player's current (card-backed) track, so it is card access like any other: never
      * before this boot's launch verdict qualified the player, and never while SD access is held. */
     if(!ui_local_playback_allowed()) return -1;
@@ -453,8 +451,7 @@ int ui_eq_select(int preset){
  * "unmanaged / System default" -> we send nothing (don't change the user's sound). */
 void ui_set_dre(int on){        if(on<0) return; ipc_send_cmd(on   ? "0812000C0000" : "0812000C0001"); }  /* on=0000, off=0001 */
 void ui_set_gain(int high){     if(high<0) return; const char *tag=fw_gain_tag(); if(!tag){ fprintf(stderr,"gain: unverified firmware (MAIN_OS_VER=%d) -> not sending\n", fw_os_ver()); return; } char f[16]; snprintf(f,sizeof f,"%s000C%04X", tag, high?1:0); ipc_send_cmd(f); } /* Low=0, High=1; tag firmware-gated (V2.09=0645, V2.28=0649); fail closed on unknown fw */
-static void route_loss_invalidate_seek(void);
-void ui_set_output(int spdif){  if(spdif<0) return; route_loss_invalidate_seek(); modes_output_switch(spdif ? OUT_SPDIF : OUT_INTERNAL); } /* stop -> 0666 route -> 0657 -> resume, see modes.c */
+void ui_set_output(int spdif){  if(spdif<0) return; (void)ui_output_select(spdif ? DISKOS_OUTPUT_SPDIF : DISKOS_OUTPUT_INTERNAL_DAC, NULL); }   /* Settings: the output router moves it */
 void ui_set_dac_filter(int idx){ if(idx<0||idx>5) return; char f[16]; snprintf(f,sizeof f,"0653000C%04X",idx); ipc_send_cmd(f); }
 /* ReplayGain / volume-levelling: 0718 (RE-confirmed, on-device-safe 2026-08-24). 0=Off 1=Track 2=Album. */
 void ui_set_replay_gain(int v){ if(v<0||v>2) return; char f[16]; snprintf(f,sizeof f,"0718000C%04X",(unsigned)v); ipc_send_cmd(f); }
@@ -485,454 +482,9 @@ void ui_set_balance(int v){ if(v < -10 || v > 10) return;   /* enforce UI range;
                             int fv = (v>0) ? (v & 0xFF) : (v<0) ? (0x0100 | ((-v) & 0xFF)) : 0;
                             char f[16]; snprintf(f,sizeof f,"0713000C%04X",fv); ipc_send_cmd(f); }
 
-/* ---- Bluetooth audio output routing (live-captured from working stock mq_ui) --------------
- * Follow stock's pre-stop/mode/work/BT-init/route/work/codec/volume transition. The
- * out_dev=LOCAL(6) pre-stop normalizes player state before out_dev=BT(2), avoiding the
- * observed mq_player crash/reboot. Codec VALUE1=0 is SBC; keep the MAC payload so the
- * frame shape matches stock. Pause/seek/play resumes the current track after routing.
- * g_route_mac = the MAC we've routed to ("" = local/analog; kept for validation + dedup). */
-static char g_route_mac[20] = "";
-static int g_startup_route_checked = 0;
-static void route_uppercase(const char *in, char *out, int cap);
-#ifndef ROUTE_STATE_PATH
-#define ROUTE_STATE_PATH "/tmp/.diskos-ui/route"
-#endif
-#ifndef ROUTE_STATE_DIR
-#define ROUTE_STATE_DIR "/tmp/.diskos-ui"
-#endif
-#ifndef ROUTE_STATE_UID
-#define ROUTE_STATE_UID 0
-#endif
-#ifndef ROUTE_PROC_ROOT
-#define ROUTE_PROC_ROOT "/proc"
-#endif
-/* /proc start time distinguishes a surviving player from a reused PID. The IPC
- * generation is recorded for diagnosis, but resets when the UI process restarts. */
-static int route_player_identity(long *pid, unsigned long long *start){
-    DIR *dir = opendir(ROUTE_PROC_ROOT);
-    if(!dir) return -1;
-    int found = 0;
-    struct dirent *ent;
-    while((ent = readdir(dir))){
-        char *end; errno = 0;
-        long p = strtol(ent->d_name, &end, 10);
-        if(errno || p <= 0 || *end) continue;
-        char path[256];
-        if(snprintf(path, sizeof path, "%s/%ld/stat", ROUTE_PROC_ROOT, p) >= (int)sizeof path) continue;
-        FILE *f = fopen(path, "r");
-        if(!f) continue;
-        char line[1024]; int ok = fgets(line, sizeof line, f) != NULL && strchr(line, '\n') != NULL;
-        fclose(f);
-        if(!ok) continue;
-        char *lp = strchr(line, '('), *rp = strrchr(line, ')');
-        if(!lp || !rp || rp <= lp || (size_t)(rp-lp-1) != strlen("mq_player") ||
-           strncmp(lp+1, "mq_player", rp-lp-1) || rp[1] != ' ') continue;
-        char *save = NULL, *tok = strtok_r(rp+2, " \n", &save);
-        if(!tok || tok[0] == 'Z' || tok[0] == 'X') continue;
-        for(int field=3; field<22 && tok; field++) tok = strtok_r(NULL, " \n", &save);
-        if(!tok) continue;
-        errno = 0;
-        unsigned long long ticks = strtoull(tok, &end, 10);
-        if(errno || !ticks || *end) continue;
-        *pid = p; *start = ticks;
-        found++;
-        if(found > 1) break;  /* ambiguous player ownership: never persist a route */
-    }
-    closedir(dir);
-    return found == 1 ? 0 : -1;
-}
-static int route_state_dir(int create){
-    struct stat st;
-    if(create && mkdir(ROUTE_STATE_DIR, 0700) < 0 && errno != EEXIST) return 0;
-    return lstat(ROUTE_STATE_DIR, &st) == 0 && S_ISDIR(st.st_mode) &&
-           st.st_uid == ROUTE_STATE_UID && (st.st_mode & 07777) == 0700;
-}
-static void route_state_remove(void){ if(route_state_dir(0)) (void)unlink(ROUTE_STATE_PATH); }
-static void route_state_save(const char *mac){
-    if(!route_state_dir(1)) return;
-    long pid; unsigned long long start;
-    if(route_player_identity(&pid, &start) < 0){ route_state_remove(); return; }
-    char data[128];
-    int n = snprintf(data, sizeof data, "pid=%ld start=%llu gen=%u mac=%s\n",
-                     pid, start, ipc_generation(), mac);
-    if(n <= 0 || n >= (int)sizeof data){ route_state_remove(); return; }
-    char tmp[sizeof ROUTE_STATE_PATH + 16];
-    if(snprintf(tmp, sizeof tmp, "%s.XXXXXX", ROUTE_STATE_PATH) >= (int)sizeof tmp){ route_state_remove(); return; }
-    int fd = mkstemp(tmp);
-    if(fd < 0){ route_state_remove(); return; }
-    size_t pos = 0;
-    while(pos < (size_t)n){ ssize_t w = write(fd, data+pos, (size_t)n-pos);
-        if(w < 0 && errno == EINTR) continue;
-        if(w <= 0) break;
-        pos += (size_t)w;
-    }
-    int ok = pos == (size_t)n && fchmod(fd, 0600) == 0;
-    close(fd);
-    if(!ok || rename(tmp, ROUTE_STATE_PATH) != 0){ unlink(tmp); route_state_remove(); }
-}
-/* Return 1 only for this running player. Any other file is discarded. */
-static int route_state_restore(void){
-    if(!route_state_dir(0)) return 0;
-    int fd = open(ROUTE_STATE_PATH, O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
-    if(fd < 0){ if(errno != ENOENT) route_state_remove(); return 0; }
-    struct stat st;
-    char data[128]; ssize_t n = -1;
-    if(fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == ROUTE_STATE_UID &&
-       (st.st_mode & 07777) == 0600 && st.st_size > 0 && st.st_size < (off_t)sizeof data)
-        n = read(fd, data, sizeof data);
-    close(fd);
-    if(n <= 0 || n >= (ssize_t)sizeof data || n != st.st_size || memchr(data, 0, (size_t)n)){
-        route_state_remove(); return 0;
-    }
-    data[n] = 0;
-    long pid = -1, current_pid; unsigned long long start = 0, current_start;
-    unsigned gen; char mac[20], canonical[128];
-    if(sscanf(data, "pid=%ld start=%llu gen=%u mac=%19s", &pid, &start, &gen, mac) != 4 ||
-       snprintf(canonical, sizeof canonical, "pid=%ld start=%llu gen=%u mac=%s\n", pid, start, gen, mac) <= 0 ||
-       strcmp(data, canonical) || pid <= 0 || !start ||
-       route_player_identity(&current_pid, &current_start) < 0 ||
-       pid != current_pid || start != current_start){ route_state_remove(); return 0; }
-    char norm[20]; route_uppercase(mac, norm, sizeof norm);
-    if(strlen(norm) != 17){ route_state_remove(); return 0; }
-    for(int i=0;i<17;i++){
-        if((i+1)%3 == 0 ? norm[i] != ':' :
-           !((norm[i]>='0'&&norm[i]<='9') || (norm[i]>='A'&&norm[i]<='F'))){
-            route_state_remove(); return 0;
-        }
-    }
-    snprintf(g_route_mac, sizeof g_route_mac, "%s", norm);
-    return 1;
-}
-static int g_playing = 0;   /* published each tick by the main loop's play/pause inference; the routing
-                             * fns read THIS, not the raw st.state (which reports 0 while playing). */
-/* After a player restart, the fresh player runs a ~7s late-init on its mode-control thread that can
- * overwrite an output route sent too early. The v2.40 local-init already waits this out (localplayer_workmode_cb
- * settles ~9s). BT routing must wait the same window: a speaker's bluealsa PCM is already present, so a
- * route sent within the window can be reverted to local by the player's late init - leaving g_route_mac +
- * g_bt_autorouted latched while the player is actually on analog (no recovery). An EXPLICIT armed flag (not
- * a bare deadline) avoids a false "settling" when lv_tick_get()'s absolute CLOCK_MONOTONIC ms sits in the
- * upper half of the 32-bit range; it disarms itself once the window passes. Set on each reconnect; the
- * automatic routes wait for a current reply before starting this window. User requests send immediately. */
-static int      g_settle_armed = 0;
-static uint32_t g_settle_until = 0;
-static unsigned g_settle_gen;
-static int g_settle_started;
-int ui_player_settling(void){
-    unsigned gen;
-    int confirmed = ipc_confirmed_snapshot(&gen);
-    if(gen != g_settle_gen) return 1;
-    if(!g_settle_armed) return 0;
-    if(!confirmed) return 1;
-    if(!g_settle_started){ g_settle_started = 1; g_settle_until = lv_tick_get() + 9000; }
-    if((int32_t)(lv_tick_get() - g_settle_until) >= 0){ g_settle_armed = 0; return 0; }   /* window passed -> disarm */
-    return 1;
-}
-static void route_uppercase(const char *in, char *out, int cap){
-    int j=0; for(int i=0; in[i] && j<cap-1; i++){ char c=in[i]; if(c>='a'&&c<='z') c-=32; out[j++]=c; } out[j]=0;
-}
-const char *ui_route_mac(void){ return g_route_mac; }   /* device the player is routed to ('' = local) */
-int ui_local_playback_allowed(void);
+static int g_playing = 0;   /* published each tick by the main loop: what the player reports (ipc_local_playing) */
 int ui_get_source_mode(void);
-static int route_send(const char *f, int automatic, unsigned gen){
-    return automatic ? ipc_send_automatic(f, gen) : ipc_send_cmd(f);
-}
-static int route_seek(long ms, int automatic, unsigned gen){
-    if(!automatic) return ui_seek_to(ms);
-    char f[32]; if(ms < 0) ms = 0;
-    snprintf(f, sizeof f, "01030010%08lX", (unsigned long)ms);
-    return ipc_send_automatic(f, gen);
-}
-/* Loss has two independent lifetimes: an accepted teardown must finish, while
- * user intent can revoke its position at any time. A stopped player cannot seek
- * (V2.57 0x458710 mask 0x16); hand position to a user-driven resume instead. */
-static struct {
-    int pending, accepted, seek_valid, local_dirty;
-    unsigned gen, transport;
-    char mac[20];
-    track_state_t state;
-} g_route_loss;
-static struct {
-    int pending, started, sent;
-    unsigned gen, transport, report, pos_seq;
-    uint32_t deadline, probe_at;
-    track_state_t state;
-} g_route_resume;
-unsigned ipc_resume_playing_report(void);
-static void route_loss_invalidate_seek(void){
-    g_route_loss.seek_valid = 0;
-    memset(&g_route_resume, 0, sizeof g_route_resume);
-}
-static void route_loss_reset(void){ memset(&g_route_loss, 0, sizeof g_route_loss); }
-int ui_route_bt_loss_accepted(void){
-    return g_route_loss.pending && g_route_loss.accepted &&
-           g_route_loss.gen == ipc_generation() && !strcmp(g_route_loss.mac, g_route_mac);
-}
-static int route_same_track(const track_state_t *st, const track_state_t *saved){
-    return !strcmp(st->path, saved->path) &&
-           st->song_id_valid == saved->song_id_valid && st->song_id_raw == saved->song_id_raw &&
-           st->pos_id_valid == saved->pos_id_valid && st->pos_id_raw == saved->pos_id_raw;
-}
-static int route_loss_same_track(const track_state_t *st){
-    return route_same_track(st, &g_route_loss.state);
-}
-static void route_resume_tick(void){
-    if(!g_route_resume.pending) return;
-    track_state_t st, ready; unsigned report, toggle, after_report;
-    uint32_t now = lv_tick_get();
-    unsigned transport = ipc_transport_seq();
-    ipc_get_state(&st);
-    if(g_route_resume.gen != ipc_generation() ||
-       (int32_t)(now - g_route_resume.deadline) >= 0 ||
-       ui_get_source_mode() != 0 || modes_output_route() != OUT_INTERNAL ||
-       cfg_get_int("spdif", 0) ||
-       (st.have_track && st.player_confirmed && !st.provisional &&
-        !route_same_track(&st, &g_route_resume.state))){
-        route_loss_invalidate_seek(); return;
-    }
-    /* A diskOS resume needs an accepted Play intent and a later report. A
-     * physical key has no transport epoch: require a post-recovery stopped /
-     * unloaded -> playing edge, with the saved identity still loaded. */
-    int evidence = ipc_resume_snapshot(&ready, &report, &toggle, &after_report);
-    if(!g_route_resume.started){
-        if(transport == g_route_resume.transport){
-            unsigned playing_report = ipc_resume_playing_report();
-            if(!evidence ||
-               (int32_t)(playing_report - g_route_resume.report) <= 0 ||
-               (int32_t)(playing_report - report) > 0 ||
-               !ready.have_track || !ready.player_confirmed || ready.provisional ||
-               ready.player_generation != g_route_resume.gen || ready.state != 0 ||
-               !route_same_track(&ready, &g_route_resume.state)) return;
-        } else {
-            if(transport != g_route_resume.transport + 1 || toggle != transport){ route_loss_invalidate_seek(); return; }
-            g_route_resume.report = after_report;
-        }
-        g_route_resume.started = 1;
-        g_route_resume.transport = transport;
-        g_route_resume.deadline = now + 10000;
-        g_route_resume.probe_at = now;
-    }
-    if(transport != g_route_resume.transport){ route_loss_invalidate_seek(); return; }
-    if(g_route_resume.sent){
-        /* Enqueue is not success: require a newer position within +/- 2 s. */
-        if(st.pos_seq != g_route_resume.pos_seq && st.have_track &&
-           st.player_confirmed && !st.provisional && st.player_generation == g_route_resume.gen &&
-           route_same_track(&st, &g_route_resume.state) &&
-           labs(st.position_ms - g_route_resume.state.position_ms) <= 2000)
-            route_loss_invalidate_seek();
-        return;
-    }
-    if(modes_output_busy() || !ui_local_playback_allowed() || ui_player_settling()) return;
-    if(evidence && report != g_route_resume.report &&
-       ready.have_track && ready.player_confirmed && !ready.provisional &&
-       ready.player_generation == g_route_resume.gen &&
-       route_same_track(&ready, &g_route_resume.state) && (ready.state == 0 || ready.state == 1)){
-        if(route_seek(g_route_resume.state.position_ms, 1, g_route_resume.gen) == 0){
-            g_route_resume.sent = 1; g_route_resume.pos_seq = st.pos_seq;
-        }
-        return;
-    }
-    /* Ask immediately after user intent, then at most four times per second.
-     * Seek on the first usable response instead of waiting for the BT poll. */
-    if((int32_t)(now - g_route_resume.probe_at) >= 0){
-        ipc_send_probe("02020008"); g_route_resume.probe_at = now + 250;
-    }
-}
-#ifdef DISKOS_TEST_BT_PREPARE
-/* Experimental Bluetooth preparation: worker observations never issue commands.
- * Strict token cancellation intentionally includes uncorrelated stock stops. */
-static bp_prepare g_bt_prepare;
-static char g_bt_prepare_from[20];
-static int bt_prepare_sleep_due(void);
-static bp_input bt_prepare_input(void){
-    bp_input i = {0}; unsigned screen, generation; int on;
-    i.qualified = ipc_prepare_snapshot(&i.report, &i.report_serial, &i.playing_frames);
-    ipc_get_state(&i.current); i.transport = ipc_transport_seq();
-    ipc_screen_snapshot(&on, &screen, &i.poweroff, &generation);
-    const char *expected = g_bt_prepare.route_step >= 5 ? g_bt_prepare.mac : g_bt_prepare_from;
-    i.permitted = ui_get_source_mode() == 0 && modes_output_route() == OUT_INTERNAL &&
-        !modes_output_busy() && !cfg_get_int("spdif", 0) && ui_local_playback_allowed() &&
-        !ui_cast_session_active() && !bt_prepare_sleep_due() &&
-        (!bp_active(&g_bt_prepare) || !strcmp(g_route_mac, expected));
-    return i;
-}
-static int bt_prepare_send(void *ctx, const char *frame, int release, unsigned report, unsigned playing){
-    bp_prepare *p = ctx;
-    return ipc_prepare_send(frame, p->generation, p->saved.playback_token, p->transport, report, playing, p->held, release, p->poweroff);
-}
-static int bt_prepare_start_probe(void *ctx, uint64_t *id){
-    bp_prepare *p = ctx; return bt_prepare_probe_start(p->mac, p->generation, id);
-}
-static int bt_prepare_read_probe(void *ctx, uint64_t id, bc_snapshot *s, int *known, unsigned *avail){
-    bp_prepare *p = ctx; return bt_prepare_probe_read(id, p->generation, s, known, avail);
-}
-static void bt_prepare_cancel_probe(void *ctx, uint64_t id){ (void)ctx; bt_prepare_probe_cancel(id); }
-static void bt_prepare_routed(void *ctx, const char *mac){
-    (void)ctx; snprintf(g_route_mac, sizeof g_route_mac, "%s", mac); modes_output_reset();
-}
-static const bp_sink g_bt_prepare_sink = {&g_bt_prepare, bt_prepare_send, bt_prepare_start_probe,
-    bt_prepare_read_probe, bt_prepare_cancel_probe, bt_prepare_routed};
-void ui_bt_route_prepare_cancel(void){
-    if(bp_active(&g_bt_prepare)) fprintf(stderr, "bt prepare %llu cancelled externally phase=%d\n",
-        (unsigned long long)g_bt_prepare.attempt, g_bt_prepare.phase);
-    bp_cancel(&g_bt_prepare, &g_bt_prepare_sink);
-}
-static void bt_prepare_tick(void){
-    if(!bp_active(&g_bt_prepare)) return;
-    bp_input i = bt_prepare_input();
-    int before = g_bt_prepare.phase;
-    bp_tick(&g_bt_prepare, lv_tick_get(), &i, &g_bt_prepare_sink);
-    if(before != g_bt_prepare.phase) fprintf(stderr,
-        "bt prepare %llu phase=%d->%d gen=%u tx=%u token=%llu pos_seq=%u state=%d report=%u playing=%u\n",
-        (unsigned long long)g_bt_prepare.attempt, before, g_bt_prepare.phase, i.current.player_generation,
-        i.transport, (unsigned long long)i.current.playback_token, i.current.pos_seq,
-        i.report.state, i.report_serial, i.playing_frames);
-    if(g_bt_prepare.phase == BP_DONE){
-        route_loss_reset(); route_state_save(g_bt_prepare.mac); g_startup_route_checked = 1;
-    } else if(g_bt_prepare.phase == BP_FAILED) ui_toast("Bluetooth setup failed");
-}
-static int bt_prepare_route(const char *mac, int automatic){
-    if(bp_active(&g_bt_prepare)){
-        if(!strcmp(mac, g_bt_prepare.mac)) return 0;
-        ui_bt_route_prepare_cancel();
-    }
-    if(!strcmp(mac, g_route_mac) && (automatic || g_bt_prepare.phase == BP_DONE)) return 0;
-    ui_bt_route_prepare_cancel();
-    snprintf(g_bt_prepare_from, sizeof g_bt_prepare_from, "%s", g_route_mac);
-    bp_input i = bt_prepare_input();
-    return bp_begin(&g_bt_prepare, lv_tick_get(), mac, cfg_get_int("bt_codec", 0), g_playing, &i);
-}
-/* End experimental Bluetooth preparation. */
-#endif
-static int route_bt(const char *mac, int automatic){
-    if(ui_cast_session_active()) return -1;             /* 16b: PREPARING..STOPPING: no route change, no codec upgrade; Bluetooth and its saved preference stay as they are, the auto-route poll retries after Cast ends */
-    int loss_accepted = ui_route_bt_loss_accepted();
-    if(!automatic) route_loss_invalidate_seek();
-    memset(&g_route_resume, 0, sizeof g_route_resume);
-    unsigned gen = ipc_generation();
-    if(automatic && (ui_get_source_mode() != 0 || modes_output_route() != OUT_INTERNAL ||
-                     !ipc_confirmed_snapshot(&gen) || ui_player_settling())) return -1;
-    if(modes_output_busy()) return -1;                  /* an output switch is in flight or recovering: the auto-route poll retries */
-    if(!ui_local_playback_allowed()) return -1;
-    if(!mac) return -1;
-    char norm[20]; route_uppercase(mac, norm, sizeof norm);
-    if((int)strlen(norm) != 17) return -1;             /* must be AA:BB:CC:DD:EE:FF */
-    for(int i=0;i<17;i++){
-        if((i+1)%3 == 0){ if(norm[i] != ':') return -1; }
-        else if(!((norm[i]>='0'&&norm[i]<='9') || (norm[i]>='A'&&norm[i]<='F'))) return -1;
-    }
-#ifdef DISKOS_TEST_BT_PREPARE
-    if(!loss_accepted && fw_os_ver() == 257 && cfg_get_int("bt_codec", 0) > 0 && cfg_get_int("bt_codec", 0) < BT_CODEC_N)
-        return bt_prepare_route(norm, automatic);
-#endif
-    if(!loss_accepted && !strcmp(norm, g_route_mac)) return 0;   /* already routed to this device */
-    track_state_t st; ipc_get_state(&st);
-    if(automatic && g_playing && (!st.player_confirmed || st.provisional || st.player_generation != gen)) return -1;
-    int was_playing = !loss_accepted && g_playing;
-    if(was_playing && route_send("0201000C0000", automatic, gen) != 0) return -1;   /* pause; abort route if it can't be sent (don't switch output unpaused) */
-    if(route_send("0666000C0006", automatic, gen) != 0) return -1;     /* stock pre-stop: normalize local output state */
-    if(route_send("0642000C0000", automatic, gen) != 0 && (automatic || loss_accepted)) return -1;                       /* reset network/output mode */
-    if(route_send("0657000C0008", automatic, gen) != 0 && (automatic || loss_accepted)) return -1;                       /* work-mode 8 (required orchestration, not our work_mode) */
-    if(route_send("06c1000C0000", automatic, gen) != 0 && (automatic || loss_accepted)) return -1;                       /* initialize the player's BT subsystem */
-    /* A partial replacement may overwrite the accepted local output. Retain
-     * its tail, but normalize local again before finishing it on failure. */
-    if(loss_accepted) g_route_loss.local_dirty = 1;
-    if(route_send("0666000C0002", automatic, gen) != 0) return -1;     /* out_dev = BT source */
-    modes_output_reset();                               /* no longer on SPDIF / USB audio */
-    if(route_send("0657000C0008", automatic, gen) != 0 && (automatic || loss_accepted)) return -1;
-    /* V2.57 owns connect-time codec application. Retain the older sequence. */
-    if(fw_os_ver() != 257){
-        char f[48];
-        if(ui_bt_codec_frame(norm, f, sizeof f) != 0) return -1;
-        if(route_send(f, automatic, gen) != 0) return -1;
-    }
-    if(st.volume_seq){ char v[16]; snprintf(v, sizeof v, "0715000C%04X", st.volume); if(route_send(v, automatic, gen) != 0 && (automatic || loss_accepted)) return -1; }
-    /* Safe minimal resume; deterministic load/play remains a future improvement. */
-    if(st.have_track && st.position_ms > 0 && (!automatic || (st.player_confirmed && !st.provisional && st.player_generation == gen))) if(route_seek(st.position_ms, automatic, gen) != 0 && (automatic || loss_accepted)) return -1;  /* resume position, not restart */
-    if(was_playing && route_send("0201000C0000", automatic, gen) != 0 && (automatic || loss_accepted)) return -1;       /* play */
-    snprintf(g_route_mac, sizeof g_route_mac, "%s", norm);
-    route_loss_reset();
-    route_state_save(norm);
-    g_startup_route_checked = 1;                       /* an intentional BT route supersedes startup recovery */
-    fprintf(stderr,"route BT %s (playing=%d pos=%ldms)\n", norm, was_playing, st.position_ms); fflush(stderr);
-    return 0;
-}
-int ui_route_bt(const char *mac){ return route_bt(mac, 0); }
-int ui_route_bt_automatic(const char *mac){ return route_bt(mac, 1); }
-static int route_analog(int force){
-    if(force < 2) route_loss_invalidate_seek();
-    if(force == 3 && !ui_route_bt_loss_accepted()) route_loss_reset();
-    if(modes_output_busy()) return -1;
-    int automatic = force;
-    int lost = force >= 2;
-    unsigned gen = ipc_generation();
-    if(automatic && (!ipc_confirmed_snapshot(&gen) || ui_player_settling())) return -1;
-    if(lost && (ui_get_source_mode() != 0 || modes_output_route() != OUT_INTERNAL ||
-                cfg_get_int("spdif", 0) || !g_route_mac[0])) return -1;
-    if(!ui_local_playback_allowed()) return -1;
-    if(!force && !g_route_mac[0]){ route_state_remove(); return 0; }
-    track_state_t st; ipc_get_state(&st);
-    if(automatic && !lost && g_playing && (!st.player_confirmed || st.provisional || st.player_generation != gen)) return -1;
-    /* 0666 closes and joins LOCALPLAYER; its mode-1 re-init writes state 3
-     * (V2.57 0x458108..0x458198). Never toggle from g_playing on loss: the player
-     * keeps playing into the dead sink. Keep the seek snapshot
-     * across partial sends: teardown may remove the next report's track. */
-    if(lost){
-        if(!g_route_loss.pending || g_route_loss.gen != gen || strcmp(g_route_loss.mac, g_route_mac)){
-            if(!st.player_confirmed || st.provisional || st.player_generation != gen) return -1;
-            route_loss_reset();
-            g_route_loss.state = st; g_route_loss.gen = gen;
-            g_route_loss.transport = ipc_transport_seq();
-            snprintf(g_route_loss.mac, sizeof g_route_loss.mac, "%s", g_route_mac);
-            g_route_loss.pending = g_route_loss.seek_valid = 1;
-        }
-        if(g_route_loss.transport != ipc_transport_seq() ||
-           (st.have_track && st.player_confirmed && !st.provisional && st.player_generation == gen &&
-            !route_loss_same_track(&st))) g_route_loss.seek_valid = 0;
-        st = g_route_loss.state;
-        if(!g_route_loss.seek_valid) st.have_track = 0;
-    }
-    int was_playing = !lost && !ui_route_bt_loss_accepted() && g_playing;   /* loss recovery never toggles transport */
-    if(was_playing && route_send("0201000C0000", automatic, gen) != 0) return -1;   /* pause; abort route if it can't be sent (don't switch output unpaused) */
-    /* the route commands MUST land; if either fails, keep g_route_mac set + return failure so a
-     * retry re-runs - clearing it would falsely say "on analog" and leave the player stuck on BT. */
-    if(!lost || !g_route_loss.accepted || g_route_loss.local_dirty){
-        if(route_send("0666000C0006", automatic, gen) != 0) return -1;  /* out_dev = analog/local DAC */
-        if(lost){ g_route_loss.accepted = 1; g_route_loss.local_dirty = 0; }
-    }
-    if(route_send("0657000C0008", automatic, gen) != 0) return -1;
-    if(!lost && st.have_track && st.position_ms > 0 && (!automatic || (st.player_confirmed && !st.provisional && st.player_generation == gen))) if(route_seek(st.position_ms, automatic, gen) != 0 && automatic) return -1;
-    if(was_playing && route_send("0201000C0000", automatic, gen) != 0 && automatic) return -1;       /* play */
-    if(lost){
-        if(g_route_loss.seek_valid && st.have_track && st.position_ms > 0){
-            memset(&g_route_resume, 0, sizeof g_route_resume);
-            g_route_resume.pending = 1; g_route_resume.gen = gen;
-            g_route_resume.transport = ipc_transport_seq();
-            track_state_t ready; unsigned toggle, after_report;
-            ipc_resume_snapshot(&ready, &g_route_resume.report, &toggle, &after_report);
-            g_route_resume.state = st;
-            g_route_resume.deadline = lv_tick_get() + 1800000; /* 30 minutes to user resume */
-        }
-        g_playing = 0;
-    }
-    route_loss_reset();
-    g_route_mac[0] = 0;
-    route_state_remove();
-#ifdef DISKOS_TEST_BT_PREPARE
-    ui_bt_route_prepare_cancel();
-#endif
-    fprintf(stderr,"route analog (playing=%d)\n", was_playing); fflush(stderr);
-    return 0;
-}
-/* Called only after the BT poll confirms loss of the routed sink. */
-int ui_route_bt_lost(int fresh){ return route_analog(fresh ? 3 : 2); }
-int ui_route_analog(void){
-#ifdef DISKOS_TEST_BT_PREPARE
-    ui_bt_route_prepare_cancel();
-#endif
-    route_loss_invalidate_seek();
-    if(modes_output_busy()) return -1;
-    return route_analog(0);
-}
+static int output_on_internal_dac(void);
 
 /* Working-mode (audio SOURCE) switch. Replays the stock V2.28 sequences captured + live-verified
  * 2026-08-23: each sets the gadget selector byte (0642) + audio route (0657); the
@@ -999,11 +551,10 @@ int ui_receiver_exit_needs_confirm(void){
     /* A queued AirPlay start remains possible until fresh evidence says
      * otherwise. Pending/failed UI state alone proves no departure. */
     return !e.valid || e.mode < 0 ||
-        (e.generation == g_rxsw.gen &&
+        (e.instance == g_rxsw.gen &&
          e.sequence <= g_rxsw.sent_sequence);
 }
 
-static int play_recent(void);
 static const char *receiver_blocked(receiver_source target){
     unsigned gen;
     if(!receiver_available()) return "Not available on this firmware";
@@ -1012,13 +563,13 @@ static const char *receiver_blocked(receiver_source target){
         const char *busy = receiver_entry_blocked_reason();
         if(busy) return busy;
     }
-    if(!ipc_confirmed_snapshot(&gen) || ui_player_settling()) return "Player is starting - try again";
+    if(!ipc_confirmed_snapshot(&gen) || !diskos_output_ready()) return "Player is starting - try again";
     if(!source_sd_allowed() || g_sd_quiesce) return "SD card is not ready";
     if(power_shutdown_phase() != PW_OFF) return "Shutting down";
-    if(modes_output_busy() || play_recent()) return "Player is busy - try again";
+    if(diskos_output_busy() || diskos_playback_starting()) return "Player is busy - try again";
     int actual = ui_detect_source_mode(); /* USB can survive a UI-only restart. */
     if(g_source_mode == 1 || g_source_mode == 3 || actual == 1 || actual == 3) return "Return to Local first";
-    if(g_route_mac[0] || modes_output_route() != OUT_INTERNAL) return "Switch to Internal DAC first";
+    if(!output_on_internal_dac()) return "Switch to Internal DAC first";
     if(target == RECEIVER_SOURCE_AIRPLAY && wifi_connectivity() != 1) return "Connect to Wi-Fi first (Settings > Network)";
     return NULL;
 }
@@ -1198,9 +749,7 @@ static int storage_player_guarded(void){
 static int source_send(int mode){
     int v = fw_os_ver();
     if(v != 209 && v != 228 && v != 240 && v != 257) return -1;
-    route_loss_invalidate_seek();
-    if(ipc_send_cmd("0666000C0006") < 0) return -1;
-    modes_output_reset();                                /* every source change starts from the internal DAC route */
+    if(ipc_send_cmd("0666000C0006") < 0) return -1;   /* the router hears of the switch from the player (a607) */
     switch(mode){
         case 0:
             usleep(100000);                              /* stock route-to-gadget settle */
@@ -1225,8 +774,7 @@ static void storage_unknown(const char *why){
     ui_toast("Storage state uncertain - reboot device");
 }
 int ui_set_source_mode(int mode){
-    route_loss_invalidate_seek();
-    if(modes_output_busy()){ ui_toast("Switching output - try again"); return -1; }
+    if(diskos_output_busy()){ ui_toast("Switching output - try again"); return -1; }
     if(mode == SOURCE_AIRPLAY) return receiver_switch(RECEIVER_SOURCE_AIRPLAY);
     ipc_source_evidence e; ipc_source_snapshot(&e);
     if(g_rxsw.owned || (receiver_available() && e.valid && e.mode == 10)){
@@ -1362,7 +910,7 @@ static int book_session_active(void);   /* fwd: an audiobook is the active playb
 static int g_mode_applied = -2;
 /* Cast slice 14a: while the Cast facade owns playback (playback_source() != LOCAL) no library selection may start the Disc's
  * own audio on top of the receiver. Every public start path below checks this FIRST - before any DB or reserved-slot write
- * and before any /player frame (0100 / 0102 / 0657 / 0666 via modes_local_init) - and fails closed with a toast. This is a
+ * and before any /player frame (0100 / 0102 / 0657 / 0666 via the play preamble) - and fails closed with a toast. This is a
  * refusal only: slices 14b-14g replace it with Cast queue behaviour. NOT folded into ui_local_playback_allowed(): the handoff
  * machine uses that as its sd_ok input (ho_tick), and tearing the session down on a guard change would be wrong. */
 static ho g_ho;   /* the Cast handoff machine (wired below); declared here so the guard can read its state */
@@ -1412,7 +960,6 @@ void ui_reapply_audio(unsigned gen){
     g_audio_done = 0; g_audio_pending = 1; g_audio_probe_set = 0;
     g_audio_retry_set = 0;
     g_mode_applied = -1;
-    modes_output_reset();
 }
 static void audio_restore_tick(void){
     if(!g_audio_pending) return;
@@ -1486,14 +1033,14 @@ static void opus_title_tick(void){
     for(unsigned polls=0;;polls++){
         track_state_t *s=&event.state;
         if(token!=s->playback_token){ otw_identity_end(worker); token=s->playback_token; active=0; }
-        otw_player_generation(worker,s->player_generation);
+        otw_player_generation(worker,s->player_instance);
         if(s->player_confirmed && (active || !s->title_ready)){
             active=1;
             unsigned flags=((s->is_cue_valid && s->is_sacd_valid) ||
                 (s->is_cue_valid && s->is_cue) || (s->is_sacd_valid && s->is_sacd) ? OTW_KIND_KNOWN : 0) |
                 (s->is_cue_valid && s->is_cue ? OTW_CUE : 0) |
                 (s->is_sacd_valid && s->is_sacd ? OTW_SACD : 0);
-            otw_identity id={s->player_generation,s->song_id_raw,s->pos_id_raw,s->song_id_valid,s->pos_id_valid};
+            otw_identity id={s->player_instance,s->song_id_raw,s->pos_id_raw,s->song_id_valid,s->pos_id_valid};
             otw_submit(worker,id,s->path,event.player_title,flags);
         }
         /* Bound retries under sustained RX changes, after reconciling the latest evidence. */
@@ -1556,7 +1103,7 @@ static void play_request_arm(const track_state_t *cur, int was_playing){
     g_play_pre.request = g_play_pre.at = g_play_pending;
     g_play_pre.pos_seq = cur->pos_seq;
     g_play_pre.position = cur->position_ms;
-    g_play_pre.generation = cur->player_generation;
+    g_play_pre.generation = cur->player_instance;
     g_play_pre.transport = ipc_transport_seq();
     g_play_pre.token = cur->playback_token;
     g_play_pre.duration = cur->duration_ms;
@@ -1619,7 +1166,7 @@ static int play_start_failed(const track_state_t *st){
             pos_at = now;
             pos_seq = st->pos_seq;
             position = st->position_ms;
-            generation = st->player_generation;
+            generation = st->player_instance;
             transport = ipc_transport_seq();
             token = st->playback_token;
             duration = st->duration_ms;
@@ -1628,7 +1175,7 @@ static int play_start_failed(const track_state_t *st){
     }
 
     /* A new player or another transport attempt supersedes this request. */
-    if(generation != st->player_generation ||
+    if(generation != st->player_instance ||
        transport != ipc_transport_seq()){
         g_play_pending = 0;
         active = 0;
@@ -1737,160 +1284,6 @@ static int play_start_failed(const track_state_t *st){
     return 1;
 }
 /* End playback-start monitor. */
-/* Startup route recovery and V2.40 LOCALPLAYER work-mode one-shot. The latter's mechanism (RE'd from mq_player_v240):
- *  - v2.40's player needs 0666(local route)+0657(LOCALPLAYER work-mode) set at runtime or local
- *    start_local fails ("work mode NULL"/NO_WORK_MODE -> g_fiio_local null). Protocol 0657=8 maps to
- *    internal work-mode 1 (LOCALPLAYER); 0 = NO_WORK_MODE.
- *  - WHY an early 0657 doesn't stick: an async mode-control thread (player 0x4dca64) keeps running AFTER
- *    the /player command server goes live. It runs ~50x100ms polls + up to ~2s of 1s sleeps (~7s worst
- *    case), calling close_player() (resets work-mode to 0) and re-initing per late hardware state - which
- *    clobbers any 0657 sent inside that window. So we wait past it (~8s guard; we use 9s) before sending.
- *  - WHY there is no a607 oracle on /ui: the 0607 query handler writes its a607 reply to a SEPARATE
- *    fd-based transport (mask 0, raw write to fd 0x83e5f4), never the /ui mqueue - so we can never see it.
- *    There is NO deterministic /ui frame meaning "late init finished". a1=needs playback, a2=server
- *    liveness only, a714=volume. The best anchor is: solicit a2 with 02020008, then a fixed settle delay.
- *  - IDLE PLAYER IS SILENT: a fresh cold-boot player emits NOTHING unsolicited, so ipc_rx_frames() stays
- *    0 forever unless we poke it. We therefore actively send 02020008 every tick until it answers (a2),
- *    anchor the settle timer on that first response. The V2.40/V2.57 local init then sends 0666+0657
- *    once per player generation; the saved-BT-route check runs only once per UI process. Both require
- *    Local source + analog output intent (g_route_mac empty), and wait while a play is pending. */
-static unsigned g_play_sent_gen = 0xFFFFFFFFu;   /* ipc generation in which a play command was last sent: that generation's one-shot is moot */
-static uint32_t g_play_sent_at;
-static unsigned g_play_track_seen_gen = 0xFFFFFFFFu;
-void ui_note_transport_sent(void){ g_play_sent_gen = ipc_generation(); g_play_sent_at = lv_tick_get(); }
-/* A sent play can precede its first track reply. A loaded track may still be paused,
- * so wait for the player to unload it and for the last play evidence to age out. */
-static int startup_playback_busy(unsigned gen){
-    if(g_playing) g_play_track_seen_gen = gen;
-    if(g_play_pending || g_playing || book_session_active()) return 1;
-    if(g_play_sent_gen != gen) return 0;
-    track_state_t st; ipc_get_state(&st);
-    if(st.have_track) g_play_track_seen_gen = gen;
-    return st.have_track || g_play_track_seen_gen != gen || lv_tick_elaps(g_play_sent_at) < 10000;
-}
-/* Read age once per generation. An old idle player can skip local-init settling,
- * but route recovery still requires a current reply and replacement settling. */
-static int startup_player_old(void){
-    long pid, hz = sysconf(_SC_CLK_TCK);
-    unsigned long long start;
-    if(hz <= 0 || route_player_identity(&pid, &start) < 0) return 0;
-    char path[sizeof ROUTE_PROC_ROOT + 16];
-    if(snprintf(path, sizeof path, "%s/uptime", ROUTE_PROC_ROOT) >= (int)sizeof path) return 0;
-    FILE *f = fopen(path, "r");
-    if(!f) return 0;
-    double uptime = 0;
-    int ok = fscanf(f, "%lf", &uptime) == 1;
-    fclose(f);
-    return ok && uptime >= 0 && uptime - (double)start / (double)hz >= 12.0;
-}
-/* 0666 updates the player's live output first; its saved OUT_DEV is written by the
- * player's bulk config save. There is no verified /ui reply for the live out_dev.
- * A saved BT route is therefore a conservative startup recovery hint. */
-static int startup_saved_bt_route(void){
-    char buf[32] = {0};
-    ui_run_cap_bounded("sqlite3 /usr/data/fiio/db/sysconfig.db 'SELECT OUT_DEV FROM SYSCONFIG WHERE ID=1' 2>/dev/null",
-                       buf, sizeof buf, 250);
-    if(!strcmp(buf, "2\n") || !strcmp(buf, "2")) return 1;
-    if(!strcmp(buf, "6\n") || !strcmp(buf, "6") || !strcmp(buf, "4\n") || !strcmp(buf, "4")) return 0;
-    return -1;   /* absent, locked, malformed or unreadable: do not infer BT */
-}
-/* Same A2DP PCM evidence as bt.c's auto-route poll. The completion marker makes
- * an empty successful list distinct from a failed or timed-out bluealsa probe. */
-static int startup_connected_sink(const char *mac){
-    if(cfg_get_int("bt_on", 0) != 1) return 0;   /* Bluetooth is off by user intent: no auto-route */
-    char buf[2048] = {0};
-    ui_run_cap_bounded("if ! pidof bluealsa >/dev/null 2>&1; then echo DISKOS_NO_BLUEALSA; "
-                       "else bluealsa-cli list-pcms 2>/dev/null && printf '\\nDISKOS_LIST_DONE\\n'; fi",
-                       buf, sizeof buf, 250);
-    if(strstr(buf, "DISKOS_NO_BLUEALSA\n")) return 0;
-    if(!strstr(buf, "DISKOS_LIST_DONE\n")) return -1;
-    if(!mac || !mac[0]) return strstr(buf, "a2dpsrc") != NULL;
-    char needle[32]; snprintf(needle, sizeof needle, "dev_%s/a2dpsrc", mac);
-    for(char *p=needle; *p; p++) if(*p == ':') *p = '_';
-    route_uppercase(needle, needle, sizeof needle);
-    route_uppercase(buf, buf, sizeof buf);
-    return strstr(buf, needle) != NULL;
-}
-/* 1 = this generation needs no other local init, 0 = normal init may continue,
- * -1 = evidence or a route send is pending. An inconclusive sink probe waits
- * at least five seconds before another shell probe on this generation. */
-static int startup_route_reconcile(void){
-    static unsigned sink_retry_gen = 0xFFFFFFFFu;
-    static uint32_t sink_retry_at = 0;
-    if(g_startup_route_checked) return 0;
-    unsigned gen;
-    if(!ipc_confirmed_snapshot(&gen) || ui_player_settling()) return -1;
-    if(modes_output_route() != OUT_INTERNAL || cfg_get_int("spdif", 0)){
-        g_startup_route_checked = 1; return 0;
-    }
-    if(sink_retry_gen == gen && lv_tick_elaps(sink_retry_at) < 5000) return -1;
-    /* A route from this live player is newer than its bulk-saved OUT_DEV. */
-    if(!g_route_mac[0]){
-        int saved_bt = startup_saved_bt_route();
-        if(saved_bt <= 0){ g_startup_route_checked = 1; return 0; }
-    }
-    int sink = startup_connected_sink(g_route_mac);
-    if(sink < 0){ sink_retry_gen = gen; sink_retry_at = lv_tick_get(); return -1; }
-    if(sink){ g_startup_route_checked = 1; return 1; }   /* the auto-route poll owns this speaker */
-    if(route_analog(1) < 0) return -1;
-    g_startup_route_checked = 1;
-    return 1;   /* route_analog logs the single recovery line */
-}
-static void localplayer_workmode_cb(lv_timer_t *t){
-    /* These commands drive the player and its USB/card ownership, so they need the same admission as any
-     * other card access: a qualified launch verdict, SD not held, no decoder fault. A pending verdict waits
-     * (the timer retries), it is never a reason to go ahead. */
-    if(!ui_local_playback_allowed()) return;
-    static unsigned done_gen = 0xFFFFFFFFu;   /* generation whose one-shot we've already sent */
-    static unsigned wait_gen = 0xFFFFFFFFu;   /* generation whose settle timer is running */
-    static uint32_t wait_start = 0;
-    static unsigned age_gen = 0xFFFFFFFFu;
-    static int player_old = 0;
-    if(ui_get_source_mode() != 0) return;                     /* only while Local source */
-    if(modes_output_busy()) return;                            /* an output switch owns 0666/0642/0657 right now */
-    unsigned gen = ipc_generation();
-    if(age_gen != gen){ age_gen = gen; player_old = !g_startup_route_checked && startup_player_old(); }
-    if(!g_startup_route_checked && player_old && ipc_confirmed_snapshot(&gen) && !ui_player_settling() && !startup_playback_busy(gen)){
-        int startup = startup_route_reconcile();
-        if(startup > 0) done_gen = gen;
-        if(startup > 0 && !fw_needs_localplayer_init()){
-            lv_timer_del(t); return;
-        }
-    }
-    if(g_play_pending || book_session_active()) return;
-    if(gen == done_gen) return;
-    if(!ipc_confirmed_snapshot(&gen)){ ipc_send_probe("02020008"); return; }
-    uint32_t now = lv_tick_get();
-    if(wait_gen != gen){ wait_gen = gen; wait_start = now; return; }   /* first response this gen -> start settle */
-    if(now - wait_start < 9000) return;                        /* settle past the ~7s mode-control-thread window */
-    if(!g_startup_route_checked && startup_playback_busy(gen)) return;
-    int startup = startup_route_reconcile();
-    if(startup < 0) return;
-    if(g_route_mac[0]){ done_gen = gen; if(!fw_needs_localplayer_init()) lv_timer_del(t); return; }
-    if(!fw_needs_localplayer_init()){ lv_timer_del(t); return; }
-    if(startup > 0){ done_gen = gen; return; }
-    if(g_play_sent_gen == gen){                                /* a play was started this generation (the play path sends its own preamble while stopped): g_playing follows only once the player reports the track, so never risk 0666 mid-stream */
-        done_gen = gen;
-        fprintf(stderr,"v2.40 workmode: local-init skipped, play already sent (gen %u)\n", gen); fflush(stderr);
-        return;
-    }
-    /* Already PLAYING locally (the user started a song inside the settle window): the player has a working local
-     * route and work-mode and the card isn't exported - exactly the state this one-shot exists to establish - and
-     * 0666 would close the stream mid-song (seen live on V2.57). Count this generation as initialised. */
-    if(g_playing){
-        done_gen = gen;
-        fprintf(stderr,"v2.40 workmode: local-init skipped, already playing (gen %u)\n", gen); fflush(stderr);
-        return;
-    }
-    /* USB gadget selector -> Local/no-export: tears down any mass-storage the stock player
-     * auto-bound from a persisted WORK_MODE=4 (recovers hand-deploys + belt-and-suspenders for
-     * the flashed boot gate). Sent past the settle window so the async mode-control thread can't
-     * clobber it. If the send fails, DON'T mark this generation done - retry next tick rather than
-     * leave the card exported. */
-    if(modes_local_init(1) < 0) return;   /* 0642 gadget (0 = none, 5 = USB host), 0666 local route (6 internal, 4 SPDIF, 3 USB audio: (re)inits the local device, creates g_fiio_local), 0657 8 LOCALPLAYER work-mode (fixes NO_WORK_MODE) */
-    done_gen = gen;   /* only mark this generation initialised once ALL three commands were actually sent */
-    fprintf(stderr,"v2.40 workmode: local-init sent once (gen %u)\n", gen); fflush(stderr);
-}
 void ui_rescan_library(void){
     if(scanner_active()){ if(scanner_cancel()) ui_toast("Cancelling scan..."); return; }   /* refused once it is committing: completion reports */   /* the row reads "Stop" while a scan runs */
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback to scan"); return; }
@@ -1971,25 +1364,55 @@ static void scanner_poll(lv_timer_t *t){
         ui_toast(b);
     } else library_poll_changes();
 }
-static unsigned g_play_last_gen = 0xFFFFFFFFu; static uint32_t g_play_last_tick = 0;   /* generation + tick of the last play command we sent */
-/* Is a previous play still starting? g_playing follows only once the player reports the track (up to ~2 s), and 0666 under it releases the local output. */
-static int play_recent(void){ return g_play_pending || (g_play_last_gen == ipc_generation() && lv_tick_elaps(g_play_last_tick) < 10000); }
-static void play_note_sent(void){ g_play_last_gen = ipc_generation(); g_play_last_tick = lv_tick_get(); }
 /* Authoritative play state: what the player reports (ipc_local_playing), taken into g_playing by
  * the main loop. Exposed so lastfm/route logic share ONE source of truth. */
 int ui_is_playing(void){ return g_playing; }
 /* Slice 15a: the play state the Now Playing / Home / saver surfaces draw: the facade's while casting, else exactly g_playing. */
 int ui_view_playing(void){ const pb_snapshot *f = playback_effective(); return f->source != PB_SRC_LOCAL ? f->v.playing != 0 : g_playing; }
-/* Admission for an output-route switch (modes.c): NULL = go, else the toast reason. 0666 re-inits the output, so never
- * during a start-up, a book, another source, a BT route or the post-restart settle. */
-const char *ui_output_blocked(void){
-    if(!ui_local_playback_allowed()) return "SD card is not ready";
-    if(ui_get_source_mode() != 0) return "Return to local playback first";
-    if(g_route_mac[0]) return "Bluetooth output is active";
-    if(ui_player_settling()) return "Player is starting - try again";
-    if(play_recent()) return "Player is busy - try again";
-    if(book_session_active()) return "Stop the audiobook first";
-    return NULL;
+/* ---- Audio output: the output router (src/legacy/output.h) owns where the audio goes and every move between outputs.
+ * This is its glue to the rest of the UI: what holds it back, what it reports, and the user's choices with their toasts. */
+static diskos_output_blocker output_blocker(void){
+    if(!ui_local_playback_allowed()) return DISKOS_OUTPUT_CARD_NOT_READY;
+    if(ui_get_source_mode() != 0) return DISKOS_OUTPUT_OTHER_SOURCE;
+    if(book_session_active()) return DISKOS_OUTPUT_AUDIOBOOK;
+    if(ui_cast_session_active()) return DISKOS_OUTPUT_CASTING;
+    return DISKOS_OUTPUT_UNBLOCKED;
+}
+static void output_outcome(diskos_output_outcome outcome, diskos_output_kind output){
+    (void)output;
+    switch(outcome){
+        case DISKOS_OUTPUT_SWITCHED:      break;
+        case DISKOS_OUTPUT_RETRYING:      ui_toast("Output busy - retrying"); break;
+        case DISKOS_OUTPUT_FAILED:        ui_toast("Couldn't switch output"); break;
+        case DISKOS_OUTPUT_NO_USB_DAC:    ui_toast("USB DAC not found"); break;
+        case DISKOS_OUTPUT_RECOVERING:    ui_toast("Output state uncertain - recovering"); break;
+        case DISKOS_OUTPUT_RESUME_FAILED: ui_toast("Couldn't resume - press play"); break;
+    }
+    modes_output_changed();   /* the source picker and Settings show the output as it is now */
+}
+int ui_output_select(int output, const char *mac){
+    diskos_output_selection s = diskos_output_select((diskos_output_kind)output, mac);
+    switch(s){
+        case DISKOS_OUTPUT_SELECTED: break;
+        case DISKOS_OUTPUT_REFUSED_CARD_NOT_READY: ui_toast("SD card is not ready"); return -1;
+        case DISKOS_OUTPUT_REFUSED_OTHER_SOURCE:   ui_toast("Return to local playback first"); return -1;
+        case DISKOS_OUTPUT_REFUSED_AUDIOBOOK:      ui_toast("Stop the audiobook first"); return -1;
+        case DISKOS_OUTPUT_REFUSED_NO_USB_DAC:     ui_toast("Connect a USB DAC first"); return -1;
+        case DISKOS_OUTPUT_REFUSED_INVALID:        ui_toast("Couldn't switch output"); return -1;
+    }
+    /* 16b: a wired output chosen during a Cast session ends the session; the router waits for it to go */
+    if(output != DISKOS_OUTPUT_BLUETOOTH && ui_cast_session_active()){
+        ui_cast_end_request();
+        ui_toast("Stopping beam to switch output");
+    }
+    modes_output_changed();
+    return 0;
+}
+/* The internal DAC is wanted, and the player is on it or about to be (a just-started player's output is unknown). */
+static int output_on_internal_dac(void){
+    diskos_output_kind applied = diskos_output_applied(NULL);
+    return diskos_output_desired(NULL) == DISKOS_OUTPUT_INTERNAL_DAC &&
+           (applied == DISKOS_OUTPUT_INTERNAL_DAC || applied == DISKOS_OUTPUT_UNKNOWN);
 }
 
 /* Optimistic play/pause icon hint for remote playback (Cast, AirPlay sending), whose state arrives late:
@@ -2030,10 +1453,11 @@ static uint32_t g_book_noadopt_until = 0;  /* after an explicit play, don't let 
 /* build_idx: the 0100 start index sent when the list is (re)built; -1 = the 0-based position (pos1-1). A jump
  * inside the already-loaded list always uses pos1. */
 /* Returns 1 if the play frame was sent, 0 if it was refused or the send failed. */
-static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_idx){
+/* start_ms: continue the first track from there (diskos_playback_play_list), 0 for its start. */
+static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_idx, uint32_t start_ms){
     if(cast_on() && build_idx < 0 && cast_list_type(list_type)) return cast_select_list(list_type, name, pos1, 0);   /* Cast 14e2 */
     if(local_start_refuse()) return 0;   /* Cast 14a: first, before any other check, write or frame */
-    if(modes_output_busy()){ ui_toast("Switching output - try again"); return 0; }   /* an output switch (0666 re-init) is in flight or recovering */
+    if(diskos_output_busy()){ ui_toast("Switching output - try again"); return 0; }   /* an output switch (0666 re-init) is in flight or recovering */
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback first"); return 0; }
     /* A music list play (not a custom playlist, type 5) makes the stock player build its queue from the
      * UNFILTERED SONG table. If a .m4b hasn't migrated out yet, it would leak into that queue - so ensure
@@ -2049,34 +1473,15 @@ static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_
     if(pos1 < 1) pos1 = 1;
     if(!name) name = "";
     if(strlen(name) >= 380){ ui_toast("Couldn't play that list"); return 0; }   /* the frame must hold the WHOLE name (a type-7 artist+album name is up to ~2x160 chars) */
-    char f[420];
     int sent = 0;
-    ui_note_transport_sent();
-    /* V2.40 local-play preamble (live-confirmed on device 2026-09-01). The player's mode-control
-     * thread drifts the output route to BT (out_dev=2) and resets the work-mode to NULL when idle,
-     * so a play from stopped fails: it hangs ~15s trying to open a BT PCM ("Failed to get BT device
-     * MAC"), or reports "work mode NULL". Re-assert the stock local-play preamble TIGHT before the
-     * play command - local output route, then LOCALPLAYER work-mode - exactly as stock mq_ui does on
-     * a local-play transition (the player processes /player frames serially, so 0666's close_player
-     * runs, 0657 re-sets the mode, then 0100 plays with output=local + mode=LOCALPLAYER). Gated:
-     * v2.40 only (V2.09/V2.28 don't drift, and 0666's close_player could disturb their working path);
-     * Local source + analog output only (never a BT A2DP route); and only while STOPPED (an active
-     * track-jump already has the route+mode correct, and 0666 would gap the audio). */
-    /* Not while a previous play is still starting (g_playing follows only once the player reports the track): 0666 releases the local
-     * output under it (seen live). Only the idle / long-gap case needs the preamble. */
-    int recent_play = play_recent();
-    if(fw_needs_localplayer_init() && ui_get_source_mode() == 0 && !g_route_mac[0] && !g_playing && !recent_play){
-        modes_local_init(0);   /* 0666 local route (6 internal, 4 SPDIF, 3 + 0642 5 USB audio), then 0657 8 LOCALPLAYER work-mode */
-    }
+    /* The playback controller sends the play (0100); from idle, the output router's play preamble goes first: an idle
+     * player drifts its output and drops its work mode (services/output/route_plan.hpp, plan_play_preamble). */
     {   /* always rebuild: the player's queue can change under us (Play Through Folders), so no type-0 shortcut */
-        int datalen = 8 + (int)strlen(name);          /* f1(4)+f2(4)+name */
-        snprintf(f, sizeof f, "0100%04X%04X%04X%s",
-                 8 + datalen, (build_idx >= 0 ? build_idx : pos1-1) & 0xFFFF, list_type & 0xFFFF, name);
+        unsigned position = (unsigned)(build_idx >= 0 ? build_idx : pos1 - 1);
         track_state_t cur; ipc_get_state(&cur);   /* snapshot BEFORE the send: the player's reply may already update the state */
-        if(ipc_send_cmd(f) == 0){
+        if(diskos_playback_play_list(list_type, position, name, start_ms) == 0){
             sent = 1;
-            play_note_sent();
-            fprintf(stderr,"play(build) type=%d pos=%d name='%s' -> %s\n", list_type, pos1, name, f);
+            fprintf(stderr,"play(build) type=%d pos=%u name='%s'\n", list_type, position, name);
             /* rebuild can take seconds - acknowledge + arm completion/timeout.
              * Capture the current track path so we clear only on a REAL track change
              * (a1 position frames from the old track must not falsely clear it). */
@@ -2089,7 +1494,7 @@ static int ui_play_list_ex(int list_type, const char *name, int pos1, int build_
     fflush(stderr);
     return sent;
 }
-int ui_play_list(int list_type, const char *name, int pos1){ return ui_play_list_ex(list_type, name, pos1, -1); }
+int ui_play_list(int list_type, const char *name, int pos1){ return ui_play_list_ex(list_type, name, pos1, -1, 0); }
 /* V2.57 favourites: play stock's type-6 queue from the favourite at 1-based row pos1 of the stock-ordered list
  * (mdb_favorites stock_order), whose MY_LOVE.ID is love_id. The build starts at that ID (the player's contract);
  * a jump inside the loaded favourites queue uses the row. */
@@ -2100,7 +1505,7 @@ int ui_play_favorite(int love_id, int pos1){
     /* prove this exact track starts before caching scope; a row gone since the list filled would only be refused */
     char lpath[256];
     if(!mdb_love_path(love_id, lpath, sizeof lpath)){ ui_toast("Couldn't find that song"); return 0; }
-    return ui_play_list_ex(6, "", pos1, love_id);
+    return ui_play_list_ex(6, "", pos1, love_id, 0);
 }
 /* Play a custom playlist (list_type 5) by its id, from 1-based track pos. */
 int ui_play_playlist(long pid, int pos){
@@ -2115,7 +1520,6 @@ int ui_play_playlist(long pid, int pos){
     if(n <= 0){ ui_toast("Couldn't prepare playlist - try again"); return 0; }
     g_book_single_mode = 0;                                 /* not a book */
     send_play_mode(cfg_get_int("work_mode", 0));  /* set the music play-mode explicitly - a song-row tap in a playlist does not, and a prior book left Single */
-    if(ui_get_source_mode() == 0 && !g_route_mac[0]) ipc_send_cmd("0657000C0008");  /* local work-mode: a type-5 play from an idle player needs it (same as a book) */
     if(pos < 1) pos = 1;
     int ppos = mdb_reserved_slot_player_pos(pid, pos);      /* the tapped row in the player's read of the slot */
     if(ppos < 1){ ui_toast("Couldn't find that song"); return 0; }   /* never start a guessed, possibly different song */
@@ -2125,22 +1529,19 @@ int ui_play_playlist(long pid, int pos){
 /* Up Next: play the song at 1-based position ord1 of the CURRENT queue (LIST_SONG_0 ID order - the same index in
  * shuffle, device-verified). A type-0 jump: no rebuild, so the loaded scope stays valid. Refused while a rebuild is
  * pending (the list being jumped in may not be the one on screen). Same local-play preamble rule as ui_play_list. */
-int ui_queue_jump(int ord1){
-    if(local_start_refuse()) return -1;   /* Cast 14a: before modes_local_init and the 0100 jump. Up Next while casting never gets here (14f: upnext.c posts a JUMP with cw_jump); this stays the guard against local audio on top of the receiver */
-    if(modes_output_busy()){ ui_toast("Switching output - try again"); return -1; }
+static int queue_jump_at(int ord1, uint32_t start_ms);
+int ui_queue_jump(int ord1){ return queue_jump_at(ord1, 0); }
+/* As ui_queue_jump, continuing the track from start_ms (0 for its start). */
+static int queue_jump_at(int ord1, uint32_t start_ms){
+    if(local_start_refuse()) return -1;   /* Cast 14a: before the play preamble and the 0100 jump. Up Next while casting never gets here (14f: upnext.c posts a JUMP with cw_jump); this stays the guard against local audio on top of the receiver */
+    if(diskos_output_busy()){ ui_toast("Switching output - try again"); return -1; }
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback first"); return -1; }
     if(g_play_pending){ ui_toast("Queue is updating - try again"); return -1; }
     if(ord1 < 1 || ord1 > 0xFFFF) return -1;
     ui_cancel_book_resume();
     ui_disarm_book_eoc();
-    if(fw_needs_localplayer_init() && ui_get_source_mode() == 0 && !g_route_mac[0] && !g_playing && !play_recent()){
-        modes_local_init(0);   /* 0666 local route (6 internal, 4 SPDIF, 3 + 0642 5 USB audio), then 0657 8 LOCALPLAYER work-mode */
-    }
-    ui_note_transport_sent();
-    char f[24]; snprintf(f, sizeof f, "0100%04X%04X0000", 16, (ord1 - 1) & 0xFFFF);
-    int rc = ipc_send_cmd(f);
-    if(rc == 0) play_note_sent();
-    fprintf(stderr, "queue jump pos=%d -> %s (rc=%d)\n", ord1, f, rc); fflush(stderr);
+    int rc = diskos_playback_play_list(0, (unsigned)(ord1 - 1), NULL, start_ms);   /* type 0: a row of the current queue */
+    fprintf(stderr, "queue jump pos=%d (rc=%d)\n", ord1, rc); fflush(stderr);
     return rc;
 }
 /* Play `song_id` through a play plan (musicdb mdb_album_plan): a stock queue (type 3/7) when the plan found one that
@@ -2157,13 +1558,12 @@ int ui_play_plan(mdb_plan_t *plan, int song_id){
         if(pos < 1){ ui_toast("Couldn't find that song"); return 0; }
         g_book_single_mode = 0;
         send_play_mode(cfg_get_int("work_mode", 0));
-        if(ui_get_source_mode() == 0 && !g_route_mac[0]) ipc_send_cmd("0657000C0008");
-        return ui_play_list_ex(5, "", pos, -1);
+        return ui_play_list_ex(5, "", pos, -1, 0);
     }
     if(plan->list_type != 2 && plan->list_type != 3 && plan->list_type != 7){ ui_toast("Couldn't play that list"); return 0; }
     int pos = mdb_plan_pos(plan, song_id);
     if(pos < 1){ ui_toast("Couldn't find that song"); return 0; }
-    return ui_play_list_ex(plan->list_type, plan->name, pos, -1);
+    return ui_play_list_ex(plan->list_type, plan->name, pos, -1, 0);
 }
 /* Favourite/unfavourite the CURRENT song (0104: 1=love -> MY_LOVE, 0=unlove). */
 /* 14e2b: 0104 acts on the LOCAL player's current song, which is not the Cast track the Disc shows. The only id-based favourites write that exists is
@@ -2311,7 +1711,7 @@ void ui_book_user_seeked(long target_ms){
 /* Play an audiobook (v1: single-file .m4b) and resume at resume_ms (0 = start). */
 int ui_play_book(const char *path, long resume_ms){
     if(local_start_refuse()) return 0;   /* Cast 14a (owner decision 77): audiobooks are refused while casting; before the slot write, 0657 and 0102 */
-    if(modes_output_busy()){ ui_toast("Switching output - try again"); return 0; }
+    if(diskos_output_busy()){ ui_toast("Switching output - try again"); return 0; }
     if(!ui_local_playback_allowed()){ ui_toast("Return to local playback first"); return 0; }
     if(!path || !*path) return 0;
     /* The path must round-trip the player's 256-byte track path AND survive the a2 frame's JSON
@@ -2325,15 +1725,8 @@ int ui_play_book(const char *path, long resume_ms){
      * rolling into the stale alternate buffer. Set the slot to this book, force Single mode (transient -
      * the next music play restores the user's mode via play_list_mode), then play seq 0. */
     if(!mdb_reserved_slot_set(path)){ ui_toast("Couldn't start book"); return 0; }
-    /* A type-5 play from an idle player can leave the work-mode NULL (player logs NO_WORK_MODE and never
-     * starts). Re-assert the local-play route + work-mode first - device-verified this is what a book
-     * play needs; ui_play_list's own preamble is gated to V2.40, but a book must start on V2.09/V2.28 too.
-     * Local analog route only (never a BT A2DP path). */
-    if(ui_get_source_mode() == 0 && !g_route_mac[0]){
-        ipc_send_cmd("0657000C0008");                      /* LOCALPLAYER work-mode (fixes NO_WORK_MODE). NOT 0666:
-                                                            * we're already on the local route (gated above), and a
-                                                            * redundant out_dev re-init pauses the stream ~1.5s in. */
-    }
+    /* A type-5 play from an idle player needs the local work-mode (else NO_WORK_MODE, never starts): ui_play_list
+     * sends the output router's play preamble, as for every play from idle. */
     if(send_play_mode(4) != 0){ ui_toast("Couldn't start book"); return 0; }   /* Single play-mode is REQUIRED for clean EOF isolation; if it can't be set, don't start the book unguarded */
     g_book_single_mode = 1;                                 /* remember to restore the music mode on the next music play */
     if(!ui_play_list(5, "", 1)) return 0;                   /* frame 0100001000000005 -> reserved slot (seq 0): an isolated 1-item queue; not sent -> no session */
@@ -2354,10 +1747,16 @@ int ui_play_book(const char *path, long resume_ms){
 static int book_track_evidence(unsigned *gen){
     if(!ipc_confirmed_snapshot(gen)) return 0;
     track_state_t st; ipc_get_state(&st);
-    return st.have_track && st.player_confirmed && !st.provisional && st.player_generation == *gen;
+    return st.have_track && st.player_confirmed && !st.provisional && st.player_instance == *gen;
 }
 
 /* ~400ms: confirm the book loaded, apply resume once, then checkpoint + detect finish. */
+/* An automatic seek for `gen` only (ipc_send_automatic): 0 sent, else not (retried by the caller). */
+static int book_seek(long ms, unsigned gen){
+    char f[32]; if(ms < 0) ms = 0;
+    snprintf(f, sizeof f, "01030010%08lX", (unsigned long)ms);
+    return ipc_send_automatic(f, gen);
+}
 static void book_tick(lv_timer_t *t){
     (void)t;
     if(!ui_local_playback_allowed()) return;
@@ -2368,7 +1767,7 @@ static void book_tick(lv_timer_t *t){
             int expired = !g_book_confirmed &&
                 (int32_t)(lv_tick_get() - g_book_deadline) >= 0;
             int ended = g_book_confirmed && ipc_confirmed_snapshot(&gen) &&
-                st.player_generation == gen && !st.have_track;
+                st.player_instance == gen && !st.have_track;
             if(expired || ended){
                 g_book_ckpt_ok = 0;
                 ui_cancel_book_resume();
@@ -2425,7 +1824,7 @@ static void book_tick(lv_timer_t *t){
             long rt = g_book_resume_ms;
             if(st.duration_ms > 0 && rt > st.duration_ms - 2000){ rt = st.duration_ms - 2000; if(rt < 0) rt = 0; }  /* clamp: a replaced/shorter book must not get an out-of-range seek */
             g_book_resume_target = rt;                          /* checkpointing waits until a position confirms the (clamped) target */
-            if(route_seek(rt, 1, gen) != 0) return;                     /* send failed -> retry next tick, stay PENDING (never mark done without a successful seek, or checkpoint could save ~0 over the bookmark) */
+            if(book_seek(rt, gen) != 0) return;                     /* send failed -> retry next tick, stay PENDING (never mark done without a successful seek, or checkpoint could save ~0 over the bookmark) */
         }
         g_book_resume_done = 1;
         g_book_last_save = now;                             /* first checkpoint ~10s from now, after the seek settles */
@@ -2440,7 +1839,7 @@ static void book_tick(lv_timer_t *t){
         if(g_book_was_playing && !np){ g_book_pause_tick = now; }                 /* just paused */
         else if(!g_book_was_playing && np && g_book_pause_tick){                  /* just resumed */
             long rw = ui_smart_rewind_ms((long)(lv_tick_elaps(g_book_pause_tick) / 1000u));  /* unsigned divide: no negative on a very long pause */
-            if(rw > 0){ long t = st.position_ms - rw; if(t < 0) t = 0; if(route_seek(t, 1, gen) != 0) return; }
+            if(rw > 0){ long t = st.position_ms - rw; if(t < 0) t = 0; if(book_seek(t, gen) != 0) return; }
             g_book_pause_tick = 0;
         }
         g_book_was_playing = np;
@@ -2525,9 +1924,6 @@ void ui_set_workmode(int mode){
 /* sleep timer: when armed, pause playback once the interval elapses (duration mode) or once the
  * current chapter ends (end-of-chapter mode, for audiobooks). The two modes are mutually exclusive. */
 static uint32_t g_sleep_start=0, g_sleep_ms=0;
-#ifdef DISKOS_TEST_BT_PREPARE
-static int bt_prepare_sleep_due(void){ return g_sleep_ms && lv_tick_elaps(g_sleep_start) >= g_sleep_ms; }
-#endif
 static long     g_sleep_eoc = -1;        /* >=0 = pause when the book position reaches this ms */
 static char     g_sleep_eoc_path[256];   /* the book the EOC target belongs to (disarm if the track changes) */
 static long     g_sleep_eoc_lastpos = -1; /* last position seen on the EOC book: if the track rolls over while this was near the target, the chapter completed -> fulfil the sleep instead of just disarming */
@@ -2613,6 +2009,7 @@ static void app_run(const char *exec){
                 }
                 killed = 1; break;
             }
+            diskos_output_tick();          /* the player's frames still reach the IPC state and the output router */
             usleep(200000);
         }
         if(!failed && !killed && WIFEXITED(status) && WEXITSTATUS(status) == 127) failed = 1;  /* exec failed */
@@ -2691,9 +2088,9 @@ static int run_bounded(char *const argv[], int timeout_ms);   /* fork+exec with 
 static void ipc_connect_retry_cb(lv_timer_t *t){
     if(ipc_start()==0){
         fprintf(stderr,"ipc connected (deferred)\n"); fflush(stderr);
-        /* NB: we no longer force SYSCONFIG.WORK_MODE here. A player restart bumps the IPC
-         * generation, so localplayer_workmode_cb re-asserts Local per generation (0642=no-export +
-         * 0666 route + 0657 LOCALPLAYER audio) once the new player settles. Forcing WORK_MODE
+        /* NB: we no longer force SYSCONFIG.WORK_MODE here. A new player's output is unknown to the
+         * output router, which re-establishes it (0666 route + 0642 no-export + 0657 LOCALPLAYER audio)
+         * once the player settles. Forcing WORK_MODE
          * on every reconnect would clobber a deliberate per-session USB-Storage/USB-DAC pick;
          * the persisted default is set once at boot + by the flashed pre-launch gate. */
         ipc_send_probe("02020008");   /* request live track once connected (silent) */
@@ -3194,7 +2591,7 @@ int ui_ota_idle(void){
         g_sd_phase == SD_LOCAL && !g_sd_hold &&
         atomic_load(&g_sd_writable) && !atomic_load(&g_sd_quiesce) &&
         atomic_load(&g_launch_verdict) == 1 && !sd_exported_to_host() &&
-        !kbinput_active() && !ui_np_overlay_active() && !modes_output_busy() &&
+        !kbinput_active() && !ui_np_overlay_active() && !diskos_output_busy() &&
         (!g_touch || lv_indev_get_state(g_touch) != LV_INDEV_STATE_PRESSED) &&
         !lv_anim_count_running() &&
         (scr == SCR_HOME || scr == SCR_SETTINGS || scr == SCR_SETLIST || scr == SCR_SETTING_DETAIL);
@@ -3769,14 +3166,11 @@ int ui_theme_reload(const char *screen){
     return -1;
 }
 static void player_reconnected(void){
-    unsigned gen = ipc_generation();
+    unsigned gen = ipc_instance();
     if(g_audio_armed && gen == g_audio_gen) return;
-    /* Arm the post-restart settle window so BT routing (and the v2.40 local-init) wait out the
-     * player's ~7s late-init before sending an output route that it could otherwise overwrite. */
-    g_settle_armed = 1; g_settle_gen = gen; g_settle_started = 0;
     /* A player restart stopped the book (the fresh player is idle) while our session is still set -
      * and a stale book-path in the reconnected state could keep book_tick treating it as playing,
-     * which suppresses the local re-init (localplayer_workmode_cb bails under an active book) and wedges.
+     * which holds back the output router's re-init (it waits while an audiobook runs) and wedges.
      * END the session WITHOUT flushing: the reconnected state can carry the restarted player's
      * shallow replay position (a valid path + fresh seq, but from the NEW instance), and saving that
      * would clobber a deep bookmark. So force g_book_ckpt_ok=0 before the cancel - BOOK_PROGRESS
@@ -3788,12 +3182,7 @@ static void player_reconnected(void){
         ui_cancel_book_resume();
         g_book_noadopt_until = lv_tick_get() + 4000;
     }
-    /* the fresh player defaults to local/analog output, so our "routed to X" cache is stale: clear it
-     * before recovering the still-connected speaker
-     * via the (settle-deferred) auto-route poll. */
-    g_route_mac[0] = 0;
-    route_state_remove();
-    bt_notify_player_restart();
+    bt_notify_player_restart();   /* the router re-routes the still-connected speaker once the new player settles */
     ui_reapply_audio(gen);
 }
 
@@ -4053,7 +3442,7 @@ static int cast_pick(const char *host, int port, int replace, const ho_local *l,
     if(ui_receiver_in_use()){ ui_beam_refuse("Receiver source is in use. Select Local in Audio Source first."); return -1; }   /* a receiver started after the request was posted: refused before pausing, a session or any frame */
     if(aps_sender_active(&g_sender) || g_sender_pending) return ui_beam_refuse("Another output is busy. Stop beaming first.");
     if(AP_PROOF_BUSY()){ ui_beam_refuse("Proof is running - cancel it first"); return -1; }   /* one owner of the machine and of power_set_hold */
-    if(modes_output_busy()){ ui_beam_refuse("Another output is busy. Wait for the output switch, then try again."); return -1; }   /* 16b carry-over: an output switch is settling */
+    if(diskos_output_busy()){ ui_beam_refuse("Another output is busy. Wait for the output switch, then try again."); return -1; }   /* 16b carry-over: an output switch is settling */
     if(l && l->path && mdb_is_book_path(l->path)){ ui_beam_refuse("Audiobooks cannot be beamed. Choose a music track."); return -1; }   /* 15c, owner decision 77: a playing book is never handed off; before any session exists, so nothing leaks and the machine stays LOCAL */
     if(!ui_cast_keys_ok()){ ui_beam_refuse("Volume keys must use Adjust Volume to beam"); return -1; }   /* 16b: a stock key must not start local audio behind the receiver (controls.c); refused before any session exists */
     if(!cast_sd_open()) return ui_beam_refuse("SD card is not readable. Restart the Disc and check the card.");
@@ -4092,20 +3481,18 @@ int ui_cast_pick_request(const char *host, int port){
     snprintf(g_pickreq.host, sizeof g_pickreq.host, "%s", host); g_pickreq.port = port; g_pickreq.pend = 1;
     return 0;
 }
-/* A repeated filename is still a fresh load when a new complete A2 arrives. */
-static unsigned beam_local_report(void){
-    track_state_t report; unsigned serial, toggle, after;
-    (void)ipc_resume_snapshot(&report, &serial, &toggle, &after);
-    return serial;
-}
-static int beam_local_ready(unsigned before, const pb_view *view, int id){
-    track_state_t report; unsigned serial, toggle, after;
-    return ipc_resume_snapshot(&report, &serial, &toggle, &after) &&
-        serial != before && report.have_track && report.player_confirmed && !report.provisional && report.state == 0 &&
-        !strcmp(report.path, view->path) && (!id || (report.pos_id_valid && report.pos_id_raw == (uint64_t)id));
+/* Play the track a Beam left off on the Disc, from where it was: the queue row `id`/`ord` when it is still that
+ * track, else the track alone in the reserved slot. The playback controller seeks once it plays (play_list's start
+ * position). 1 if the play was sent. */
+static int beam_local_resume(int id, int ord, const pb_view *view){
+    uint32_t start = view->position_ms > 0 ? (uint32_t)view->position_ms : 0;
+    int started = id ? mdb_queue_row_valid(id, ord, view->path) == 1 && queue_jump_at(ord, start) == 0
+                     : mdb_reserved_slot_set(view->path) && ui_play_list_ex(5, "", 1, -1, start);
+    if(started) ui_np_hold_return(view->path, view->position_ms);
+    return started;
 }
 /* Explicit return only: sleep, reload and output teardown never start Local. */
-static struct { int pending, id, ord; unsigned generation, report_serial, attempt, stop_seq, transport; uint32_t deadline, probe_at; pb_view view; } g_cast_return;
+static struct { int pending, id, ord; unsigned generation, attempt, stop_seq; pb_view view; } g_cast_return;
 int ui_cast_return(void){
     if(playback_source() != PB_SRC_CAST || !g_cast_on || !g_ho_sess || g_cast_return.pending) return -1;
     cs_snapshot ss; cast_session_snapshot(g_ho_sess, &ss);
@@ -4116,7 +3503,7 @@ int ui_cast_return(void){
     if(cw_view_get(g_cw, &v) && v.src == CQ_SRC_LIVE && v.cnt){
         g_cast_return.id = v.id[0]; g_cast_return.ord = v.occ[0] + 1;
     }
-    g_cast_return.generation = ipc_generation();
+    g_cast_return.generation = ipc_instance();
     g_cast_return.attempt = ho_attempt(&g_ho);
     g_cast_return.stop_seq = ss.stop_seq + (ss.stop_state == CS_JOB_PENDING ? 0u : 1u);
     g_cast_return.pending = 1; ui_cast_end_request(); return 0;
@@ -4125,39 +3512,14 @@ static void cast_return_tick(const track_state_t *st){
     (void)st;
     if(!g_cast_return.pending) return;
     if(ho_attempt(&g_ho) != g_cast_return.attempt){ g_cast_return.pending = 0; return; }
-    if(ipc_generation() != g_cast_return.generation){ g_cast_return.pending = 0; ui_beam_refuse("Player restarted. Press play to continue."); return; }
-    if(g_cast_return.pending == 1){
-        if(ho_get(&g_ho) != HO_LOCAL) return;
-        g_cast_return.pending = 0;
-        cs_snapshot ss; cast_session_snapshot(g_ho_sess, &ss);
-        if(ss.stop_seq != g_cast_return.stop_seq || ss.stop_state != CS_JOB_OK){ ui_beam_refuse("Receiver stop was not confirmed. Stop it before playing on Disc."); return; }
-        if(!cast_sd_open() || ui_receiver_in_use() || local_start_refuse()){ ui_beam_refuse("Disc playback is unavailable. Check the card and Audio Source."); return; }
-        int started = g_cast_return.id
-            ? mdb_queue_row_valid(g_cast_return.id, g_cast_return.ord, g_cast_return.view.path) == 1 && ui_queue_jump(g_cast_return.ord) == 0
-            : mdb_reserved_slot_set(g_cast_return.view.path) && ui_play_list(5, "", 1);
-        if(!started){ ui_beam_refuse("Couldn't start playback. Choose the track on the Disc."); return; }
-        /* Stock handles 0100 before 0103; do not wait for an A2 poll. */
-        if(ui_seek_to(g_cast_return.view.position_ms) < 0) ui_beam_refuse("Couldn't seek. Try again on the Disc.");
-        else ui_np_hold_return(g_cast_return.view.path, g_cast_return.view.position_ms);
-        g_cast_return.pending = 2; g_cast_return.deadline = lv_tick_get() + 5000;
-        g_cast_return.report_serial = beam_local_report();
-        g_cast_return.transport = ipc_transport_seq();
-        /* The load may report paused before it begins playing. Ask for fresh
-         * state until ready; ordinary position frames do not refresh A2. */
-        ipc_send_probe("02020008"); g_cast_return.probe_at = lv_tick_get() + 250;
-        fprintf(stderr, "Cast return: position=%ld id=%d ord=%d report=%u\n", g_cast_return.view.position_ms, g_cast_return.id, g_cast_return.ord, g_cast_return.report_serial);
-    } else if(ipc_transport_seq() != g_cast_return.transport){
-        g_cast_return.pending = 0;
-    } else if((int32_t)(lv_tick_get() - g_cast_return.deadline) >= 0){
-        track_state_t report; unsigned serial, toggle, after;
-        int valid = ipc_resume_snapshot(&report, &serial, &toggle, &after);
-        fprintf(stderr, "Cast return timeout: report=%u before=%u valid=%d track=%d state=%d id=%d want=%d path=%d\n", serial, g_cast_return.report_serial, valid, report.have_track, report.state, report.pos_id, g_cast_return.id, !strcmp(report.path, g_cast_return.view.path));
-        g_cast_return.pending = 0; ui_beam_refuse("Couldn't resume playback. Choose the track on the Disc.");
-    } else if(beam_local_ready(g_cast_return.report_serial, &g_cast_return.view, g_cast_return.id)){
-        g_cast_return.pending = 0;
-    } else if((int32_t)(lv_tick_get() - g_cast_return.probe_at) >= 0){
-        ipc_send_probe("02020008"); g_cast_return.probe_at = lv_tick_get() + 250;
-    }
+    if(ipc_instance() != g_cast_return.generation){ g_cast_return.pending = 0; ui_beam_refuse("Player restarted. Press play to continue."); return; }
+    if(ho_get(&g_ho) != HO_LOCAL) return;
+    g_cast_return.pending = 0;
+    cs_snapshot ss; cast_session_snapshot(g_ho_sess, &ss);
+    if(ss.stop_seq != g_cast_return.stop_seq || ss.stop_state != CS_JOB_OK){ ui_beam_refuse("Receiver stop was not confirmed. Stop it before playing on Disc."); return; }
+    if(!cast_sd_open() || ui_receiver_in_use() || local_start_refuse()){ ui_beam_refuse("Disc playback is unavailable. Check the card and Audio Source."); return; }
+    if(!beam_local_resume(g_cast_return.id, g_cast_return.ord, &g_cast_return.view)){ ui_beam_refuse("Couldn't start playback. Choose the track on the Disc."); return; }
+    fprintf(stderr, "Cast return: position=%ld id=%d ord=%d\n", g_cast_return.view.position_ms, g_cast_return.id, g_cast_return.ord);
 }
 int ui_cast_phase(void){ if(g_sender_pending || aps_sender_active(&g_sender)) return g_sender.phase == APSS_RUNNING && ho_get(&g_ho) == HO_CASTING ? 2 : 1; return g_pickreq.pend ? 1 : ho_get(&g_ho) == HO_LOCAL ? 0 : ho_get(&g_ho) == HO_CASTING ? 2 : 1; }
 static void ho_tick(const track_state_t *st, int playing);
@@ -4167,7 +3529,10 @@ static void ho_tick(const track_state_t *st, int playing);
 static void cast_end_for_reload(void){
     if(ho_get(&g_ho) == HO_LOCAL) return;
     uint32_t t0 = lv_tick_get(); g_cast_end = 1;
-    while(ho_get(&g_ho) != HO_LOCAL && lv_tick_elaps(t0) < CAST_RELOAD_MS){ track_state_t st; ipc_get_state(&st); ho_tick(&st, g_playing); usleep(20000); }
+    while(ho_get(&g_ho) != HO_LOCAL && lv_tick_elaps(t0) < CAST_RELOAD_MS){
+        diskos_output_tick();   /* the player's frames reach the IPC state only through the main loop's tick */
+        track_state_t st; ipc_get_state(&st); ho_tick(&st, g_playing); usleep(20000);
+    }
 }
 #ifdef DISKOS_AIRPLAY_PROOF
 /* ---- AirPlay proof (slice P1). airplay_probe.c supervises a FAKE helper through g_ho (so the 16b routing, output and key guards read it) with
@@ -4188,7 +3553,7 @@ static int ap_x_busy(void){   /* the same test cast_pick uses before it replaces
 static void ap_x_say(ho_msg m){ ho_x_msg(NULL, m); }
 static const ap_cfg AP_CFG = { AIRPLAY_PROOF_HELPER, NULL, ap_x_pause, ap_x_busy, ap_x_say, NULL, 0, 0, 0, 0, modes_local_teardown };
 static ho_local ap_local(const track_state_t *st, int playing){
-    ho_local l = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_generation(), st->playback_token,
+    ho_local l = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_instance(), st->playback_token,
                    st->position_ms, st->duration_ms, st->path, st->title, st->artist, st->album, ui_get_source_mode() };
     return l;
 }
@@ -4206,7 +3571,7 @@ static void ap_btn_cb(lv_event_t *e){
     if(ap_active(&g_ap)){ ap_proof_cancel(); return; }
     track_state_t st; ipc_get_state(&st);
     ho_local l = ap_local(&st, g_playing);
-    if(modes_output_busy() || (l.path && mdb_is_book_path(l.path)) || !ui_cast_keys_ok()){ ui_toast("Proof can't start now"); return; }   /* the same 16b guards as cast_pick */
+    if(diskos_output_busy() || (l.path && mdb_is_book_path(l.path)) || !ui_cast_keys_ok()){ ui_toast("Proof can't start now"); return; }   /* the same 16b guards as cast_pick */
     if(ap_start(&g_ap, lv_tick_get(), &l) < 0) ui_toast("Proof can't start now");
 }
 static void ap_surface_cb(lv_timer_t *t){
@@ -4269,7 +3634,7 @@ int ui_airplay_pick_request(const rd_receiver *target){
     if(!target || target->protocol == RD_CAST) return ui_beam_refuse("Receiver is unavailable. Search again.");
     if(!ui_cast_keys_ok()) return ui_beam_refuse("Volume keys must use Adjust Volume to beam");
     if(ui_receiver_in_use()) return ui_beam_refuse("Receiver source is in use. Select Local in Audio Source first.");
-    if(ui_cast_phase() || modes_output_busy()) return ui_beam_refuse("Another output is busy. Stop beaming or wait for the output switch.");
+    if(ui_cast_phase() || diskos_output_busy()) return ui_beam_refuse("Another output is busy. Stop beaming or wait for the output switch.");
     if(!cast_sd_open()) return ui_beam_refuse("SD card is not readable. Restart the Disc and check the card.");
     ui_beam_clear_error(); g_sender.error = 0;
     g_sender_target = *target; g_sender_pending = 1; return 0;
@@ -4287,7 +3652,7 @@ static int sender_reload_ready(void){
     if(!aps_sender_active(&g_sender)) return 1;
     aps_sender_cancel(&g_sender, lv_tick_get()); return 0;
 }
-static struct { int pending, id, ord, force; uint32_t deadline, probe_at; unsigned generation, report, transport; pb_view view; } g_sender_return;
+static struct { int pending, id, ord, force; pb_view view; } g_sender_return;
 /* Receiver volume from the volume keys: volkeys.c counts the presses (the stock gesture codes never reach the player
  * or us), and the AirPlay/Cast sessions live on this loop. */
 static void sender_keys(void){
@@ -4318,12 +3683,12 @@ static int sender_dispatch(const track_state_t *st, int playing){
     sender_keys();
     if(g_sender_pending){
         g_sender_pending = 0;
-        ho_local local = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_generation(), st->playback_token,
+        ho_local local = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_instance(), st->playback_token,
             st->position_ms, st->duration_ms, st->path, st->title, st->artist, st->album, ui_get_source_mode() };
-        if(ui_receiver_in_use() || modes_output_busy() || !ui_cast_keys_ok() || AP_PROOF_BUSY() ||
+        if(ui_receiver_in_use() || diskos_output_busy() || !ui_cast_keys_ok() || AP_PROOF_BUSY() ||
            ho_get(&g_ho) != HO_LOCAL || g_pickreq.pend || mdb_is_book_path(st->path) || aps_sender_begin(&g_sender, &g_sender_target, &local, now))
             ui_beam_refuse(ui_receiver_in_use() ? "Receiver source is in use. Select Local in Audio Source first." :
-                modes_output_busy() ? "Another output is busy. Wait for the output switch, then try again." :
+                diskos_output_busy() ? "Another output is busy. Wait for the output switch, then try again." :
                 !ui_cast_keys_ok() ? "Volume keys must use Adjust Volume to beam" :
                 !cast_sd_open() ? "SD card is not readable. Restart the Disc and check the card." :
                 mdb_is_book_path(st->path) ? "Audiobooks cannot be beamed. Choose a music track." :
@@ -4331,7 +3696,7 @@ static int sender_dispatch(const track_state_t *st, int playing){
         else ui_cast_set_device(g_sender_target.name);
     }
     if(aps_sender_active(&g_sender)){
-        ho_local local = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_generation(), st->playback_token,
+        ho_local local = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_instance(), st->playback_token,
             st->position_ms, st->duration_ms, st->path, st->title, st->artist, st->album, ui_get_source_mode() };
         if(g_sender.phase == APSS_PREPARING){
             g_sender.pos_id = st->pos_id; g_sender.mode = ui_play_mode_now();
@@ -4354,57 +3719,13 @@ static int sender_dispatch(const track_state_t *st, int playing){
     if(volume != last_volume){ last_volume = volume; ui_refresh_remote_volume(); }
     power_set_hold(POWER_HOLD_AIRPLAY, aps_sender_active(&g_sender));
     if(!aps_sender_active(&g_sender) && g_sender_return.pending){
-        if(g_sender_return.pending == 1){
-            g_sender_return.pending = 0;
-            if(!g_sender.stop_confirmed && !g_sender_return.force) ui_toast("TV stop was not confirmed");
-            else if(!cast_sd_open() || ui_receiver_in_use() || local_start_refuse()) ui_toast("Disc playback is unavailable");
-            else {
-                int started;
-                if(g_sender_return.id){
-                    started = mdb_queue_row_valid(g_sender_return.id, g_sender_return.ord, g_sender_return.view.path) == 1 &&
-                              ui_queue_jump(g_sender_return.ord) == 0;
-                } else {
-                    /* Explicit single-track choice. Stock's type-5 slot cannot
-                     * preserve arbitrary order or duplicate occurrences. */
-                    started = mdb_reserved_slot_set(g_sender_return.view.path) && ui_play_list(5, "", 1);
-                }
-                if(!started) ui_toast("Couldn't start playback");
-                else {
-                    /* Stock handles 0100 before 0103; do not wait for an A2 poll. */
-                    if(ui_seek_to(g_sender_return.view.position_ms) < 0) ui_toast("Couldn't seek - try again");
-                    else ui_np_hold_return(g_sender_return.view.path, g_sender_return.view.position_ms);
-                    track_state_t ready; unsigned toggle, after_report;
-                    g_sender_return.pending = 2; g_sender_return.deadline = now + 5000;
-                    g_sender_return.generation = ipc_generation();
-                    g_sender_return.transport = ipc_transport_seq();
-                    /* Reloading the same track does not change path_seq. Wait
-                     * for a complete player report received after the start. */
-                    ipc_resume_snapshot(&ready, &g_sender_return.report, &toggle, &after_report);
-                    ipc_send_probe("02020008"); g_sender_return.probe_at = now + 250;
-                    fprintf(stderr, "AirPlay return: position=%ld id=%d ord=%d report=%u\n", g_sender_return.view.position_ms, g_sender_return.id, g_sender_return.ord, g_sender_return.report);
-                }
-            }
-        } else if(ipc_generation() != g_sender_return.generation){
-            g_sender_return.pending = 0; ui_toast("Player restarted - press play");
-        } else if(ipc_transport_seq() != g_sender_return.transport){
-            g_sender_return.pending = 0;
-        } else if((int32_t)(now - g_sender_return.deadline) >= 0){
-            track_state_t report; unsigned serial, toggle, after;
-            int valid = ipc_resume_snapshot(&report, &serial, &toggle, &after);
-            fprintf(stderr, "AirPlay return timeout: report=%u before=%u valid=%d track=%d state=%d id=%d want=%d path=%d\n", serial, g_sender_return.report, valid, report.have_track, report.state, report.pos_id, g_sender_return.id, !strcmp(report.path, g_sender_return.view.path));
-            g_sender_return.pending = 0; ui_toast("Couldn't start playback");
-        } else {
-            track_state_t ready; unsigned report, toggle, after_report;
-            if(ipc_resume_snapshot(&ready, &report, &toggle, &after_report) &&
-               report != g_sender_return.report && ready.have_track && ready.player_confirmed &&
-               !ready.provisional && ready.player_generation == g_sender_return.generation && ready.state == 0 &&
-               !strcmp(ready.path, g_sender_return.view.path) &&
-               (!g_sender_return.id || (ready.pos_id_valid && ready.pos_id_raw == (uint64_t)g_sender_return.id))){
-                g_sender_return.pending = 0;
-            } else if((int32_t)(now - g_sender_return.probe_at) >= 0){
-                ipc_send_probe("02020008"); g_sender_return.probe_at = now + 250;
-            }
-        }
+        g_sender_return.pending = 0;
+        if(!g_sender.stop_confirmed && !g_sender_return.force) ui_toast("TV stop was not confirmed");
+        else if(!cast_sd_open() || ui_receiver_in_use() || local_start_refuse()) ui_toast("Disc playback is unavailable");
+        /* Without a queue row: an explicit single-track choice, as stock's type-5 slot cannot preserve arbitrary order
+         * or duplicate occurrences. */
+        else if(!beam_local_resume(g_sender_return.id, g_sender_return.ord, &g_sender_return.view)) ui_toast("Couldn't start playback");
+        else fprintf(stderr, "AirPlay return: position=%ld id=%d ord=%d\n", g_sender_return.view.position_ms, g_sender_return.id, g_sender_return.ord);
     }
     return aps_sender_active(&g_sender);
 }
@@ -4413,7 +3734,7 @@ static void ho_tick(const track_state_t *st, int playing){
     cast_return_tick(st);
     if(ho_get(&g_ho) == HO_LOCAL && !g_pickreq.pend){ if(!*ui_beam_error() && !ui_airplay_error()) g_beam_dev[0] = 0; cast_tick(st, NULL); return; }   /* 17b: no session and no request: no device name either */
     const ho_sink k = { &g_ho, ho_x_pause, ho_x_load, ho_x_play, ho_x_stop, ho_x_revoke, ho_x_release, ho_x_cast, ho_x_msg, ho_x_teardown };
-    const ho_local l = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_generation(), st->playback_token,
+    const ho_local l = { st->have_track, playing, modes_pcm_quiet(), cast_sd_open(), ipc_instance(), st->playback_token,
                          st->position_ms, st->duration_ms, st->path, st->title, st->artist, st->album, ui_get_source_mode() };
     ho_event ev = { HO_EV_LOCAL, ho_attempt(&g_ho), &l, NULL, 0 };
     ho_step(&g_ho, lv_tick_get(), &ev, &k);
@@ -4529,7 +3850,7 @@ int main(int argc, char **argv){
      * table (RE 2026-09-05) maps SYSCONFIG.WORK_MODE -> USB gadget: 4=mass-storage EXPORT of the
      * SD, 1=USB-DAC, 0/3/5=Local/no gadget. diskOS previously forced 4 believing it was
      * "LOCALPLAYER", which silently exported the card whenever a cable was attached at boot.
-     * Runtime local AUDIO is asserted separately via 0666+0657 (localplayer_workmode_cb), so 0 here does
+     * Runtime local AUDIO is asserted separately via 0666+0657 (the output router), so 0 here does
      * not affect playback. The player launcher independently resets this before stock exec; this
      * is the belt-and-suspenders for hand-deploys. USB-DAC/Storage stay opt-in per session. */
     { char *a[] = { "sh", "-c",
@@ -4561,7 +3882,7 @@ int main(int argc, char **argv){
         fprintf(stderr,"fbpan try %d failed, retry\n",i); fflush(stderr); usleep(250000); }
     if(!fbok){ fprintf(stderr,"fbpan failed (gave up)\n"); return 1; }
     cfg_load();
-    (void)route_state_restore();  /* restore the live player's route before BT-off/disconnect handlers run */
+    diskos_output_start((diskos_output_hooks){output_blocker, output_outcome});   /* before the BT handlers can move the output */
     fontft_init();
     theme_init();   /* the palette for this run: before any screen is built */
     swipe_thresh_load();
@@ -4601,7 +3922,6 @@ int main(int argc, char **argv){
     lv_timer_create(playlist_port_cb, 5000, NULL);       /* bring pre-1.2.0 / stock-migrated playlists into agreement (see playlist_port_cb) */
     lv_timer_create(sd_features_gate_cb, 500, NULL);     /* start SD-backed features only on a positive launcher verdict */
     g_t_art = lv_timer_create(ui_art_poll, 120, NULL);    /* apply finished album-art decode (worker thread) */
-    lv_timer_create(localplayer_workmode_cb, 500, NULL);  /* solicit a2 and settle before startup route recovery / V2.40 local init */
     /* Background cover/accent prewarm. The worker self-gates on the user's "Album art
      * caching" setting (off/idle/charging) + a battery-temp throttle, so it's safe to
      * always spawn - it just sleeps while disabled or while the player is warm. */
@@ -4750,19 +4070,14 @@ int main(int argc, char **argv){
     playback_set_remote_sink(PB_SRC_AIRPLAY, sender_sink);
     playback_set_cast_sink(cast_sink);   /* Cast transport commands: toggle, next, previous (seek and volume stay unwired) */
     for(;;){
+        diskos_output_tick();   /* first: the player's frames (IPC state, then the router), a pending playback restore, output moves */
         if(ipc_take_reconnected()) player_reconnected();
         receiver_entry_tick();
         audio_restore_tick();
-#ifdef DISKOS_TEST_BT_PREPARE
-        bt_prepare_tick();
-#endif
-        route_resume_tick();
         ipc_bt_autonext_poll(lv_tick_get(),
-            fw_os_ver() == 257 && g_route_mac[0] && ui_get_source_mode() == 0 &&
-            !ui_receiver_in_use() && !ui_cast_session_active() && !local_start_blocked() &&
-            modes_output_route() == OUT_INTERNAL && !cfg_get_int("spdif", 0) &&
-            !modes_output_busy() && !ui_player_settling(), cfg_get_int("gapless", -1));
-        if(g_settle_armed) (void)ui_player_settling();   /* service the settle expiry every loop so a dormant armed flag can never wrap (~24.9d) into a false "settling" */
+            fw_os_ver() == 257 && diskos_output_applied(NULL) == DISKOS_OUTPUT_BLUETOOTH &&
+            ui_get_source_mode() == 0 && !ui_receiver_in_use() && !ui_cast_session_active() &&
+            !local_start_blocked() && !diskos_output_busy() && diskos_output_ready(), cfg_get_int("gapless", -1));
         opus_title_tick();
         ipc_get_state(&st);
         wifi_supervise();   /* keep wpa_supplicant alive when Wi-Fi should be on (auto-reconnect) */
@@ -4794,8 +4109,7 @@ int main(int argc, char **argv){
             }
         }
         int playing = ipc_local_playing();   /* what the player reports; a loading track counts as playing */
-        if(playing) ui_note_transport_sent();   /* playback observed this generation (any start, incl. hardware keys): its one-shot is moot */
-        g_playing = playing;   /* publish for ui_route_bt/ui_route_analog */
+        g_playing = playing;
         st.state = playing ? 2 : 1;
         playback_update(&st, ipc_display_title(&st), playing);   /* effective view (slice 15 moves the consumers onto it) */
         if(!sender_dispatch(&st, playing) && !AP_PROOF_OWNED(&st, playing)) ho_tick(&st, playing);   /* Cast handoff: one early return while nothing is casting; the AirPlay proof build may own the loop instead */

@@ -77,6 +77,7 @@ TEST_CASE("commands build their frames for the source and route sequence", "[pla
     CHECK(bluetooth.frame() == "0666000C0002");
     CHECK(usb_dac.frame() == "0642000C0002");
     CHECK(PrepareBluetoothSinkCommand{}.frame() == "0818000C0000");
+    CHECK(EnableBluetoothCommand{}.frame() == "06c1000C0000");
     // Not captured: as the legacy code sends them.
     CHECK(spdif.frame() == "0666000C0004");
     CHECK(usb_audio.frame() == "0642000C0005");

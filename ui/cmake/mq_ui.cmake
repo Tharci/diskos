@@ -24,7 +24,6 @@ target_compile_definitions(diskos_app PRIVATE
     $<$<BOOL:${DISKOS_PROFILE}>:DISKOS_PROFILE>
     $<$<BOOL:${DISKOS_FRAME_LOG}>:DISKOS_FRAME_LOG>
     $<$<BOOL:${DISKOS_TEST_OUTPUTS}>:DISKOS_TEST_OUTPUTS>
-    $<$<BOOL:${DISKOS_TEST_BT_PREPARE}>:DISKOS_TEST_BT_PREPARE>
 )
 target_compile_options(diskos_app PRIVATE -pthread -Wall)
 # diskos::legacy: the C interfaces of the C++ modules, for the legacy sources.

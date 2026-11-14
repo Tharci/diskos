@@ -1,0 +1,120 @@
+// The diskOS development container: the CI toolchain image (ui/Dockerfile, stage "dev") with the editor,
+// Python and device tools. Open the repository in VS Code and run "Dev Containers: Reopen in Container".
+// Setup and day-to-day use: docs/DEV_WORKFLOW.md.
+{
+  "name": "diskOS",
+  "build": { "dockerfile": "../ui/Dockerfile", "context": "../ui", "target": "dev" },
+
+  // The checkout at the same path as on the host, so compile_commands.json, compiler messages and
+  // Claude Code's per-project data name the same files inside and outside the container.
+  "workspaceMount": "source=${localWorkspaceFolder},target=${localWorkspaceFolder},type=bind",
+  "workspaceFolder": "${localWorkspaceFolder}",
+  "remoteUser": "dev",
+  "updateRemoteUserUID": true,
+
+  // seccomp=unconfined: setarch -R, which ThreadSanitizer needs (ui/src/README.md).
+  // SYS_PTRACE: gdb, and LeakSanitizer at the end of every ASan test.
+  "runArgs": ["--security-opt", "seccomp=unconfined", "--cap-add=SYS_PTRACE"],
+
+  // ~/.cache (uv, pre-commit) survives container rebuilds. ~/.claude is shared with the host, so Claude
+  // Code keeps its login, settings and memory; it is created first so the mount never fails.
+  "initializeCommand": "mkdir -p \"${localEnv:HOME}/.claude\"",
+  "mounts": [
+    "source=diskos-dev-cache,target=/home/dev/.cache,type=volume",
+    "source=${localEnv:HOME}/.claude,target=/home/dev/.claude,type=bind"
+  ],
+
+  // The device preset's inputs (fetched once with `tools/diskos-dev.sh inputs`) and the shared cache of
+  // built native dependencies, all in the git-ignored .dev/ folder.
+  "containerEnv": {
+    "STOCK_SYSROOT": "${localWorkspaceFolder}/.dev/inputs/stock-v257",
+    "STOCK_AV_HEADERS": "${localWorkspaceFolder}/.dev/inputs/ffmpeg-4.2.2.tar.xz",
+    "DISKOS_DEP_OUT": "${localWorkspaceFolder}/.dev/build-deps",
+    "CLAUDE_CONFIG_DIR": "/home/dev/.claude"
+  },
+
+  // Python environment, git hooks and the CMake builds clangd reads.
+  "postCreateCommand": "tools/diskos-dev.sh setup",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.cmake-tools",
+        "ms-vscode.cpptools",
+        "charliermarsh.ruff",
+        "astral-sh.ty",
+        "ms-python.python",
+        "timonwong.shellcheck",
+        "github.vscode-github-actions",
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml",
+        "anthropic.claude-code"
+      ],
+      "settings": {
+        // C and C++: clangd (ui/.clangd). cpptools is only the debugger; its IntelliSense would fight clangd.
+        "clangd.path": "/usr/local/bin/clangd",
+        "clangd.checkUpdates": false,
+        "clangd.onConfigChanged": "restart",
+        "clangd.arguments": [
+          "--background-index",
+          "--clang-tidy",
+          "--completion-style=detailed",
+          "--header-insertion=never",
+          // Without a .clang-format (the legacy C, vendored code) clangd formats nothing.
+          "--fallback-style=none"
+        ],
+        "C_Cpp.intelliSenseEngine": "disabled",
+        // The legacy headers are C. VS Code would otherwise open .h as C++ and format them on save.
+        "files.associations": { "*.h": "c" },
+        "[cpp]": {
+          "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+          "editor.formatOnSave": true
+        },
+        "[c]": {
+          "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd",
+          "editor.formatOnSave": false
+        },
+        "editor.rulers": [100],
+
+        // CMake: the presets in ui/CMakePresets.json. "device" builds mq_ui; "host" runs the tests in
+        // the test explorer.
+        "cmake.sourceDirectory": "${workspaceFolder}/ui",
+        "cmake.useCMakePresets": "always",
+        "cmake.configureOnOpen": false,
+
+        // Python: the uv environment, so ruff and ty are the locked versions pre-commit and CI run.
+        // ty is the language server; Pylance (which the Python extension pulls in) is off.
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "python.languageServer": "None",
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": { "source.organizeImports.ruff": "explicit" }
+        },
+
+        // Shell: the same gate as the pre-commit hook.
+        "shellcheck.customArgs": ["--severity=warning"],
+
+        // Keep the file watcher and search off the large generated trees.
+        "files.watcherExclude": {
+          "**/.dev/inputs/**": true,
+          "**/.dev/build-deps/**": true,
+          "**/ui/build/**": true,
+          "**/.venv/**": true
+        },
+        "search.exclude": {
+          ".dev/inputs": true,
+          ".dev/build-deps": true,
+          "ui/build": true,
+          ".venv": true,
+          "corresponding-source": true,
+          "ui/font_*.c": true,
+          "ui/sqlite3.[ch]": true
+        }
+      }
+    }
+  }
+}

@@ -5,8 +5,8 @@ diskos_module(
     legacy
     SOURCES
         player_reports.cpp player_state.cpp player_controller.cpp ipc_command_sender.cpp
-        player_link.cpp
-    DEPENDS diskos::player diskos::playback diskos::platform
+        player_link.cpp output.cpp
+    DEPENDS diskos::player diskos::playback diskos::output diskos::platform
 )
 # The legacy C headers (ipc.h), for the C++ side of the bridge.
 target_include_directories(diskos_legacy PRIVATE ${PROJECT_SOURCE_DIR})

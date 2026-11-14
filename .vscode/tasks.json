@@ -1,0 +1,47 @@
+{
+  // Day-to-day tasks in the dev container. Building and the test explorer come from CMake Tools (the
+  // presets in ui/CMakePresets.json); these cover the rest (tools/diskos-dev.sh).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "UI: build device",
+      "type": "shell",
+      "command": "cmake --build --preset device",
+      "options": { "cwd": "${workspaceFolder}/ui" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "UI: all host tests",
+      "type": "shell",
+      "command": "tools/diskos-dev.sh test",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "UI: deploy to the Disc",
+      "type": "shell",
+      "command": "tools/diskos-dev.sh deploy",
+      "problemMatcher": []
+    },
+    {
+      "label": "UI: build and deploy",
+      "dependsOrder": "sequence",
+      "dependsOn": ["UI: build device", "UI: deploy to the Disc"],
+      "problemMatcher": []
+    },
+    {
+      "label": "UI: Disc log",
+      "type": "shell",
+      "command": "tools/diskos-dev.sh log",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "pre-commit: all files",
+      "type": "shell",
+      "command": "uv run pre-commit run --all-files",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 diskOS contributors
 #pragma once
 
+#include <chrono>
 #include <string_view>
 
 #include "player/player_instance.hpp"
@@ -9,15 +10,17 @@
 namespace diskos::player {
 
 /**
- * Hears what the stock player sends: each frame it puts on /ui (see frame.hpp), and when a new
- * player instance connects. The calls come from one thread, in order; the frame's bytes stay
- * valid only during on_frame().
+ * Hears what the stock player sends, undecoded, on the thread that asks for it
+ * (PlayerLink::deliver(), the main loop): each new player instance, each frame it put on /ui (see
+ * frame.hpp), and each drain that finished. The frame's bytes stay valid only during on_frame().
  *
- * TODO: Add a decoding adapter (frames to Reports, for a ReportListener), so services receive
- *  Reports and never frames, like FrameCommandSender does for commands.
+ * Services hear decoded reports instead, through a ReportDecoder. Only the legacy IPC reads raw
+ * frames: it decodes them itself, and counts the malformed ones.
  */
 class FrameListener {
 public:
+    using Clock = std::chrono::steady_clock;
+
     FrameListener() = default;
     FrameListener(const FrameListener&) = delete;
     FrameListener(FrameListener&&) = delete;
@@ -26,16 +29,16 @@ public:
     virtual ~FrameListener() = default;
 
     /** A new player instance connected. Comes before any of its frames, also for the first. */
-    virtual void on_connected(PlayerInstance instance) = 0;
+    virtual void on_connected(PlayerInstance instance, Clock::time_point now) = 0;
 
     /** One frame from the current instance, raw: it may be malformed. */
-    virtual void on_frame(std::string_view frame) = 0;
+    virtual void on_frame(std::string_view frame, Clock::time_point now) = 0;
 
     /**
-     * A requested drain finished: every frame the player sent before the request has reached
-     * on_frame() (see PlayerLink::request_drain()).
+     * A requested drain finished: every frame the player sent before the request came before
+     * this call (see PlayerLink::request_drain()).
      */
-    virtual void on_drained() = 0;
+    virtual void on_drained(Clock::time_point now) = 0;
 };
 
 }  // namespace diskos::player

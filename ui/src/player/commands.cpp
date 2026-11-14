@@ -78,6 +78,10 @@ std::string PrepareBluetoothSinkCommand::body() {
     return value_body(0);
 }
 
+std::string EnableBluetoothCommand::body() {
+    return value_body(0);
+}
+
 std::string frame(const Command& command) {
     return std::visit([](const auto& typed) { return typed.frame(); }, command);
 }

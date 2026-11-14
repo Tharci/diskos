@@ -60,6 +60,52 @@ Decoded<bool> read_flag(std::string_view body) {
     return read_value(body, 1).transform([](std::uint32_t value) { return value == 1; });
 }
 
+/** Take `expected` off the front of `text`; false, leaving it as it was, if it is not there. */
+bool skip(std::string_view& text, std::string_view expected) {
+    if (!text.starts_with(expected)) {
+        return false;
+    }
+    text.remove_prefix(expected.size());
+    return true;
+}
+
+/** Take a canonical decimal integer that ends at `end` off the front of `text`, with `end`. */
+bool skip_integer(std::string_view& text, std::string_view end) {
+    const std::size_t size = text.find(end);
+    if (size == std::string_view::npos || !utils::parse_decimal(text.substr(0, size))) {
+        return false;
+    }
+    text.remove_prefix(size + end.size());
+    return true;
+}
+
+/**
+ * Take one a6c4 sink off the front of `list` and get its address.
+ * Returns BadBody if it does not follow the template, BadValue for a malformed address.
+ */
+Decoded<utils::BluetoothAddress> take_sink(std::string_view& list) {
+    constexpr std::string_view kName = R"(","name":")";
+    constexpr std::string_view kStatus = R"(","status":)";
+    if (!skip(list, R"({"id":)") || !skip_integer(list, R"(,"addr":")")) {
+        return std::unexpected(ReportError::BadBody);
+    }
+    const std::size_t address_size = list.find(kName);
+    // The name is the player's raw text: it ends where the status follows.
+    const std::size_t name_end = list.find(kStatus, address_size);
+    if (address_size == std::string_view::npos || name_end == std::string_view::npos) {
+        return std::unexpected(ReportError::BadBody);
+    }
+    const auto address = utils::BluetoothAddress::from(list.substr(0, address_size));
+    list.remove_prefix(name_end + kStatus.size());
+    if (!skip_integer(list, "}")) {
+        return std::unexpected(ReportError::BadBody);
+    }
+    if (!address) {
+        return std::unexpected(ReportError::BadValue);
+    }
+    return *address;
+}
+
 template <IsReport T>
 Decoded<Report> decode_as(std::string_view body) {
     return T::decode(body).transform([](T&& report) -> Report { return std::move(report); });
@@ -95,6 +141,7 @@ constexpr std::array kDecoders{
         decoder_for<BatteryReport>(),
         decoder_for<ConversionReport>(),
         Decoder{.tag = "a202", .decode = decode_state},
+        decoder_for<BluetoothSinksReport>(),
 };
 
 // Every report has an entry, except UnknownReport; a202's two forms share one.
@@ -185,6 +232,35 @@ Decoded<PlayStateReport> PlayStateReport::decode(std::string_view body) {
         return std::unexpected(ReportError::BadValue);
     }
     return PlayStateReport{.state = static_cast<ReportedPlayState>(*value)};
+}
+
+Decoded<BluetoothSinksReport> BluetoothSinksReport::decode(std::string_view body) {
+    constexpr std::string_view kNoSinks = "{}]";  // After the '[': how an empty list is written
+    if (body.size() < kValueDigits) {
+        return std::unexpected(ReportError::BadBody);
+    }
+    const Value count = read_digits(body.substr(0, kValueDigits), kValueDigits);
+    std::string_view list = body.substr(kValueDigits);
+    if (!count || !skip(list, "[")) {
+        return std::unexpected(ReportError::BadBody);
+    }
+    BluetoothSinksReport report;
+    if (list != kNoSinks) {
+        for (bool more = true; more; more = skip(list, ",")) {
+            const Decoded<utils::BluetoothAddress> sink = take_sink(list);
+            if (!sink) {
+                return std::unexpected(sink.error());
+            }
+            report.sinks.push_back(*sink);
+        }
+        if (list != "]") {
+            return std::unexpected(ReportError::BadBody);
+        }
+    }
+    if (report.sinks.size() != *count) {
+        return std::unexpected(ReportError::BadBody);
+    }
+    return report;
 }
 
 Decoded<Report> decode_report(std::string_view bytes) {

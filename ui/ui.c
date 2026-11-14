@@ -13,6 +13,7 @@
 #include "receiver_progress.h"
 #include "wifi.h"
 #include "playback.h"
+#include "legacy/output.h"
 #include "legacy/player_controller.h"
 #include "musicdb.h"   /* persistent per-song accent cache */
 #include "bookmeta.h"
@@ -143,7 +144,7 @@ static np_identity np_identity_of(const track_state_t *st){
     np_identity id = {.source = playback_source()};
     if(st){
         snprintf(id.path, sizeof id.path, "%s", st->path);
-        id.token = st->playback_token; id.generation = st->player_generation;
+        id.token = st->playback_token; id.generation = st->player_instance;
         id.have = st->have_track;
         if(mdb_is_book_path(st->path)){
             id.library = ipc_library_epoch(); id.media = sd_io_generation();
@@ -561,7 +562,7 @@ static int transport_local(const char *cmd)
     int is_prev = !strcmp(cmd, "0201000C0002");
     int is_toggle = !strcmp(cmd, "0201000C0000");
     if(!is_next && !is_prev && !is_toggle) return -1;
-    if(modes_output_busy()){ ui_toast("Switching output - try again"); return -1; }
+    if(diskos_output_busy()){ ui_toast("Switching output - try again"); return -1; }
     if(ui_receiver_active()){   /* the receiver owns playback: its frames only, never book seek or the local play hint */
         int rc = ui_receiver_transport(cmd);
         if(rc != 0) ui_toast("Player busy - try again");
@@ -589,7 +590,6 @@ static int transport_local(const char *cmd)
             return 0;
         }
     }
-    ui_note_transport_sent();
     int sent = is_toggle ? diskos_playback_toggle() : is_next ? diskos_playback_next() : diskos_playback_previous();
     if(sent < 0){ ui_toast("Player busy - try again"); return -1; }
     if(is_toggle){
@@ -1901,10 +1901,10 @@ static void ui_bookmeta_request(const track_state_t *st)
     }
     if(!g_bookmeta) return;
     if(book && (strcmp(g_book_key.path, st->path) || g_book_token != st->playback_token ||
-                g_book_player_generation != st->player_generation)){
+                g_book_player_generation != st->player_instance)){
         g_book_key.playback_generation++;
         copy_cstr(g_book_key.path, sizeof g_book_key.path, st->path);
-        g_book_token = st->playback_token; g_book_player_generation = st->player_generation;
+        g_book_token = st->playback_token; g_book_player_generation = st->player_instance;
     }
     g_book_key.library_revision = ipc_library_epoch();
     g_book_key.media_generation = sd_io_generation();
@@ -1920,7 +1920,7 @@ const bookmeta_snapshot *ui_bookmeta_snapshot(const track_state_t *st)
 {
     const bookmeta_snapshot *m = bookmeta_snapshot_get(g_bookmeta);
     if(!m || !st || !st->have_track || strcmp(m->key.path, st->path) ||
-       g_book_token != st->playback_token || g_book_player_generation != st->player_generation ||
+       g_book_token != st->playback_token || g_book_player_generation != st->player_instance ||
        m->key.library_revision != ipc_library_epoch() ||
        m->key.media_generation != sd_io_generation() || !sd_io_allowed())
         return NULL;
@@ -2169,12 +2169,12 @@ static void update_cover_for_path(const track_state_t *st)
     if(receiver.session) return;
     int path_changed = strcmp(last_path, st->path) != 0;
     int identity_changed = st->playback_token != g_art_token ||
-                           st->player_generation != g_art_generation;
+                           st->player_instance != g_art_generation;
     if(path_changed) g_np_small_valid = 0;
     sharp_cover_set_source(st->path);
     if(path_changed || identity_changed){
         g_art_token = st->playback_token;
-        g_art_generation = st->player_generation;
+        g_art_generation = st->player_instance;
         g_art_title_pending = st->have_track && !st->title_ready &&
                               cfg_get_int("online_art", 0);
     }

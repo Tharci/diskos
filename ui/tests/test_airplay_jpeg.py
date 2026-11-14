@@ -177,12 +177,16 @@ int main(int argc, char **argv) {
                         (1, 1) if mode == "empty" else (600, 600) if jpeg else (148, 148),
                     )
                     if mode == "empty":
-                        self.assertEqual(decoded.convert("RGBA").getpixel((0, 0))[3], 0)
+                        self.assertEqual(
+                            decoded.convert("RGBA").getchannel("A").getextrema(), (0, 0)
+                        )
                     elif jpeg:
                         error = sum(
                             abs(a - b)
                             for a, b in zip(
-                                decoded.convert("RGB").resize((148, 148), Image.BOX).tobytes(),
+                                decoded.convert("RGB")
+                                .resize((148, 148), Image.Resampling.BOX)
+                                .tobytes(),
                                 image.tobytes(),
                             )
                         )

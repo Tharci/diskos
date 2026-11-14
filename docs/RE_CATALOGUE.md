@@ -227,7 +227,8 @@ Player->UI frames use **`a`-prefixed** tags (replies/reports) + `06d*` (OTA). Th
 | a634 | memory-play | `memoryPlay`/`memoryType` |
 | a639 | EQ type | preset + `filterType/frequency/gain/qValue` |
 | a6b6 | BT paired devices | count + list |
-| a6c5/a6c3/a6c2/a6c1/a6c4/a6c0 | BT disc/connect/open replies | state + address |
+| a6c5/a6c3/a6c2/a6c1/a6c0 | BT disc/connect/open replies | state + address |
+| a6c4 | Connected BT sinks, on every change (also a dropped link, while the player still plays into it) | value = count, then `[{}]` or `[{"id":1,"addr":"<MAC>","name":"","status":0}]` |
 | aa1c | power-key event | `%d` |
 | aa22 | TF-card (SD) insert/remove | event `%d` |
 | aa0c/aa0f | screen status | `%X` |

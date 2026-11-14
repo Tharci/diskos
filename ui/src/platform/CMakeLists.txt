@@ -5,7 +5,11 @@ find_package(Threads REQUIRED)
 
 diskos_module(
     platform
-    SOURCES message_queue.cpp player_link.cpp
-    DEPENDS diskos::player diskos::utils Threads::Threads rt
+    SOURCES message_queue.cpp player_link.cpp usb_dac.cpp route_store.cpp
+    DEPENDS diskos::player diskos::output diskos::utils Threads::Threads rt
 )
-diskos_test(platform SOURCES player_link_test.cpp DEPENDS diskos::platform)
+diskos_test(
+    platform
+    SOURCES player_link_test.cpp usb_dac_test.cpp route_store_test.cpp
+    DEPENDS diskos::platform
+)

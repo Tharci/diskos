@@ -111,7 +111,6 @@ set(legacy_sources
     bt.c
     btstore.c
     bt_codec_observe.c
-    bt_prepare.c
     weather.c
     lyrics.c
     netart.c

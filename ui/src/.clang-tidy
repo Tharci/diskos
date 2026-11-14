@@ -28,6 +28,8 @@ Checks: >
 # redundant-member-init removes the `{}` that GCC's -Wmissing-field-initializers needs on a member
 # a designated initializer may leave out (PlayListCommand's name).
 CheckOptions:
+  # (void) drops a result on purpose; a result left unused by accident is still found.
+  bugprone-unused-return-value.AllowCastToVoid: true
   # Size limits: a function does one thing.
   readability-function-size.LineThreshold: 60
   readability-function-size.StatementThreshold: 50

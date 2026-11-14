@@ -9,7 +9,7 @@
 #include "theme_kit.h"
 #include "config.h"       /* cfg_get_int/cfg_set_int: persist the BT on/off intent */
 #include "bt_codec_observe.h"
-#include "bt_prepare.h"
+#include "legacy/output.h"
 #include "musicdb.h"
 #include "modes.h"
 #include "btstore.h"
@@ -260,176 +260,6 @@ int ui_bt_codec_set(int value){
     char frame[16]; snprintf(frame, sizeof frame, "06b3000C%04X", (unsigned)value);
     return ipc_send_cmd(frame);
 }
-#ifdef DISKOS_TEST_BT_PREPARE
-#define BTC_AAC  2u
-#define BTC_LDAC 4u
-static unsigned bt_codec_need(int v){ return v == 1 ? BTC_AAC : (v >= 2 && v <= 4) ? BTC_LDAC : 0u; }
-/* The stock VALUE1 to send: the saved choice, or SBC when the sink is known not to offer that codec. */
-int bt_codec_pick(int choice, unsigned avail, int avail_known){
-    if(choice < 0 || choice >= BT_CODEC_N) return 0;
-    unsigned need = bt_codec_need(choice);
-    if(need && !(avail_known && (avail & need))) return 0;   /* offered, or unknown: SBC */
-    return choice;
-}
-/* Codecs a sink offers, from `bluealsa-cli info <pcm>`: the words on the "Available codecs:" line and on the lines
- * after it that carry no ':'. *known = 0 when that header is missing (unparseable/failed query). */
-unsigned bt_codec_parse_avail(const char *info, int *known){
-    unsigned m = 0;
-    if(known) *known = 0;
-    const char *h = info ? strstr(info, "Available codecs:") : NULL;
-    if(!h) return 0;
-    if(known) *known = 1;
-    const char *p = h + 17;
-    for(int first = 1; *p;){
-        const char *e = strchr(p, '\n'); size_t n = e ? (size_t)(e - p) : strlen(p);
-        if(!first && memchr(p, ':', n)) break;
-        first = 0;
-        for(size_t i = 0; i < n;){
-            size_t j = i;
-            while(j < n && ((p[j]>='A'&&p[j]<='Z')||(p[j]>='a'&&p[j]<='z')||(p[j]>='0'&&p[j]<='9'))) j++;
-            if(j - i == 3 && !strncasecmp(p + i, "AAC", 3)) m |= BTC_AAC;
-            else if(j - i == 4 && !strncasecmp(p + i, "LDAC", 4)) m |= BTC_LDAC;
-            i = j > i ? j : i + 1;
-        }
-        if(!e) break;
-        p = e + 1;
-    }
-    return m;
-}
-/* Shell command that prints "PCM=<path>" then the A2DP source PCM's info for a device (MAC already validated);
- * it prints nothing while BlueALSA has no such PCM. */
-static int bt_codec_query_cmd(const char *mac, char *out, int cap){
-    if(!bt_mac_valid(mac)) return -1;
-    char d[24]; int n = 0;
-    for(int i = 0; i < 17; i++) d[n++] = mac[i] == ':' ? '_' : mac[i];
-    d[n] = 0;
-    int r = snprintf(out, cap, "p=$(bluealsa-cli list-pcms 2>/dev/null) || exit 1; "
-                               "p=$(printf '%%s\\n' \"$p\" | grep -i '^/org/bluealsa/hci0/dev_%s/a2dpsrc/sink$' | head -n 1); "
-                               "[ -n \"$p\" ] && { echo \"PCM=$p\"; bluealsa-cli info \"$p\" 2>/dev/null; }", d);
-    return (r > 0 && r < cap) ? 0 : -1;
-}
-static int64_t bt_probe_now(void){
-    struct timespec t;
-    if(clock_gettime(CLOCK_MONOTONIC, &t) != 0) return -1;
-    return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
-}
-/* Thread-safe capture for the probe worker. Only complete zero-exit output is
- * evidence. One deadline covers output AND child exit, including EINTR and a
- * descendant holding stdout open. Failure discards all bytes and reaps the child. */
-static int bt_probe_run(const char *cmd, char *out, int cap, int timeout_ms){
-    if(!out || cap < 1) return 0;
-    out[0] = 0;
-    if(!cmd || cap < 2 || timeout_ms <= 0 || timeout_ms > 30000) return 0;
-    struct sigaction chld;
-    if(sigaction(SIGCHLD, NULL, &chld) != 0 || chld.sa_handler != SIG_DFL ||
-       (chld.sa_flags & SA_NOCLDWAIT)) return 0;
-    int64_t start = bt_probe_now();
-    if(start < 0) return 0;
-    int64_t deadline = start + timeout_ms;
-    int fds[2];
-    if(pipe(fds) != 0) return 0;
-    pid_t pid = fork();
-    if(pid < 0){ close(fds[0]); close(fds[1]); return 0; }
-    if(pid == 0){
-        close(fds[0]);
-        if(setpgid(0, 0) != 0 || dup2(fds[1], 1) < 0) _exit(127);
-        close(fds[1]);
-        execl("/bin/sh", "sh", "-c", cmd, (char*)NULL); _exit(127);
-    }
-    setpgid(pid, pid);
-    close(fds[1]);
-    int n = 0, eof = 0, reaped = 0, success = 0, status;
-    for(;;){
-        int64_t now = bt_probe_now();
-        if(now < 0 || now >= deadline) break;
-        int left = (int)(deadline - now);
-        if(eof){
-            pid_t r = waitpid(pid, &status, WNOHANG);
-            if(r == pid){ reaped = 1; success = WIFEXITED(status) && WEXITSTATUS(status) == 0; break; }
-            if(r < 0 && errno != EINTR) break;
-            /* EOF alone does not mean the shell exited. Wait in bounded steps. */
-            if(poll(NULL, 0, left < 10 ? left : 10) < 0 && errno != EINTR) break;
-            continue;
-        }
-        struct pollfd pf = { fds[0], POLLIN, 0 };
-        int ready = poll(&pf, 1, left);
-        if(ready < 0){ if(errno == EINTR) continue; break; }
-        if(!ready || (pf.revents & (POLLERR | POLLNVAL))) break;
-        char chunk[256]; ssize_t r = read(fds[0], chunk, sizeof chunk);
-        if(r < 0){ if(errno == EINTR) continue; break; }
-        if(!r){ eof = 1; continue; }
-        if(r > cap - 1 - n) break;
-        memcpy(out + n, chunk, (size_t)r);
-        n += r;
-    }
-    close(fds[0]);
-    if(!reaped){
-        kill(-pid, SIGKILL); kill(pid, SIGKILL);
-        while(waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
-    }
-    out[success ? n : 0] = 0;
-    return success ? n : 0;
-}
-/* A separate read-only job for the preparation owner. A cancelled worker keeps
- * the single busy latch until it exits, so route churn cannot accumulate jobs. */
-static struct {
-    pthread_mutex_t mu;
-    uint64_t serial, id;
-    unsigned generation;
-    int busy, done, good, known;
-    unsigned available;
-    bc_snapshot selected;
-} g_bp = {.mu = PTHREAD_MUTEX_INITIALIZER};
-typedef struct { uint64_t id; char mac[18]; } bp_probe_arg;
-static void *bt_prepare_probe_worker(void *arg){
-    bp_probe_arg *a = arg;
-    char cmd[384], info[4097]; bc_snapshot s = {0}; int n = 0, known = 0; unsigned avail = 0;
-    if(bt_codec_query_cmd(a->mac, cmd, sizeof cmd) == 0) n = bt_probe_run(cmd, info, sizeof info, 700);
-    int good = n > 0 && bc_parse(info, (size_t)n, a->mac, &s) == BC_OK && s.adapter == 0;
-    if(good) avail = bt_codec_parse_avail(info, &known);
-    pthread_mutex_lock(&g_bp.mu);
-    if(g_bp.id == a->id){
-        g_bp.selected = s; g_bp.known = known; g_bp.available = avail;
-        g_bp.good = good; g_bp.done = 1;
-    }
-    g_bp.busy = 0;
-    pthread_mutex_unlock(&g_bp.mu);
-    free(a); return NULL;
-}
-int bt_prepare_probe_start(const char *mac, unsigned generation, uint64_t *id){
-    if(!id || !bt_mac_valid(mac) || generation != ipc_generation()) return -1;
-    bp_probe_arg *a = malloc(sizeof *a); if(!a) return -1;
-    pthread_mutex_lock(&g_bp.mu);
-    if(g_bp.busy || g_bp.serial == UINT64_MAX){
-        int rc = g_bp.busy ? 1 : -1; pthread_mutex_unlock(&g_bp.mu); free(a); return rc;
-    }
-    a->id = ++g_bp.serial; snprintf(a->mac, sizeof a->mac, "%s", mac);
-    g_bp.id = a->id; g_bp.generation = generation; g_bp.busy = 1; g_bp.done = 0;
-    pthread_t thread;
-    if(pthread_create(&thread, NULL, bt_prepare_probe_worker, a) != 0){
-        g_bp.busy = 0; g_bp.id = 0; pthread_mutex_unlock(&g_bp.mu); free(a); return -1;
-    }
-    *id = a->id; pthread_detach(thread); pthread_mutex_unlock(&g_bp.mu); return 0;
-}
-int bt_prepare_probe_read(uint64_t id, unsigned generation, bc_snapshot *s, int *known, unsigned *avail){
-    if(!s || !known || !avail) return -1;
-    pthread_mutex_lock(&g_bp.mu);
-    int rc = -1;
-    if(id && id == g_bp.id && generation == g_bp.generation && generation == ipc_generation()){
-        rc = g_bp.done ? (g_bp.good ? 1 : -1) : 0;
-        if(rc == 1){ *s = g_bp.selected; *known = g_bp.known; *avail = g_bp.available; }
-    }
-    pthread_mutex_unlock(&g_bp.mu); return rc;
-}
-void bt_prepare_probe_cancel(uint64_t id){
-    pthread_mutex_lock(&g_bp.mu);
-    if(g_bp.id == id){ g_bp.id = 0; g_bp.done = 0; }
-    pthread_mutex_unlock(&g_bp.mu);
-}
-int bt_prepare_codec_frame(const char *mac, int choice, char *out, int capacity){
-    return choice < 0 || choice >= BT_CODEC_N ? -1 : bt_codec_frame_value(mac, choice, out, capacity);
-}
-#endif
 /* Full stock bring-up: download the chip firmware patch over /dev/ttyS0 (creates a
  * working hci0 - the step our old bluez-only path lacked), then bluetoothd + agent. */
 static void bt_enable(void){
@@ -480,9 +310,6 @@ static void bt_disable(void){
     bootrestore_cancel();   /* Off must also cancel the independent boot observer */
     g_bt_on_last = 0;
     g_connect_after_up[0] = 0;   /* a tap waiting for the radio does not survive turning it off */
-#ifdef DISKOS_TEST_BT_PREPARE
-    ui_bt_route_prepare_cancel();
-#endif
     scan_abort();          /* cancel any pending/active scan + the bt_open observer (covers the radio-timeout
                             * OFF path, which reaches here without a caller-side scan_abort). LVGL-touching,
                             * so it MUST stay on the main thread. */
@@ -515,14 +342,15 @@ static int bt_mac_valid(const char *mac){
 
 static int bt_info_prop(const char *buf, const char *key, char *out, int cap);
 /* A missing PCM is not a missing radio link (codec rebuilds remove PCMs).
- * Return 1 for confirmed down, 0 for connected, -1 for unknown. */
+ * Return 1 for confirmed down, 0 for connected, -1 for unknown, -2 while the query still runs: run_cap_bounded()
+ * starts it on one call and has its answer on a later one, so the first call for a MAC is always pending. */
 static int bt_link_disconnected(const char *mac, int timeout_ms){
     if(timeout_ms <= 0 || !bt_mac_valid(mac)) return -1;
     char cmd[160], info[4097], value[16], device[32];
     const char *marker = "\nDISKOS_INFO_DONE\n";
     snprintf(cmd, sizeof cmd, "bluetoothctl info %s 2>/dev/null && printf '\\nDISKOS_INFO_DONE\\n'", mac);
     bt_capture_drop_except(cmd);
-    run_cap_bounded(cmd, info, sizeof info, timeout_ms);
+    if(!run_cap_bounded(cmd, info, sizeof info, timeout_ms)) return -2;
     char *done = strstr(info, marker);
     if(!done || done[strlen(marker)]) return -1;
     *done = 0;
@@ -535,22 +363,20 @@ static int bt_link_disconnected(const char *mac, int timeout_ms){
     return !strcmp(value, "no") ? 1 : !strcmp(value, "yes") ? 0 : -1;
 }
 
-/* Route once per connected bluealsa A2DP sink. Keeping the MAC latched while the
- * PCM exists preserves a manual switch back to analog until the sink reconnects. */
+/* Tell the output router about each connected bluealsa A2DP sink, once, and about the routed one going away. Keeping
+ * the MAC latched while the PCM exists preserves a manual switch back to analog until the sink reconnects. The router
+ * decides when it may route (a starting player, another source, Cast): this poll only reports. */
 static void bt_autoroute_poll_cb(lv_timer_t *t){
     (void)t;
-    /* Receiver audio stays on the current route: no PCM probe, no route, and nothing latched, so the first poll
-     * after Return to Local routes a connected speaker as usual (route_bt in main.c refuses it too). */
+    /* Receiver audio stays on the current route: no PCM probe, and nothing reported or latched, so the first poll
+     * after Return to Local reports a connected speaker as usual. */
     if(ui_receiver_active()){ bt_capture_drop_except(NULL); return; }
-    /* The post-restart settle guard lives in ui_route_bt (covers every routing path); this poll keeps
-     * firing during the window and routes on the first tick past it (ui_route_bt returns "not routed"
-     * meanwhile, so g_bt_autorouted is not latched and the retry stands). */
     static char missing[20];
     static unsigned misses, absent_polls;
-    static int recovery_started;
     char path[2048] = {0}, mac[20] = "";
     int found = 0, routed_found = 0;
-    const char *routed = ui_route_mac();
+    char routed[DISKOS_OUTPUT_MAC_SIZE];   /* the sink the audio goes to, or "" */
+    if(diskos_output_applied(routed) != DISKOS_OUTPUT_BLUETOOTH) routed[0] = 0;
     /* No pipeline: only the successful CLI's final marker confirms a full list.
      * A timeout, failed command or full capture without the marker is unknown. */
     uint32_t probe_start = lv_tick_get();
@@ -583,53 +409,46 @@ static void bt_autoroute_poll_cb(lv_timer_t *t){
         }
         line = nl ? nl + 1 : NULL;
     }
-    int loss_accepted = ui_route_bt_loss_accepted();
-    if(!routed[0] || routed_found || loss_accepted) bt_capture_drop_except(NULL);
-    if(routed[0] && (!routed_found || loss_accepted)){
+    if(!routed[0] || routed_found) bt_capture_drop_except(NULL);
+    if(routed[0] && !routed_found){
         if(strcmp(missing, routed)){
             snprintf(missing, sizeof missing, "%s", routed);
-            misses = absent_polls = 0; recovery_started = 0;
+            misses = absent_polls = 0;
         }
-        if(!loss_accepted){
-            /* Share a 350 ms probe budget, reserving 100 ms for cleanup. */
-            int left = 250 - (int)lv_tick_elaps(probe_start);
-            int disconnected = bt_link_disconnected(routed, left);
-            if(disconnected == 0){ misses = absent_polls = 0; recovery_started = 0; return; }
-            if(absent_polls < 10) absent_polls++;
-            if(disconnected < 0){
-                misses = 0;
-                /* Ten consecutive successful lists missing this PCM: 30 seconds at
-                 * the 3-second cadence. Brief rebuild gaps do not qualify;
-                 * connected evidence or a returning PCM resets the grace. */
-                if(absent_polls < 10) return;
-                misses = 2;
-            } else if(absent_polls >= 10) misses = 2;
-        }
-        /* Two confirmed-down polls, or the sustained unknown fallback.
-         * Once accepted, finish teardown even if the PCM reappears. */
+        /* Share a 350 ms probe budget, reserving 100 ms for cleanup. */
+        int left = 250 - (int)lv_tick_elaps(probe_start);
+        int disconnected = bt_link_disconnected(routed, left);
+        if(disconnected == 0){ misses = absent_polls = 0; return; }
+        if(absent_polls < 10) absent_polls++;
+        if(disconnected < 0){
+            /* Only a completed unknown answer breaks a run of confirmed-down polls. A pending query is no answer:
+             * every second look at the link is one, and counting it as unknown left only the 10-list fallback
+             * (60 s at one completed list per two ticks, seen on the Disc after the output cutover). */
+            if(disconnected == -1) misses = 0;
+            /* Ten consecutive successful lists missing this PCM: 30 seconds at
+             * the 3-second cadence. Brief rebuild gaps do not qualify;
+             * connected evidence or a returning PCM resets the grace. */
+            if(absent_polls < 10) return;
+            misses = 2;
+        } else if(absent_polls >= 10) misses = 2;
+        /* Two confirmed-down polls, or the sustained unknown fallback: the router leaves the sink at once and
+         * finishes the move by itself, even if the PCM comes back meanwhile. */
         if(misses < 2) misses++;
         if(misses == 2){
-#ifdef DISKOS_TEST_BT_PREPARE
-            ui_bt_route_prepare_cancel();
-#endif
-            int rc = ui_route_bt_lost(!recovery_started && !loss_accepted);
-            recovery_started = 1;
-            if(rc == 0){ g_bt_autorouted[0] = 0; misses = absent_polls = 0; missing[0] = 0; }
+            diskos_output_bluetooth_lost(routed);
+            g_bt_autorouted[0] = 0; misses = absent_polls = 0; missing[0] = 0;
         }
         return;
     }
-    misses = absent_polls = 0; missing[0] = 0; recovery_started = 0;
+    misses = absent_polls = 0; missing[0] = 0;
     if(routed_found && bt_route_allowed(routed)) snprintf(mac, sizeof mac, "%s", routed);
     if(!found){
         g_bt_autorouted[0] = 0;
-#ifdef DISKOS_TEST_BT_PREPARE
-        ui_bt_route_prepare_cancel();
-#endif
         return;
     }
     if(mac[0] && strcmp(mac, g_bt_autorouted)){
-        if(ui_route_bt_automatic(mac) == 0)     /* latch only on a successful route, else retry on the next poll */
-            snprintf(g_bt_autorouted, sizeof g_bt_autorouted, "%s", mac);
+        diskos_output_bluetooth_connected(mac);   /* the router routes it when it may */
+        snprintf(g_bt_autorouted, sizeof g_bt_autorouted, "%s", mac);
     }
 }
 
@@ -642,13 +461,9 @@ static void bt_autoroute_stop(void){
     if(g_bt_autoroute_timer){ lv_timer_del(g_bt_autoroute_timer); g_bt_autoroute_timer = NULL; }
     g_bt_autorouted[0] = 0;
 }
-/* The player restarted: a fresh mq_player defaults to local/analog output, so any "already routed to X"
- * memory is stale. Forget it so the auto-route poll re-routes the still-connected speaker (and so the
- * local re-init isn't wrongly suppressed). If BT is on but the poll timer died, re-arm it. */
+/* The player restarted: the output router re-establishes its output once the new player settles. Forget the latch so
+ * the poll reports the still-connected speaker again. If BT is on but the poll timer died, re-arm it. */
 void bt_notify_player_restart(void){
-#ifdef DISKOS_TEST_BT_PREPARE
-    ui_bt_route_prepare_cancel();
-#endif
     g_bt_autorouted[0] = 0;
     if(bt_radio_on() && bt_on() && !g_bt_autoroute_timer) bt_autoroute_start();
 }
@@ -775,13 +590,13 @@ static void bt_attempt_step(void){
     g_at.h = 0;
     if(r != PROC_COMPLETE || !bt_info_prop(out, S[g_at.stage].prop, v, sizeof v) || strcmp(v, "yes")){ bt_attempt_fail(); return; }
     if(g_at.stage < AT_CONNECT){ g_at.stage++; g_at.begin = lv_tick_get(); return; }
-    /* Connected at the BT layer. Only now authorize and route; a failed route keeps the authorization so the
-     * autoroute poll retries (g_bt_autorouted stays unset). */
+    /* Connected at the BT layer. Only now authorize and route; a refused choice keeps the authorization so the
+     * autoroute poll reports the sink again (g_bt_autorouted stays unset). */
     char mac[20];
     snprintf(mac, sizeof mac, "%s", g_at.mac);
     g_at.stage = AT_IDLE;
     bt_route_own(mac);
-    if(ui_route_bt(mac) == 0){
+    if(ui_output_select(DISKOS_OUTPUT_BLUETOOTH, mac) == 0){
         snprintf(g_bt_autorouted, sizeof g_bt_autorouted, "%s", mac);
         ui_toast("Connected");
     } else {
@@ -875,7 +690,7 @@ static void bt_disconnect(const char *mac){
     if(!strcmp(mac, g_bt_autorouted)) g_bt_autorouted[0] = 0;
     bt_route_revoke(mac);
     if(g_at.stage != AT_IDLE && !strcmp(g_at.mac, mac)) bt_attempt_cancel(0);
-    ui_route_analog();          /* return audio to the DAC before dropping the A2DP link */
+    diskos_output_bluetooth_lost(mac);   /* if it has the audio, the audio leaves it before the A2DP link drops */
     ui_toast(bt_disconnect_job(mac) ? "Disconnecting..." : tr("Connection failed"));
 }
 /* Forget = remove (BlueZ drops the link first). The result toast arrives when the job finishes. */
@@ -884,7 +699,7 @@ static void bt_forget(const char *mac){
     if(!strcmp(mac, g_bt_autorouted)) g_bt_autorouted[0] = 0;
     bt_route_revoke(mac);
     if(g_at.stage != AT_IDLE && !strcmp(g_at.mac, mac)) bt_attempt_cancel(0);
-    ui_route_analog();          /* route audio back to analog BEFORE removing the sink */
+    diskos_output_bluetooth_lost(mac);   /* if it has the audio, the audio leaves it BEFORE the sink is removed */
     char cmd[128];
     snprintf(cmd, sizeof cmd, "bluetoothctl remove %s >/dev/null 2>&1", mac);
     unsigned h = proc_start(cmd, BT_JOB_MS, 16);
@@ -900,7 +715,7 @@ static void bt_route_select(const char *mac){
     }
     bt_attempt_cancel(strcmp(g_at.mac, mac) != 0);
     bt_route_own(mac);
-    ui_route_bt(mac);
+    (void)ui_output_select(DISKOS_OUTPUT_BLUETOOTH, mac);
 }
 
 /* ---- details screen (SCR_BT_INFO) --------------------------------------- */
@@ -1327,8 +1142,14 @@ static void scan_abort(void){
 }
 static void start_scan(void){   /* callers have established that the adapter is powered */
     /* Classic BR/EDR inquiry - what BT speakers/headphones use - needs ~10-12s to find and
-     * resolve a device's name/class; the old 6s window quit before speakers ever appeared. */
-    system("bluetoothctl --timeout 13 scan on >/dev/null 2>&1 &");
+     * resolve a device's name/class; the old 6s window quit before speakers ever appeared.
+     * Classic only: the Disc streams over A2DP alone (BlueZ 5.54, a2dp-source; no LE Audio). An unfiltered scan also
+     * records a dual-mode sink's LE advertisements, and BlueZ may then pair it over LE, where it waits for an LE
+     * connection that never comes: reset AirPods (Find My) failed to pair that way until rediscovered over BR/EDR
+     * (btmon on the Disc, 2026-11-13). The filter belongs to the bluetoothctl session, so one session sets it, scans
+     * for 13 s and quits, which ends its discovery. */
+    system("( printf 'menu scan\\ntransport bredr\\nback\\nscan on\\n'; sleep 13; printf 'scan off\\nquit\\n' )"
+           " | bluetoothctl >/dev/null 2>&1 &");
     if(g_scan_timer) lv_timer_del(g_scan_timer);
     g_scan_timer = lv_timer_create(scan_timer_cb, 13500, NULL);
     lv_timer_set_repeat_count(g_scan_timer, 1);
@@ -1382,7 +1203,7 @@ void bt_power_set(int on){
         if(g_radio_timer){ lv_timer_del(g_radio_timer); g_radio_timer = NULL; }
         bt_attempt_cancel(0);  /* a pending attempt must not scan_kick() or route while BT is off */
         scan_abort();          /* cancel any pending/active scan so it can't render over "off" */
-        ui_route_analog();     /* return audio to the DAC before killing the BT stack */
+        diskos_output_leave_bluetooth();   /* the audio leaves any sink before the BT stack goes */
         bt_disable();
         list_set_status("Bluetooth is off", 0);
     }
@@ -1408,7 +1229,7 @@ int bt_toggle(void){
         if(g_radio_timer){ lv_timer_del(g_radio_timer); g_radio_timer = NULL; }        /* cancel the bring-up poll too */
         bt_attempt_cancel(0);  /* a pending attempt must not scan_kick() or route while BT is off */
         scan_abort();          /* cancel any pending/active scan */
-        ui_route_analog();     /* return audio to the DAC before killing the BT stack */
+        diskos_output_leave_bluetooth();   /* the audio leaves any sink before the BT stack goes */
         bt_disable();
     }
     /* keep the BT screen's switch in sync so it reflects reality when opened later */

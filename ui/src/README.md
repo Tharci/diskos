@@ -8,9 +8,9 @@ One folder per area. A folder is created with its first module. Every module may
 
 | Folder      | Holds                                                       | May use                 |
 |-------------|-------------------------------------------------------------|-------------------------|
-| `utils/`    | Small general helpers with no diskOS knowledge (number parsing) | no other module     |
+| `utils/`    | Small general helpers with no diskOS knowledge (number parsing, Bluetooth addresses) | no other module     |
 | `player/`   | The stock player's protocol: frames, messages, its state    | `utils/`                |
-| `services/` | Playback, library, books, Bluetooth, Wi-Fi: logic and state | `player/`               |
+| `services/` | Playback, library, books, Bluetooth, Wi-Fi: logic and state | `player/`, other services (no cycles) |
 | `platform/` | The device: message queues, files, input, display, processes | `player/`, `services/` (implements their interfaces) |
 | `ui/`       | Screens and widgets (LVGL)                                  | `player/`, `services/`  |
 | `app/`      | Startup and the main loop: connects the parts               | all of the above        |
@@ -113,4 +113,5 @@ Both need GCC 14, CMake and Catch2 v3, which the `ui/Dockerfile` image has (see 
 
 TSan cannot start on kernels with high address-space randomisation (WSL, recent Ubuntu): it stops
 with `unexpected memory mapping`. Run it with randomisation off, `setarch -R ctest --preset
-host-tsan` (in Docker this also needs `--security-opt seccomp=unconfined`).
+host-tsan` (in Docker this also needs `--security-opt seccomp=unconfined`, which the dev container
+sets).

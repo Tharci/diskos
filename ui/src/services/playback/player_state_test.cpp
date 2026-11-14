@@ -382,5 +382,101 @@ TEST_CASE("PlayerState expires a resume that never comes", "[playback][player_st
     CHECK(state.play_state() == Unknown);
 }
 
+TEST_CASE("PlayerState loads a list play until its track plays", "[playback][player_state]") {
+    using enum PlayState;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), kNow);
+    const Changes requested = state.request_list(kNow);
+    // As captured playing an artist: Paused for the track it leaves, the new one, then Playing.
+    const auto started = play_states(
+            state, paused(), track(kSecond, ReportedPlayState::Stopped), playing(), position(0)
+    );
+
+    CHECK(requested == Changes{.play_state = true});
+    CHECK(started == std::vector{Loading, Loading, Playing, Playing});
+}
+
+TEST_CASE("PlayerState loads a list play from any state", "[playback][player_state]") {
+    using enum PlayState;
+    PlayerState unknown;
+    PlayerState loading;
+    loading.apply_report(track(kFirst, ReportedPlayState::Paused), kNow);
+    loading.request_play(kNow);
+    const Changes from_unknown = unknown.request_list(kNow);
+    const Changes from_loading = loading.request_list(kNow);
+
+    CHECK(from_unknown == Changes{.play_state = true});
+    CHECK(from_loading == Changes{});
+    CHECK(unknown.play_state() == Loading);
+    CHECK(loading.play_state() == Loading);
+}
+
+TEST_CASE("PlayerState expires a list play that never starts", "[playback][player_state]") {
+    using enum PlayState;
+    const auto start = kNow + 100s;
+    PlayerState state;
+    state.request_list(start);
+    const bool loading_before = state.advance(start + PlayerState::kLoadTimeout - 1ms).play_state;
+    const Changes expired = state.advance(start + PlayerState::kLoadTimeout);
+
+    CHECK_FALSE(loading_before);
+    CHECK(expired == Changes{.play_state = true});
+    CHECK(state.play_state() == Unknown);
+}
+
+TEST_CASE("PlayerState stops the track on an output reset", "[playback][player_state]") {
+    using enum PlayState;
+    const auto start = kNow + 100s;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), start);
+    state.apply_report(position(183000), start + 1s);
+    const Changes reset = state.note_output_reset(start + 2s);
+
+    CHECK(reset == Changes{.play_state = true, .position = true});
+    CHECK(state.play_state() == Stopped);
+    REQUIRE(state.track().has_value());
+    CHECK(state.track()->song == kFirst);
+    CHECK_FALSE(state.position_ms().has_value());
+    CHECK_FALSE(state.position_time().has_value());
+}
+
+TEST_CASE(
+        "PlayerState stays Stopped on a position left from before a reset",
+        "[playback][player_state]"
+) {
+    // The player keeps playing into a lost sink until the reset lands, so its last positions can
+    // arrive after it.
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), kNow);
+    state.note_output_reset(kNow);
+    state.apply_report(position(184000), kNow);
+
+    CHECK(state.play_state() == PlayState::Stopped);
+    CHECK(state.position_ms() == 184000);
+}
+
+TEST_CASE("PlayerState keeps when each position was reported", "[playback][player_state]") {
+    const auto start = kNow + 100s;
+    PlayerState state;
+    state.apply_report(track(kFirst, ReportedPlayState::Playing), start);
+    const std::optional<PlayerState::Clock::time_point> before = state.position_time();
+    state.apply_report(position(1000), start + 1s);
+    state.apply_report(position(2000), start + 2s);
+    const std::optional<PlayerState::Clock::time_point> reported = state.position_time();
+    state.apply_report(track(kSecond, ReportedPlayState::Stopped), start + 3s);
+
+    CHECK_FALSE(before.has_value());
+    CHECK(reported == start + 2s);
+    CHECK_FALSE(state.position_time().has_value());
+}
+
+TEST_CASE("PlayerState knows the player instance it is about", "[playback][player_state]") {
+    const PlayerState unconnected;
+    const PlayerState second{player::PlayerInstance{2}};
+
+    CHECK_FALSE(unconnected.instance().has_value());
+    CHECK(second.instance() == player::PlayerInstance{2});
+}
+
 }  // namespace
 }  // namespace diskos::playback

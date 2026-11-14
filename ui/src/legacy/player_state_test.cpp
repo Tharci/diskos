@@ -29,7 +29,7 @@ bool has_track() {
 }
 
 TEST_CASE("diskos_player_apply reports what each frame did", "[legacy]") {
-    diskos_player_reset(DISKOS_PLAYER_LOCAL);
+    diskos_player_reset(DISKOS_PLAYER_LOCAL, 1);
     const std::string first = track_frame("First Song", kPath, 2);
     const diskos_player_update loaded = apply(first);
     const diskos_player_update again = apply(first);
@@ -54,7 +54,7 @@ TEST_CASE("diskos_player_apply reports what each frame did", "[legacy]") {
 }
 
 TEST_CASE("diskos_player_get_track gives the track's fields", "[legacy]") {
-    diskos_player_reset(DISKOS_PLAYER_LOCAL);
+    diskos_player_reset(DISKOS_PLAYER_LOCAL, 1);
     apply(track_frame("First Song / Café Two", kPath, 1));
     diskos_player_track track{};
 
@@ -72,7 +72,7 @@ TEST_CASE("diskos_player_get_track gives the track's fields", "[legacy]") {
 }
 
 TEST_CASE("diskos_player_position belongs to the current track", "[legacy]") {
-    diskos_player_reset(DISKOS_PLAYER_LOCAL);
+    diskos_player_reset(DISKOS_PLAYER_LOCAL, 1);
     apply(track_frame("First Song", kPath, 0));
     apply("a103001000C9174D");
     const std::int64_t first = diskos_player_position(DISKOS_PLAYER_LOCAL);
@@ -83,7 +83,7 @@ TEST_CASE("diskos_player_position belongs to the current track", "[legacy]") {
 }
 
 TEST_CASE("diskos_player_apply clears a track that does not fit", "[legacy]") {
-    diskos_player_reset(DISKOS_PLAYER_LOCAL);
+    diskos_player_reset(DISKOS_PLAYER_LOCAL, 1);
     const std::string longest_title(DISKOS_PLAYER_TEXT_MAX, 'x');
     const std::string long_title(DISKOS_PLAYER_TEXT_MAX + 1, 'x');
     const std::string long_path = "/tmp/sdcard/" + std::string(DISKOS_PLAYER_TEXT_MAX, 'x');
@@ -102,15 +102,15 @@ TEST_CASE("diskos_player_apply clears a track that does not fit", "[legacy]") {
 
 TEST_CASE("diskos_player_reset forgets the track", "[legacy]") {
     apply(track_frame("First Song", kPath, 0));
-    diskos_player_reset(DISKOS_PLAYER_LOCAL);
+    diskos_player_reset(DISKOS_PLAYER_LOCAL, 1);
 
     CHECK_FALSE(has_track());
     CHECK(diskos_player_position(DISKOS_PLAYER_LOCAL) == -1);
 }
 
 TEST_CASE("diskos_player_apply keeps the receiver apart from local playback", "[legacy]") {
-    diskos_player_reset(DISKOS_PLAYER_LOCAL);
-    diskos_player_reset(DISKOS_PLAYER_RECEIVER);
+    diskos_player_reset(DISKOS_PLAYER_LOCAL, 1);
+    diskos_player_reset(DISKOS_PLAYER_RECEIVER, 1);
     const std::string long_title(DISKOS_PLAYER_TEXT_MAX + 1, 'x');
     apply(track_frame("First Song", kPath, 0));
     const diskos_player_update streamed = receive(airplay_frame("Some Song", 0));

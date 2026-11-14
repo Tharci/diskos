@@ -4,20 +4,45 @@ How to build, deploy, and iterate on the diskOS UI (`mq_ui`) on real hardware. F
 UI changes you do **not** need the installer or a reflash. Build, push over SSH, hot-reload. A reboot
 restores the selected signed update or flashed build.
 
-## 1. Build the binary
+## 1. Set up and build
 
-Use the pinned Docker builder (Linux and macOS, Intel or Apple Silicon):
+### Dev container (recommended)
+
+The repository is a [dev container](https://containers.dev/): VS Code runs inside the same toolchain image
+CI builds with ([`ui/Dockerfile`](../ui/Dockerfile), stage `dev`), with the editor, Python and device tools
+pinned in it. The host needs only Docker, VS Code and its Dev Containers extension (plus Remote - SSH when
+the Docker host is another machine). x86-64 hosts only.
+
+1. Open the repository in VS Code and run **Dev Containers: Reopen in Container**. The first time builds
+   the image (GCC: about 10 minutes); afterwards it opens in seconds. On creation the container runs
+   `tools/diskos-dev.sh setup`: the uv environment, the pre-commit hooks and the host CMake preset.
+2. Once, fetch the build inputs into the git-ignored `.dev/` folder: `tools/diskos-dev.sh inputs` downloads
+   the FFmpeg headers and FiiO's V2.57 firmware, checks both against their pinned hashes and extracts the
+   stock libraries. Then `cmake --preset device` in `ui/`.
+3. Build: `cmake --build --preset device` in `ui/`, the CMake Tools status bar, or the default build task.
+   C++ tests: the test explorer (select the `host` preset) or `tools/diskos-dev.sh test` for every host test.
+4. For deploying, put the Disc's address in `.dev/device.env` (`DISKOS_IP=...`, see section 2) and use
+   `tools/diskos-dev.sh deploy`, which runs [`tools/diskos-deploy.sh`](../tools/diskos-deploy.sh) (sections 3
+   and 4 explain what it does). `tools/diskos-dev.sh` lists its other commands (log, ssh, captures).
+
+The editor uses clangd ([`ui/.clangd`](../ui/.clangd)) with the build's `compile_commands.json`, so include
+paths, completion and the C++ modules' clang-tidy checks match the real target. Python uses ruff and ty
+from the locked environment, the same versions pre-commit and CI run.
+
+### Plain Docker
+
+The same toolchain without the editor setup (Linux and macOS, Intel or Apple Silicon):
 
 ```sh
 cd ui
-docker build -t diskos-ui-builder .
+docker build --target builder -t diskos-ui-builder .
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" -v /path/to/inputs:/inputs:ro \
   -e STOCK_AV_HEADERS=/inputs/ffmpeg-4.2.2.tar.xz -e STOCK_SYSROOT=/inputs/stock-v257 \
   diskos-ui-builder sh -c 'cmake --preset device && cmake --build --preset device'
 ```
 
-This produces a static `build/device/mq_ui` for `mipsel-linux-musl`. LVGL is vendored; the two inputs (the
-FFmpeg header archive and your own stock V2.57 root filesystem) are described in
+Either way this produces a static `build/device/mq_ui` for `mipsel-linux-musl`. LVGL is vendored; the two
+inputs (the FFmpeg header archive and your own stock V2.57 root filesystem) are described in
 [`ui/README.md`](../ui/README.md), with the toolchain details and a non-Docker build.
 
 ## 2. Get a shell on the device

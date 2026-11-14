@@ -44,7 +44,9 @@ rules. Build the installer with `bash build/build.sh`.
 
 The Python tooling is managed with [uv](https://docs.astral.sh/uv/). `pyproject.toml` declares the
 dependencies and the tool settings, and `uv.lock` pins every package with its hash. End users never
-need uv: `install.sh` installs `requirements.txt`, which is generated from the lock.
+need uv: `install.sh` installs `requirements.txt`, which is generated from the lock. The dev container
+(see [`docs/DEV_WORKFLOW.md`](docs/DEV_WORKFLOW.md)) comes with uv and runs the first two commands below
+when it is created.
 
 ```sh
 uv sync                       # .venv with the runtime and dev dependencies (Python from .python-version)
