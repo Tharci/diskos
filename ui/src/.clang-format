@@ -1,0 +1,37 @@
+# diskOS C++ formatting (clang-format 23, pinned in .pre-commit-config.yaml). It covers the C++ modules
+# and their tests only, never the legacy C one level up.
+---
+Language: Cpp
+BasedOnStyle: Google
+Standard: Latest
+ColumnLimit: 100
+IndentWidth: 4
+ContinuationIndentWidth: 8
+AccessModifierOffset: -4
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+InsertBraces: true
+AllowShortBlocksOnASingleLine: Never
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortLambdasOnASingleLine: Inline
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+BinPackArguments: false
+BinPackParameters: OnePerLine
+AlignAfterOpenBracket: BlockIndent
+BreakBeforeBinaryOperators: NonAssignment
+InsertNewlineAtEOF: true
+KeepEmptyLines:
+  AtStartOfBlock: false
+  AtStartOfFile: false
+SeparateDefinitionBlocks: Always
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<[a-z_]+>$'
+    Priority: 2
+  - Regex: '.*'
+    Priority: 3
+...

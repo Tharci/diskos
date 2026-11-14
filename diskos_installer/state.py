@@ -29,7 +29,13 @@ SENTINEL = ".diskos-installer-state"
 # The diskOS install/restore lifecycle values written to state.json["phase"]. Used to recognise a
 # legacy (pre-sentinel) state dir by CONTENT, specifically enough that a foreign project's state.json
 # cannot masquerade as ours. Keep in sync with service.py.
-_KNOWN_PHASES = {"prepared", "flash-started", "flash-verified", "restore-started", "restore-verified"}
+_KNOWN_PHASES = {
+    "prepared",
+    "flash-started",
+    "flash-verified",
+    "restore-started",
+    "restore-verified",
+}
 
 
 def _fsync_dir(path):
@@ -53,7 +59,9 @@ def _state_base():
     if sys.platform == "win32":
         local = os.environ.get("LOCALAPPDATA")
         if not local or not os.path.isabs(local):
-            raise errors.PreflightError("LOCALAPPDATA must name an absolute per-user directory", code="E142")
+            raise errors.PreflightError(
+                "LOCALAPPDATA must name an absolute per-user directory", code="E142"
+            )
         return os.path.join(local, APP)
     if sys.platform == "darwin":
         return os.path.expanduser(f"~/Library/Application Support/{APP}")
@@ -72,16 +80,21 @@ def _is_our_statedir(base):
         unrelated project's state.json cannot be mistaken for ours and later deleted."""
     if os.path.isfile(os.path.join(base, SENTINEL)):
         return True
-    if (os.path.isfile(os.path.join(base, "stock", "stock.bin"))
-            and os.path.isfile(os.path.join(base, "stock", "stock.sha256"))):
+    if os.path.isfile(os.path.join(base, "stock", "stock.bin")) and os.path.isfile(
+        os.path.join(base, "stock", "stock.sha256")
+    ):
         return True
     sj = os.path.join(base, "state.json")
     if os.path.isfile(sj):
         try:
             with open(sj) as f:
                 d = json.load(f)
-            if (isinstance(d, dict) and isinstance(d.get("installed"), bool)
-                    and isinstance(d.get("phase"), str) and d.get("phase") in _KNOWN_PHASES):
+            if (
+                isinstance(d, dict)
+                and isinstance(d.get("installed"), bool)
+                and isinstance(d.get("phase"), str)
+                and d.get("phase") in _KNOWN_PHASES
+            ):
                 return True
         except (OSError, ValueError, TypeError):
             pass
@@ -96,8 +109,11 @@ def state_dir():
     # that shows NO sign of being ours, so a mis-set DISKOS_INSTALLER_HOME (e.g. $HOME) can't be
     # tagged here and later wiped by 'remove'. The DEFAULT XDG/APP path is always ours; and an
     # existing state dir (even one predating the sentinel) is recognised by its contents.
-    if (os.environ.get("DISKOS_INSTALLER_HOME") and os.path.isdir(base)
-            and not _is_our_statedir(base)):
+    if (
+        os.environ.get("DISKOS_INSTALLER_HOME")
+        and os.path.isdir(base)
+        and not _is_our_statedir(base)
+    ):
         try:
             nonempty = bool(os.listdir(base))
         except OSError:
@@ -105,12 +121,16 @@ def state_dir():
         if nonempty:
             raise errors.PreflightError(
                 f"DISKOS_INSTALLER_HOME={base!r} is a non-empty directory that is not a diskOS "
-                "state dir - refusing to use it. Point it at a new or empty path.", code="E142")
+                "state dir - refusing to use it. Point it at a new or empty path.",
+                code="E142",
+            )
     os.makedirs(base, exist_ok=True)
     if not os.path.exists(marker):
         try:
             with open(marker, "w") as f:
-                f.write("diskOS installer state directory - safe to delete via 'diskos-installer remove'\n")
+                f.write(
+                    "diskOS installer state directory - safe to delete via 'diskos-installer remove'\n"
+                )
         except OSError:
             pass
     return base
@@ -174,6 +194,7 @@ def sha256_file(path, progress=None):
 # A new backup is STAGED as a new generation and only becomes current when a flash run proves the Disc is on its base,
 # so an interrupted or refused install never replaces a good recovery image.
 
+
 def _stock_root():
     d = os.path.join(state_dir(), "stock")
     os.makedirs(d, exist_ok=True)
@@ -182,14 +203,20 @@ def _stock_root():
 
 def _gen_names():
     try:
-        return sorted(n for n in os.listdir(_stock_root()) if len(n) == 5 and n[0] == "g" and n[1:].isdigit())
+        return sorted(
+            n for n in os.listdir(_stock_root()) if len(n) == 5 and n[0] == "g" and n[1:].isdigit()
+        )
     except OSError:
         return []
 
 
 def generation_paths(gen):
     d = os.path.join(_stock_root(), gen)
-    return os.path.join(d, "stock.bin"), os.path.join(d, "stock.sha256"), os.path.join(d, "stock.json")
+    return (
+        os.path.join(d, "stock.bin"),
+        os.path.join(d, "stock.sha256"),
+        os.path.join(d, "stock.json"),
+    )
 
 
 def pointer_status():
@@ -231,8 +258,10 @@ def stock_paths():
         b, sh, _ = generation_paths(gen)
         return b, sh
     d = _stock_root()
-    if st == "damaged":                                  # nothing usable: never fall back to the legacy pair
-        return os.path.join(d, "damaged-pointer", "stock.bin"), os.path.join(d, "damaged-pointer", "stock.sha256")
+    if st == "damaged":  # nothing usable: never fall back to the legacy pair
+        return os.path.join(d, "damaged-pointer", "stock.bin"), os.path.join(
+            d, "damaged-pointer", "stock.sha256"
+        )
     return os.path.join(d, "stock.bin"), os.path.join(d, "stock.sha256")
 
 
@@ -291,8 +320,12 @@ def promote_generation(gen):
     m = read_manifest(gen)
     if m is not None and m.get("status") != "committed":
         m["status"] = "committed"
-        _write_file_durable(generation_paths(gen)[2], json.dumps(m, indent=2, sort_keys=True).encode())
-    _write_file_durable(os.path.join(_stock_root(), "current.json"), json.dumps({"gen": gen}).encode())
+        _write_file_durable(
+            generation_paths(gen)[2], json.dumps(m, indent=2, sort_keys=True).encode()
+        )
+    _write_file_durable(
+        os.path.join(_stock_root(), "current.json"), json.dumps({"gen": gen}).encode()
+    )
     _fsync_dir(_stock_root())
 
 
@@ -320,7 +353,7 @@ def prune_generations(keep):
     cur = current_generation()
     others = [g for g in _gen_names() if g not in (cur, keep)]
     removed = []
-    for g in others[:-1]:                                # all but the newest other one
+    for g in others[:-1]:  # all but the newest other one
         if discard_generation(g):
             removed.append(g)
     return removed
@@ -360,7 +393,7 @@ def wipe_all():
     """Delete the entire tool state directory, including firmware ZIPs and partials.
     Returns (path, errors): errors is a list of (path, message) for anything that
     could NOT be removed, so the caller reports the truth instead of a false success."""
-    d = _state_base()   # PATH only - never re-create the sentinel we are about to verify
+    d = _state_base()  # PATH only - never re-create the sentinel we are about to verify
     errs = []
     # SAFETY: only ever recursively delete a directory we can PROVE is our own state dir. This
     # guards against DISKOS_INSTALLER_HOME being set to '/', '$HOME', the cwd, or any other tree.
@@ -384,20 +417,31 @@ def wipe_all():
     # image. Detach a stale one (bounded retries), and refuse to delete while it is still mounted.
     scratch = os.path.join(d, "build", ".cs-scratch")
     if os.path.ismount(scratch):
-        import subprocess, time
+        import subprocess
+        import time
+
         for i in range(6):
             if not os.path.ismount(scratch):
                 break
             try:
-                subprocess.run(["hdiutil", "detach", scratch] + (["-force"] if i >= 3 else []),
-                               capture_output=True, text=True, timeout=60)
+                subprocess.run(
+                    ["hdiutil", "detach", scratch] + (["-force"] if i >= 3 else []),
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
             except FileNotFoundError:
                 break
             except subprocess.TimeoutExpired:
                 pass
             time.sleep(0.4 * (i + 1))
         if os.path.ismount(scratch):
-            return d, [(scratch, "a case-sensitive scratch volume is still mounted here; detach "
-                        "it (hdiutil detach) and retry")]
+            return d, [
+                (
+                    scratch,
+                    "a case-sensitive scratch volume is still mounted here; detach "
+                    "it (hdiutil detach) and retry",
+                )
+            ]
     shutil.rmtree(d, onerror=lambda fn, path, exc: errs.append((path, str(exc[1]))))
     return d, errs

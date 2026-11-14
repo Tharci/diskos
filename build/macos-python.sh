@@ -1,7 +1,7 @@
 #!/bin/sh
 # Sourced by install.sh. Probe Tk without opening a display.
 macos_python_ok() {
-    "$1" -c 'import sys, tkinter; sys.exit(0 if sys.version_info >= (3, 8) and tkinter.TkVersion >= 8.6 else 1)' 2>/dev/null
+    "$1" -c 'import sys, tkinter; sys.exit(0 if sys.version_info >= (3, 10) and tkinter.TkVersion >= 8.6 else 1)' 2>/dev/null
 }
 select_macos_python() {
     for candidate in /Library/Frameworks/Python.framework/Versions/Current/bin/python3 \
@@ -13,7 +13,7 @@ select_macos_python() {
             return 0
         fi
     done
-    echo 'error: macOS needs Python 3.8+ with Tk >= 8.6.' >&2
+    echo 'error: macOS needs Python 3.10+ with Tk >= 8.6.' >&2
     echo 'Install Python from https://www.python.org/downloads/macos/ and re-run ./install.sh.' >&2
     echo 'For Homebrew Python: brew install python-tk@<major.minor> (match your Python version).' >&2
     return 1

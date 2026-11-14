@@ -13,7 +13,10 @@ cd "$(dirname "$0")/.."          # installer/
 
 VENV=build/venv
 [ -d "$VENV" ] || python3 -m venv "$VENV"
-"$VENV/bin/pip" install --quiet --upgrade pip pyinstaller -r requirements.txt
+# Separate installs: requirements.txt is hash-locked, and pip's hash-checking mode would refuse the
+# unhashed pip/pyinstaller in the same command.
+"$VENV/bin/pip" install --quiet --upgrade pip pyinstaller
+"$VENV/bin/pip" install --quiet --require-hashes -r requirements.txt
 
 # sanity: the vendor dir for this host must exist
 tag=$("$VENV/bin/python" - <<'PY'

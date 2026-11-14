@@ -299,10 +299,12 @@ int wifi_control_on(void){
 
 static void wifi_reconcile_poll(void){
     if(!fw_has_radio_boot_arbitration()){ g_reco_hold = 0; return; }
-    unsigned gen = ipc_generation(), rx = ipc_rx_frames();
+    unsigned gen = ipc_instance(), rx = ipc_rx_frames();
     uint32_t now = lv_tick_get();
     int first_generation = 0;
-    if(gen != g_reco_gen){                          /* new player generation: arm */
+    if(gen != g_reco_gen && g_reco_gen == 0){       /* the first player connected (0 = none yet): the first arm stands */
+        g_reco_gen = gen;
+    } else if(gen != g_reco_gen){                   /* UI start, or a new player instance: arm */
         first_generation = (g_reco_gen == 0xFFFFFFFFu);
         g_reco_gen = gen; g_reco_hold = 1; g_reco_rx0 = rx; g_reco_epoch0 = g_intent_epoch;
         g_reco_armed_at = now; g_reco_seen_rx = 0; g_reco_probe_at = now - 1000; g_reco_eval_at = now - RECO_PROBE_MS;
@@ -468,7 +470,7 @@ static void wifi_lease_observe(struct wifi_obs *o, const char *status){
 static int wifi_lease_matches(const struct wifi_obs *o){
     return wifi_proc_eq(o->wpa, g_lease.net.wpa) && wifi_proc_eq(o->dhcp, g_lease.net.dhcp) &&
         o->id == g_lease.net.id && !strcmp(o->ssid, g_lease.net.ssid) &&
-        g_lease.intent == g_intent_epoch && g_lease.player == ipc_generation();
+        g_lease.intent == g_intent_epoch && g_lease.player == ipc_instance();
 }
 static int wifi_lease_signal_context(int sig){
     char status[2048]; run_cap(WCLI "status 2>/dev/null", status, sizeof status);
@@ -503,7 +505,7 @@ static void wifi_lease_advance(const struct wifi_obs *o, uint32_t now){
     if(!wifi_lease_matches(o) || g_lease.phase == LEASE_NONE ||
        (g_lease.phase == LEASE_FAILED && now - g_lease.since >= 1000)){
         int first = !g_lease.epoch && g_lease.seen_empty && o->ip == 0;
-        g_lease.net = *o; g_lease.intent = g_intent_epoch; g_lease.player = ipc_generation();
+        g_lease.net = *o; g_lease.intent = g_intent_epoch; g_lease.player = ipc_instance();
         g_lease.epoch++; g_lease.since = now; g_lease.seen_empty = first; g_lease.resume = LEASE_NONE;
         if(first) g_lease.phase = LEASE_ACQUIRE;
         else if(g_lease.released){
@@ -565,7 +567,7 @@ static void wifi_lease_step(void){
     static int want_prev = -1, lit_prev, screen_prev = -1;
     static uint32_t input_prev;
     int want_now = cfg_get_int("wifi_on", 1), lit = ui_screen_backlight_on(), screen = screen_current();
-    unsigned gen = ipc_generation();
+    unsigned gen = ipc_instance();
     /* Last input tick, read against one unchanged tick so it is exact. */
     uint32_t tick, idle;
     do { tick = lv_tick_get(); idle = lv_display_get_inactive_time(NULL); } while(lv_tick_get() != tick);
@@ -698,7 +700,7 @@ int wifi_connectivity(void){
     if(!cfg_get_int("wifi_on", 1)) return 0;
     if(g_reco_hold || !g_lease_settled) return -1;
     return g_lease.net.allowed && g_lease.phase == LEASE_READY &&
-           g_lease.intent == g_intent_epoch && g_lease.player == ipc_generation();
+           g_lease.intent == g_intent_epoch && g_lease.player == ipc_instance();
 }
 
 /* centred grey placeholder shown in the list area for non-network states */

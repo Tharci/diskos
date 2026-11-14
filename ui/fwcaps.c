@@ -57,9 +57,7 @@ int fw_os_ver(void){
     return cached;
 }
 
-/* The player generations whose local-init handshake / direct SD mount diskOS drives. Kept as two
- * distinct predicates (not a single >= check) so a future firmware can gain one without the other. */
-int fw_needs_localplayer_init(void){ int v = fw_os_ver(); return v == 240 || v == 257; }
+/* The player generations whose direct SD mount diskOS drives. */
 int fw_needs_direct_sd_mount(void){  int v = fw_os_ver(); return v == 240 || v == 257; }
 
 /* Firmware whose player accepts the Custom EQ editor's fixed 10-band curve (32 Hz..16 kHz) as written. V2.57's PEQ

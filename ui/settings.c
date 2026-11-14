@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 diskOS contributors */
 #include "screens.h"
+#include "legacy/output.h"
 #include "theme.h"
 #include "theme_kit.h"
 #include "config.h"
@@ -138,7 +139,7 @@ static void apply_gain(int v){ ui_set_gain(v); }
 static void apply_dac_filter(int v){ ui_set_dac_filter(v); }
 static void apply_gapless(int v){ ui_set_gapless(v); }
 #ifdef DISKOS_TEST_OUTPUTS
-static void apply_spdif(int v){ ui_set_output(v); }   /* SPDIF: stock toggle form: pause -> silent -> 0666 -> 0657 8 -> resume (modes.c); the toggle then mirrors the real route */
+static void apply_spdif(int v){ ui_set_output(v); }   /* SPDIF: the output router moves it; the toggle shows its choice */
 #endif
 static void apply_memory(int v){ ui_set_memory(v); }
 static void apply_maxvol(int v){ ui_set_maxvol(v); }
@@ -782,6 +783,7 @@ static const setting_t TABLE[] = {
 
 static int get_val(const setting_t *s){
     if(s->cfg_key && !strcmp(s->cfg_key, "bt_codec")) return mdb_sysconfig_bt_codec();
+    if(s->cfg_key && !strcmp(s->cfg_key, "spdif")) return diskos_output_desired(NULL) == DISKOS_OUTPUT_SPDIF;   /* the output router's, never stored */
     if(s->cfg_key && !strcmp(s->cfg_key, "ota_auto"))
         return !strcmp(cfg_get_str(s->cfg_key, "0"), "1");
     return s->cfg_key ? cfg_get_int(s->cfg_key, s->def) : 0;
@@ -794,7 +796,7 @@ static void set_val(const setting_t *s, int v){
     /* EQ and automatic checks persist after success; stock owns codec storage. */
     g_set_prev = get_val(s);
     if(s->cfg_key && strcmp(s->cfg_key, "eq_preset") && strcmp(s->cfg_key, "bt_codec") &&
-       strcmp(s->cfg_key, "ota_auto")) cfg_set_int(s->cfg_key, v);
+       strcmp(s->cfg_key, "ota_auto") && strcmp(s->cfg_key, "spdif")) cfg_set_int(s->cfg_key, v);
     if(s->apply) s->apply(v);
 }
 /* "1.2.0 (8c29ecbf)": the release plus the first 8 hex of the RUNNING binary's md5 - the build id used in every

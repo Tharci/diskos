@@ -10,36 +10,53 @@ Characters a face lacks (symbols, CJK) fall back at runtime to the international
 
 Usage: python3 tools/gen_theme_fonts.py --src DIR [--converter lv_font_conv.js] [--only THEME]
 """
-import argparse, subprocess, sys, tempfile
+
+import argparse
+import subprocess
+import tempfile
 from pathlib import Path
 
 APP = Path(__file__).resolve().parent.parent
-TEXT = '0x20-0x7E,0xA0-0xFF,0x2018-0x201D,0x2026,0x2022'
-CLOCK = '0x20,0x2D,0x30-0x3A,0x41,0x4D,0x50'          # space - 0-9 : A M P
-GLITCH = '0x20-0x7E,0xA0-0xFF,0x400-0x45F'
-DOT = '0x20-0x7E,0xA0-0xFF'
+TEXT = "0x20-0x7E,0xA0-0xFF,0x2018-0x201D,0x2026,0x2022"
+CLOCK = "0x20,0x2D,0x30-0x3A,0x41,0x4D,0x50"  # space - 0-9 : A M P
+GLITCH = "0x20-0x7E,0xA0-0xFF,0x400-0x45F"
+DOT = "0x20-0x7E,0xA0-0xFF"
 
 # theme -> [(face, source file, {axis: value} or None, sizes, range)]
 FONTS = {
-    'dot': [('', 'something/Doto-w700.ttf', None, (18, 28), DOT)],
-    'hifi': [('ui', 'concepts/Inter-VF.ttf', {'wght': 600}, (12, 14, 16, 18, 20, 24), TEXT),
-             ('seg', 'concepts/DSEG7Classic-Bold.ttf', None, (20, 64), CLOCK)],
-    'term': [('ui', 'concepts/JetBrainsMono-VF.ttf', {'wght': 500}, (12, 14, 16, 18, 20, 24), TEXT),
-             ('clk', 'concepts/JetBrainsMono-VF.ttf', {'wght': 800}, (72,), CLOCK)],
-    'bauh': [('ui', 'concepts/SpaceGrotesk-VF.ttf', {'wght': 500}, (12, 14, 16, 18, 20, 24), TEXT),
-             ('bold', 'concepts/SpaceGrotesk-VF.ttf', {'wght': 700}, (22, 32), TEXT),
-             ('clk', 'concepts/SpaceGrotesk-VF.ttf', {'wght': 700}, (96, 140), CLOCK)],
-    'blue': [('sans', 'concepts/IBMPlexSans-VF.ttf', {'wght': 500}, (14, 16, 18, 20), TEXT),
-             ('clk', 'something/IBMPlexMono-Regular.ttf', None, (56,), CLOCK)],
-    'stone': [('ui', 'concepts/Nunito-VF.ttf', {'wght': 700}, (12, 14, 16, 18, 20, 24), TEXT),
-              ('clk', 'concepts/Nunito-VF.ttf', {'wght': 800}, (64,), CLOCK)],
-    'zine': [('ui', 'concepts/CourierPrime-Regular.ttf', None, (12, 14, 16, 18, 20, 24), TEXT),
-             ('bold', 'concepts/CourierPrime-Bold.ttf', None, (16, 20), TEXT),
-             ('glitch', 'concepts/RubikGlitch-Regular.ttf', None, (26,), GLITCH),
-             ('clk', 'concepts/CourierPrime-Bold.ttf', None, (50,), CLOCK)],
+    "dot": [("", "something/Doto-w700.ttf", None, (18, 28), DOT)],
+    "hifi": [
+        ("ui", "concepts/Inter-VF.ttf", {"wght": 600}, (12, 14, 16, 18, 20, 24), TEXT),
+        ("seg", "concepts/DSEG7Classic-Bold.ttf", None, (20, 64), CLOCK),
+    ],
+    "term": [
+        ("ui", "concepts/JetBrainsMono-VF.ttf", {"wght": 500}, (12, 14, 16, 18, 20, 24), TEXT),
+        ("clk", "concepts/JetBrainsMono-VF.ttf", {"wght": 800}, (72,), CLOCK),
+    ],
+    "bauh": [
+        ("ui", "concepts/SpaceGrotesk-VF.ttf", {"wght": 500}, (12, 14, 16, 18, 20, 24), TEXT),
+        ("bold", "concepts/SpaceGrotesk-VF.ttf", {"wght": 700}, (22, 32), TEXT),
+        ("clk", "concepts/SpaceGrotesk-VF.ttf", {"wght": 700}, (96, 140), CLOCK),
+    ],
+    "blue": [
+        ("sans", "concepts/IBMPlexSans-VF.ttf", {"wght": 500}, (14, 16, 18, 20), TEXT),
+        ("clk", "something/IBMPlexMono-Regular.ttf", None, (56,), CLOCK),
+    ],
+    "stone": [
+        ("ui", "concepts/Nunito-VF.ttf", {"wght": 700}, (12, 14, 16, 18, 20, 24), TEXT),
+        ("clk", "concepts/Nunito-VF.ttf", {"wght": 800}, (64,), CLOCK),
+    ],
+    "zine": [
+        ("ui", "concepts/CourierPrime-Regular.ttf", None, (12, 14, 16, 18, 20, 24), TEXT),
+        ("bold", "concepts/CourierPrime-Bold.ttf", None, (16, 20), TEXT),
+        ("glitch", "concepts/RubikGlitch-Regular.ttf", None, (26,), GLITCH),
+        ("clk", "concepts/CourierPrime-Bold.ttf", None, (50,), CLOCK),
+    ],
     # the boot splash wordmark: a light "disk" and a bold "OS", only those letters
-    'splash': [('light', 'concepts/Inter-VF.ttf', {'wght': 300}, (26,), '0x64,0x69,0x6B,0x73'),
-               ('bold', 'concepts/Inter-VF.ttf', {'wght': 700}, (26,), '0x4F,0x53')],
+    "splash": [
+        ("light", "concepts/Inter-VF.ttf", {"wght": 300}, (26,), "0x64,0x69,0x6B,0x73"),
+        ("bold", "concepts/Inter-VF.ttf", {"wght": 700}, (26,), "0x4F,0x53"),
+    ],
 }
 
 
@@ -48,7 +65,10 @@ def instance(src, axes, tmp):
         return src
     from fontTools.ttLib import TTFont
     from fontTools.varLib import instancer
-    out = Path(tmp) / (src.stem + '-' + '-'.join('%s%d' % kv for kv in sorted(axes.items())) + '.ttf')
+
+    out = Path(tmp) / (
+        src.stem + "-" + "-".join("%s%d" % kv for kv in sorted(axes.items())) + ".ttf"
+    )
     if not out.exists():
         f = instancer.instantiateVariableFont(TTFont(src), axes)
         f.save(out)
@@ -57,10 +77,16 @@ def instance(src, axes, tmp):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--src', type=Path, required=True,
-                   help='Font input directory containing the concepts/ and something/ files listed in FONTS')
-    p.add_argument('--converter', type=Path, default=APP.parent / 'node_modules/lv_font_conv/lv_font_conv.js')
-    p.add_argument('--only')
+    p.add_argument(
+        "--src",
+        type=Path,
+        required=True,
+        help="Font input directory containing the concepts/ and something/ files listed in FONTS",
+    )
+    p.add_argument(
+        "--converter", type=Path, default=APP.parent / "node_modules/lv_font_conv/lv_font_conv.js"
+    )
+    p.add_argument("--only")
     a = p.parse_args()
     made = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -70,23 +96,49 @@ def main():
             for face, src, axes, sizes, rng in faces:
                 ttf = instance(a.src / src, axes, tmp)
                 for px in sizes:
-                    stem = '_'.join(str(v) for v in (theme, face, px) if v != '')
-                    name = 'diskos_' + stem
-                    out = APP / ('font_' + stem + '.c')
-                    subprocess.run(['node', str(a.converter), '--font', str(ttf), '--size', str(px), '--bpp', '4',
-                                    '--format', 'lvgl', '--range', rng, '--no-compress', '--force-fast-kern-format',
-                                    '--lv-font-name', name, '-o', str(out)], check=True)
+                    stem = "_".join(str(v) for v in (theme, face, px) if v != "")
+                    name = "diskos_" + stem
+                    out = APP / ("font_" + stem + ".c")
+                    subprocess.run(
+                        [
+                            "node",
+                            str(a.converter),
+                            "--font",
+                            str(ttf),
+                            "--size",
+                            str(px),
+                            "--bpp",
+                            "4",
+                            "--format",
+                            "lvgl",
+                            "--range",
+                            rng,
+                            "--no-compress",
+                            "--force-fast-kern-format",
+                            "--lv-font-name",
+                            name,
+                            "-o",
+                            str(out),
+                        ],
+                        check=True,
+                    )
                     # the Opts line records the temp path of an instanced font: keep only its file name
                     t = out.read_text().replace(str(ttf), ttf.name).replace(str(out), out.name)
                     out.write_text(t)
                     made.append(out.name)
-    if not a.only:   # the declarations every theme definition uses
-        hdr = ['/* SPDX-License-Identifier: GPL-3.0-or-later */', '/* Copyright (C) 2026 diskOS contributors */', '/* GENERATED by tools/gen_theme_fonts.py: the unique themes\' fonts. */', '#ifndef THEME_FONTS_H',
-               '#define THEME_FONTS_H', '#include "lvgl/lvgl.h"']
-        hdr += ['LV_FONT_DECLARE(%s)' % Path(m).stem.replace('font_', 'diskos_', 1) for m in made]
-        (APP / 'theme_fonts.h').write_text('\n'.join(hdr + ['#endif', '']))
-    print('\n'.join(made))
+    if not a.only:  # the declarations every theme definition uses
+        hdr = [
+            "/* SPDX-License-Identifier: GPL-3.0-or-later */",
+            "/* Copyright (C) 2026 diskOS contributors */",
+            "/* GENERATED by tools/gen_theme_fonts.py: the unique themes' fonts. */",
+            "#ifndef THEME_FONTS_H",
+            "#define THEME_FONTS_H",
+            '#include "lvgl/lvgl.h"',
+        ]
+        hdr += ["LV_FONT_DECLARE(%s)" % Path(m).stem.replace("font_", "diskos_", 1) for m in made]
+        (APP / "theme_fonts.h").write_text("\n".join(hdr + ["#endif", ""]))
+    print("\n".join(made))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -69,7 +69,8 @@ if ! command -v cc >/dev/null 2>&1; then
   exit 2
 fi
 # make pkg-config find Homebrew's libusb even on a fresh shell
-export PKG_CONFIG_PATH="$(brew --prefix libusb)/lib/pkgconfig:$BREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+LIBUSB_PREFIX=$(brew --prefix libusb)   # separate, so a failing brew is not masked by export
+export PKG_CONFIG_PATH="$LIBUSB_PREFIX/lib/pkgconfig:$BREW_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 pkg-config --exists libusb-1.0 || { echo "ERROR: pkg-config can't find libusb-1.0 (PKG_CONFIG_PATH=$PKG_CONFIG_PATH)" >&2; exit 2; }
 
 # --- compile usbboot from source --------------------------------------------

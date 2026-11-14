@@ -1,6 +1,7 @@
 """Display assets and drawn controls of the installer window: titles/kickers come from the pre-rendered sheet
 with a text fallback, the hero disc hides with the hero, Dev lives under Advanced without changing behaviour,
 and every asset loads at both scales. Display tests skip without Tk/display."""
+
 import json
 import os
 import sys
@@ -8,7 +9,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from diskos_installer import gui, gui_theme, platform_probe  # noqa: E402
+from diskos_installer import gui, gui_theme, platform_probe
 
 ASSETS = os.path.join(os.path.dirname(__file__), "..", "diskos_installer", "assets")
 
@@ -20,10 +21,21 @@ class AssetFiles(unittest.TestCase):
         titles = {text[0] for text in gui.MODE_TEXT.values()}
         titles.update(text[0] for text in gui.SUCCESS_TEXT.values())
         titles.update(gui.CONFIRM_TITLE.values())
-        titles.update(("Install diskOS (public)", "Install diskOS (dev)", "Set up USB driver",
-                       "Finished with problems", "Something went wrong", "The flash result is unknown",
-                       "USB driver setup stopped", "The flash did not complete", "The install stopped",
-                       "The restore stopped", "The removal stopped"))
+        titles.update(
+            (
+                "Install diskOS (public)",
+                "Install diskOS (dev)",
+                "Set up USB driver",
+                "Finished with problems",
+                "Something went wrong",
+                "The flash result is unknown",
+                "USB driver setup stopped",
+                "The flash did not complete",
+                "The install stopped",
+                "The restore stopped",
+                "The removal stopped",
+            )
+        )
         for scale in idx:
             for title in titles:
                 self.assertIn("title:" + title, idx[scale], (scale, title))
@@ -31,7 +43,11 @@ class AssetFiles(unittest.TestCase):
             self.assertIn(key, idx["1"])
         self.assertEqual(set(idx["1"]), set(idx["2"]))
         self.assertEqual(set(idx["1"]), set(idx["1.5"]))
-        for scale, name in (("1", "display.png"), ("1.5", "display@1.5x.png"), ("2", "display@2x.png")):
+        for scale, name in (
+            ("1", "display.png"),
+            ("1.5", "display@1.5x.png"),
+            ("2", "display@2x.png"),
+        ):
             with open(os.path.join(ASSETS, name), "rb") as f:
                 head = f.read(24)
             self.assertEqual(head[:8], b"\x89PNG\r\n\x1a\n")
@@ -46,14 +62,21 @@ class AssetFiles(unittest.TestCase):
             key.encode("ascii")
 
     def test_assets_stay_small(self):
-        total = sum(os.path.getsize(os.path.join(ASSETS, n)) for n in os.listdir(ASSETS) if n.endswith(".png"))
-        self.assertLess(total, 440 * 1024)         # 400 KB before the result-screen strings joined the sheet
+        total = sum(
+            os.path.getsize(os.path.join(ASSETS, n))
+            for n in os.listdir(ASSETS)
+            if n.endswith(".png")
+        )
+        self.assertLess(
+            total, 440 * 1024
+        )  # 400 KB before the result-screen strings joined the sheet
 
 
 class DisplayWidgets(unittest.TestCase):
     def _root(self):
         try:
             import tkinter as tk
+
             root = tk.Tk()
         except Exception as e:
             self.skipTest("no Tk display: %s" % e)
@@ -63,12 +86,23 @@ class DisplayWidgets(unittest.TestCase):
 
     def _app(self):
         root = self._root()
-        patches = [mock.patch.object(gui, "ota_key_available", return_value=True),
-                   mock.patch.object(platform_probe, "maskrom_count", return_value=0),
-                   mock.patch.object(gui.state, "stock_image_exists", return_value=False),
-                   mock.patch.object(gui.readiness, "probe", return_value={
-                       "os": "linux", "count": 0, "access": None, "inv": None, "inv_error": None,
-                       "missing_tools": []})]
+        patches = [
+            mock.patch.object(gui, "ota_key_available", return_value=True),
+            mock.patch.object(platform_probe, "maskrom_count", return_value=0),
+            mock.patch.object(gui.state, "stock_image_exists", return_value=False),
+            mock.patch.object(
+                gui.readiness,
+                "probe",
+                return_value={
+                    "os": "linux",
+                    "count": 0,
+                    "access": None,
+                    "inv": None,
+                    "inv_error": None,
+                    "missing_tools": [],
+                },
+            ),
+        ]
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
@@ -97,6 +131,7 @@ class DisplayWidgets(unittest.TestCase):
     def test_missing_sheet_falls_back_to_text(self):
         root = self._root()
         from tkinter import ttk
+
         with mock.patch.object(gui_theme, "_find_asset", return_value=None):
             lbl = ttk.Label(root)
             self.assertFalse(gui_theme.set_display(lbl, "Install diskOS"))
@@ -104,11 +139,14 @@ class DisplayWidgets(unittest.TestCase):
             self.assertEqual(str(lbl.cget("image")), "")
             k = gui_theme.kicker(root, "Variant")
             self.assertEqual(str(k.cget("text")), "VARIANT")
-            self.assertIsNotNone(gui_theme.hero_bleed(root, ttk.Frame(root), ttk.Frame(root)))   # drawn disc
+            self.assertIsNotNone(
+                gui_theme.hero_bleed(root, ttk.Frame(root), ttk.Frame(root))
+            )  # drawn disc
 
     def test_unknown_display_string_falls_back_to_text(self):
         root = self._root()
         from tkinter import ttk
+
         lbl = ttk.Label(root)
         self.assertFalse(gui_theme.set_display(lbl, "Not in the sheet"))
         self.assertEqual(str(lbl.cget("text")), "Not in the sheet")
@@ -126,7 +164,9 @@ class DisplayWidgets(unittest.TestCase):
         self.assertAlmostEqual(got["2"] / got["1"], 2, delta=0.25)
         root.tk.call("tk", "scaling", 96 / 72 * 1.25)
         self.assertFalse(gui_theme.dense(root))
-        self.assertIsNotNone(gui_theme.wordmark(root))     # no 1.5x wordmark: falls back to the nearest file
+        self.assertIsNotNone(
+            gui_theme.wordmark(root)
+        )  # no 1.5x wordmark: falls back to the nearest file
 
     def test_hero_disc_hides_with_the_hero(self):
         app = self._app()
@@ -142,16 +182,16 @@ class DisplayWidgets(unittest.TestCase):
 
     def test_dev_is_under_advanced_and_opens_when_chosen(self):
         app = self._app()
-        self.assertEqual(app._adv.winfo_manager(), "")              # hidden by default
+        self.assertEqual(app._adv.winfo_manager(), "")  # hidden by default
         app._toggle_advanced()
         self.assertEqual(app._adv.winfo_manager(), "pack")
         app._toggle_advanced()
         self.assertEqual(app._adv.winfo_manager(), "")
-        app.variant.set("dev")                                       # chosen any way: it shows, with the warning
+        app.variant.set("dev")  # chosen any way: it shows, with the warning
         app._variant_warn()
         self.assertEqual(app._adv.winfo_manager(), "pack")
         self.assertIn("always-on passwordless USB root", str(app.variant_warn_lbl.cget("text")))
-        app._toggle_advanced(False)                                  # never hides the selected choice
+        app._toggle_advanced(False)  # never hides the selected choice
         self.assertEqual(app._adv.winfo_manager(), "pack")
         app.variant.set("public")
         app._variant_warn()
@@ -162,8 +202,11 @@ class DisplayWidgets(unittest.TestCase):
         app = self._app()
         app.root.deiconify()
         app.root.update()
-        public = next(w for w in app._adv.master.winfo_children()
-                      if w.winfo_class() == "TRadiobutton" and w is not app._adv)
+        public = next(
+            w
+            for w in app._adv.master.winfo_children()
+            if w.winfo_class() == "TRadiobutton" and w is not app._adv
+        )
         public.focus_force()
         app.root.update()
         app.root.tk.eval("""
@@ -177,7 +220,9 @@ class DisplayWidgets(unittest.TestCase):
         for key in ("<Down>", "<Up>"):
             public.event_generate(key)
             app.root.update()
-            self.assertEqual(app.root.tk.splitlist(app.root.tk.call("set", "::diskos_radio_targets")), ())
+            self.assertEqual(
+                app.root.tk.splitlist(app.root.tk.call("set", "::diskos_radio_targets")), ()
+            )
             self.assertIs(app.root.focus_get(), public)
         app._toggle_advanced(True)
         app.root.update()

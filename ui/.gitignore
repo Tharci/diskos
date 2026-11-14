@@ -30,5 +30,7 @@ tests/volkeys_hold_test
 tests/btstore_test
 
 # UI and FreeType build products
+# CMake build directories (cmake --preset ...)
+build/
 mq_ui
 third_party/out/

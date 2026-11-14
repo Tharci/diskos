@@ -6,51 +6,62 @@
 The filesystem marker and SD admission implementation are real. Only hardware,
 LVGL and running-player inspection are replaced at their boundaries.
 """
+
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 app = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(app.parents[1] / "tests/release"))
 from host_test_support import function
+
 source = (app / "main.c").read_text()
-source = source[source.index("/* SD operations share"):source.index("static int book_session_active(void);")]
+source = source[
+    source.index("/* SD operations share") : source.index("static int book_session_active(void);")
+]
 a = source.index("static int storage_player_guarded(void){")
 b = source.index("static int source_send(", a)
-source = source[:a] + "static int storage_player_guarded(void){ return test_guarded; }\n" + source[b:]
+source = (
+    source[:a] + "static int storage_player_guarded(void){ return test_guarded; }\n" + source[b:]
+)
 source = source.replace("static int rmguard_dir_ok(const char *dir);", "")
 # Receiver entry is not a storage-test subject. Keep the storage functions real,
 # but replace the embedded controller with an idle, unowned receiver boundary.
 a = source.index("/* RECEIVER-ENTRY-BEGIN:")
 b = source.index("/* RECEIVER-ENTRY-END */", a) + len("/* RECEIVER-ENTRY-END */")
-source = source[:a] + r'''
+source = (
+    source[:a]
+    + r"""
 static const struct { int owned, active, failed; } g_rxsw = {0};
 static int receiver_switch(receiver_source target){
     (void)target;
     assert(0 && "storage tests must not enter a receiver session");
     return -1;
 }
-''' + source[b:]
+"""
+    + source[b:]
+)
+
 
 def run_harness(exe, timeout):
     """Run a compiled harness; its LAST stdout line must be HARNESS COMPLETE, so an early return 0 fails."""
     r = subprocess.run([str(exe)], capture_output=True, text=True, timeout=timeout)
-    print(r.stdout, end='')
+    print(r.stdout, end="")
     if r.stderr:
-        print(r.stderr, end='')
+        print(r.stderr, end="")
     if r.returncode != 0:
-        raise SystemExit(f'FAIL harness exited {r.returncode}')
+        raise SystemExit(f"FAIL harness exited {r.returncode}")
     lines = r.stdout.strip().splitlines()
-    if not lines or lines[-1] != 'HARNESS COMPLETE':
-        raise SystemExit('FAIL harness did not reach its HARNESS COMPLETE line')
+    if not lines or lines[-1] != "HARNESS COMPLETE":
+        raise SystemExit("FAIL harness did not reach its HARNESS COMPLETE line")
 
 
 with tempfile.TemporaryDirectory(prefix="diskos-storage-tests-") as tmp:
     root = Path(tmp)
     source = source.replace("/tmp/.diskos_sd_export_intent", str(root / "handoff"))
-    headers = r'''
+    headers = r"""
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,7 +82,7 @@ static int g_sender_pending;
 /* Current Local evidence, no receiver session: the receiver guard is OPEN. */
 int receiver_available(void){ return 1; }
 void ipc_source_snapshot(ipc_source_evidence *out){
-    *out = (ipc_source_evidence){ .generation=1, .sequence=1, .mode=8, .valid=1 };
+    *out = (ipc_source_evidence){ .instance=1, .sequence=1, .mode=8, .valid=1 };
 }
 typedef void lv_timer_t;
 static uint32_t test_clock;
@@ -82,10 +93,8 @@ static _Atomic int g_source_mode;
 static uint32_t lv_tick_get(void){ return test_clock; }
 static void ui_toast(const char *s){ (void)s; }
 static void art_cancel(void){}
-void modes_output_reset(void){}   /* output routing is not under test here */
 static int fw_os_ver(void){ return 257; }   /* source_send() refuses unverified firmware */
-static void route_loss_invalidate_seek(void){}
-int modes_output_busy(void){ return 0; }
+int diskos_output_busy(void){ return 0; }
 static int scanner_active(void){ return test_scan; }
 static int scanner_start(void){ return 0; }
 int mdb_total_song_count(void){ return 1; }
@@ -101,9 +110,9 @@ int ipc_send_cmd(const char *s){
     }
     return 0;
 }
-'''
+"""
     headers += function((app / "airplay_sender.c").read_text(), "aps_sender_active")
-    tests = r'''
+    tests = r"""
 static int sd_exported_to_host(void){ return test_exported; }
 static int coldplug_mounted(void){ return test_mounted; }
 /* Mirrors the real predicate in main.c, INCLUDING the launch verdict. Leaving the verdict out of this
@@ -230,13 +239,31 @@ int main(void){
     puts("HARNESS COMPLETE");
     return 0;
 }
-'''
+"""
     c = root / "test.c"
     c.write_text(headers + source + tests)
     exe = root / "test"
-    subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror",
-                    "-fsanitize=address,undefined", "-g", "-pthread", '-DSD_IO_FAULT_MARKER="' + str(root / "fault") + '"', "-I", str(app),
-                    str(c), str(app / "sdio.c"), "-o", str(exe)], check=True)
+    subprocess.run(
+        [
+            os.environ.get("CC", "cc"),
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-fsanitize=address,undefined",
+            "-g",
+            "-pthread",
+            '-DSD_IO_FAULT_MARKER="' + str(root / "fault") + '"',
+            "-I",
+            str(app),
+            str(c),
+            str(app / "sdio.c"),
+            "-o",
+            str(exe),
+        ],
+        check=True,
+    )
     run_harness(exe, 10)
 
-print('COMPLETE storage_test.py')   # last line: the runner requires it, so an early clean exit cannot pass
+print(
+    "COMPLETE storage_test.py"
+)  # last line: the runner requires it, so an early clean exit cannot pass

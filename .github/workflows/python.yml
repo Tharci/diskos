@@ -1,0 +1,64 @@
+name: Python
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.13.6"   # keep equal to the uv-pre-commit rev in .pre-commit-config.yaml
+
+jobs:
+  lint:
+    name: Lint (pre-commit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked   # fails when uv.lock is out of date with pyproject.toml
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: uv run pre-commit run --all-files --show-diff-on-failure
+
+  test:
+    name: Tests (Linux, Python ${{ matrix.python }})
+    # Linux only for now. The installer also runs on macOS and Windows, but its tests have never been
+    # run automatically there: add those runners once their results have been reviewed.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.14"]   # the supported floor and the newest
+    env:
+      # The python.org / system interpreter from setup-python, as end users have it (with its Tk),
+      # rather than a uv-downloaded build.
+      UV_PYTHON_PREFERENCE: only-system
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      # Host tools the tests use: libusb.h (the usbboot transport tests compile src/usbboot/usbboot.c
+      # against a mock) and mksquashfs/unsquashfs (the image validation tests build real images).
+      - run: >-
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends libusb-1.0-0-dev squashfs-tools
+      - run: uv sync --locked
+      - run: uv run pytest

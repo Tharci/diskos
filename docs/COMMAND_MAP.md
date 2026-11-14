@@ -67,7 +67,7 @@ diskOS sends this through `ui_set_workmode()` in `ui/main.c`.
 <a id="bt-audio-output-transmit-to-a-bt-speaker-a2dp-source---verified-working-2026-08-03"></a>
 
 ## BT AUDIO OUTPUT (transmit to a BT speaker, a2dp-source)
-Route-to-BT sequence (`ui_route_bt()`, MAC = connected speaker, uppercased):
+Route-to-BT sequence (the output router, `ui/src/services/output/route_plan.hpp`; MAC = connected speaker, uppercased):
 
 ```text
 0666000C0006   PRE-STOP: normalize local output state first
@@ -84,7 +84,7 @@ Route-to-BT sequence (`ui_route_bt()`, MAC = connected speaker, uppercased):
 shadow output and DAC flag inconsistent, causing `mq_player` to crash, release the
 SD card, and trigger an MCU reboot. `06b3` also requires `06c1` initialization to
 finish. Play with `0100...` after routing. Return to local output with
-`0666000C0006` followed by `0657000C0008` (`ui_route_analog()`).
+`0666000C0006` followed by `0657000C0008` (the output router).
 
 diskOS starts BlueALSA with `--sbc-quality=medium` to reduce SBC encoding load.
 Routing starts with SBC. On V2.57, diskOS can then request AAC or LDAC after the
@@ -199,7 +199,7 @@ speaker's A2DP PCM advertises that codec; other firmware stays on SBC.
 | 0811 | 0x412470 | playback/system getter | I |
 | 0809 | 0x412490 | playback/system getter | I |
 | 0815 | 0x4124b0 | set MEMORY_PLAY position (UPDATE ... POSITION) | V |
-| 0810 | 0x4124d0 | playback/system getter/setter | I |
+| 0810 | 0x4124d0 | screensaver image: `0810<len>0005<path>` converts a CustomCover image, answered `a810000C<code>` (0 = done); pathless `0810000C000<n>` selects theme n (5 = saved Custom, no reply). Length before value, like every frame (Disc capture 2026-11-01) | V |
 | 0812 | 0x4124f0 | DRE: 0=On, 1=Off | V |
 | 0806 | 0x412510 | playback/system getter | I |
 | 0645 | 0x412530 | V2.09 gain: 0=Low, 1=High; V2.28/V2.40/V2.57 use 0649 | V |
@@ -286,4 +286,4 @@ POWER_SAVE ; FILTER_TYPE ; PLAY_MODE ; FOLDER_JUMP ; PLAY_GAP ; INPUT_MODE ; VOL
 PO_PRE_VOL ; PO_VOL ; PRE_VOL ; TREBLE ; BASS ; LO_DISABLE ; OS_MODE ; DSD_DECODE
 
 ## Reply frames
-~102 `axxx` player->UI frames. Known: a639=EQ data, a706=net status, a1=position, a2=state, a714=volume, aa1b=UAC srate, a644=now-playing JSON, a704/a705=wifi status, a6c*=BT. Most undocumented.
+~102 `axxx` player->UI frames. Known: a810=image conversion result (see 0810), a639=EQ data, a706=net status, a1=position, a2=state, a714=volume, aa1b=UAC srate, a644=now-playing JSON, a704/a705=wifi status, a6c*=BT. Most undocumented.

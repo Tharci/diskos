@@ -334,4 +334,3 @@ void kbinput_open_validated(const char *title, const char *initial,
     lv_obj_set_y(g_ta,64);
     validated_heading(title);
 }
-

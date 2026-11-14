@@ -210,18 +210,6 @@ builds `usbboot` against Homebrew libusb, copies Homebrew squashfs tools, and us
 `dylibbundler` to copy and relocate these five libraries. LGPL-2.1 section 6 users can
 rebuild and relink `usbboot` against a modified libusb using the included source and recipe.
 
-## Website
-
-The website in `site/` is deployed separately from the installer. Its HTML, CSS,
-JavaScript, and diskOS-owned screenshot images are MIT licensed under `LICENSE`,
-Copyright (c) 2026 diskOS contributors. This grant covers only rights held by diskOS
-contributors; third-party artwork and trademarks remain with their respective owners.
-The on-device UI source remains GPL-3.0-or-later.
-
-The ten website fonts retain their upstream licences: nine are OFL-1.1 and
-Special Elite is Apache-2.0. Their copyright notices and licence texts are retained
-in `site/fonts/`; see [the font index](licenses/README.md#website-fonts).
-
 ## diskOS's own code
 
 - **The Python installer, build scripts, and docs** in this repo are licensed **MIT** -

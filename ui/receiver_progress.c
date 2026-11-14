@@ -62,8 +62,8 @@ void rp_get(const rp_t *p, uint64_t now_ms, rp_out *out){
     out->fraction=(int)((int64_t)e*1000/p->duration_ms);
 }
 void rp_sync(rp_t *p, const ipc_receiver_meta *m, int playing, uint64_t now_ms){
-    if(p->synced && (m->generation!=p->gen || m->session_revision!=p->session)) rp_init(p);
-    p->gen=m->generation; p->session=m->session_revision;
+    if(p->synced && (m->instance!=p->gen || m->session_revision!=p->session)) rp_init(p);
+    p->gen=m->instance; p->session=m->session_revision;
     int fresh=!p->synced || m->item_revision!=p->item;
     if(!m->item_revision) return;                    /* no item announced yet */
     if(fresh){

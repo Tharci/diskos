@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 """Windowed entry: establish streams before importing the installer."""
-from contextlib import ExitStack
+
 import ctypes
 import errno
 import io
@@ -9,6 +9,7 @@ import stat
 import sys
 import threading
 import traceback
+from contextlib import ExitStack
 
 CHILD_MODE = "--_diskos-flash-child"
 FETCH_MODE = "--_diskos-fetch-helper"  # private firmware-acquisition helper; never the flash entry
@@ -27,6 +28,7 @@ class _LogBusy(OSError):
 
 def _lock_log(fd):
     import fcntl
+
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
@@ -39,6 +41,7 @@ def _child_stream(number, reading):
     """Own a non-inheritable duplicate, never the parent's inherited handle."""
     import _winapi as win
     import msvcrt
+
     handle = win.GetStdHandle(number)
     if handle in (None, 0, -1, ctypes.c_void_p(-1).value):
         raise OSError("missing inherited child standard handle")
@@ -56,16 +59,20 @@ def _child_stream(number, reading):
         os.close(fd)
         raise
     try:
-        return io.TextIOWrapper(raw, encoding="utf-8", errors="backslashreplace",
-                                line_buffering=not reading)
+        return io.TextIOWrapper(
+            raw, encoding="utf-8", errors="backslashreplace", line_buffering=not reading
+        )
     except BaseException:
         raw.close()
         raise
 
 
 def _check_node(info, directory):
-    if (stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400
-            or not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))):
+    if (
+        stat.S_ISLNK(info.st_mode)
+        or getattr(info, "st_file_attributes", 0) & 0x400
+        or not (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))
+    ):
         raise OSError("redirected or unexpected log object")
     if not directory and info.st_nlink != 1:
         raise OSError("hard-linked log object")
@@ -77,15 +84,25 @@ def _mountpoint(path, info, parent, mounts):
 
 class _WindowsIO:
     """Pin names without delete sharing; inspect reparse points on the handle."""
+
     def __init__(self):
         from ctypes import wintypes as w
+
         self.api = ctypes.WinDLL("kernel32", use_last_error=True)
         signatures = {
-            "CreateFileW": ([w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p,
-                             w.DWORD, w.DWORD, w.HANDLE], w.HANDLE),
+            "CreateFileW": (
+                [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p, w.DWORD, w.DWORD, w.HANDLE],
+                w.HANDLE,
+            ),
             "GetFileInformationByHandle": ([w.HANDLE, ctypes.c_void_p], w.BOOL),
-            "GetFileInformationByHandleEx": ([w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD], w.BOOL),
-            "SetFileInformationByHandle": ([w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD], w.BOOL),
+            "GetFileInformationByHandleEx": (
+                [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD],
+                w.BOOL,
+            ),
+            "SetFileInformationByHandle": (
+                [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD],
+                w.BOOL,
+            ),
             "CloseHandle": ([w.HANDLE], w.BOOL),
         }
         for name, (args, result) in signatures.items():
@@ -98,8 +115,9 @@ class _WindowsIO:
         access = 0x80 if directory else 0xC0000000
         if removing:
             access |= 0x10000  # DELETE, for handle-based cleanup
-        handle = self.api.CreateFileW(path, access, 3 if directory else 1, None,
-                                      1 if create else 3, 0x02200000, None)
+        handle = self.api.CreateFileW(
+            path, access, 3 if directory else 1, None, 1 if create else 3, 0x02200000, None
+        )
         if handle in (None, ctypes.c_void_p(-1).value):
             error = ctypes.get_last_error()
             if not directory and error == 32:  # ERROR_SHARING_VIOLATION
@@ -118,7 +136,9 @@ class _WindowsIO:
                 if expected.st_ino > 0xFFFFFFFFFFFFFFFF:
                     # Newer CPython exposes the full FILE_ID_128 on Windows.
                     full = (ctypes.c_ubyte * 24)()
-                    if not self.api.GetFileInformationByHandleEx(handle, 18, ctypes.byref(full), 24):
+                    if not self.api.GetFileInformationByHandleEx(
+                        handle, 18, ctypes.byref(full), 24
+                    ):
                         raise ctypes.WinError(ctypes.get_last_error())
                     identity = int.from_bytes(bytes(full)[8:], "little")
                 if identity != expected.st_ino:
@@ -136,6 +156,7 @@ class _WindowsIO:
 
 class _LogDirectory:
     """No recursive operations. POSIX uses pinned dir_fd; Windows pins ancestors."""
+
     def __init__(self, create=False, removing=False):
         self.stack = ExitStack()
         try:
@@ -149,7 +170,9 @@ class _LogDirectory:
                 if len(drive) != 2 or drive[1] != ":":
                     raise OSError("log directory must be on a local drive")
                 current = drive + os.sep
-                self.stack.callback(self.win.api.CloseHandle, self.win.open(current, directory=True))
+                self.stack.callback(
+                    self.win.api.CloseHandle, self.win.open(current, directory=True)
+                )
                 for component in tail.strip(os.sep).split(os.sep):
                     current = os.path.join(current, component)
                     try:
@@ -163,8 +186,12 @@ class _LogDirectory:
                             pass
                         info = os.lstat(current)
                     _check_node(info, True)
-                    handle = self.win.open(current, directory=True,
-                                           removing=removing and current == self.path, expected=info)
+                    handle = self.win.open(
+                        current,
+                        directory=True,
+                        removing=removing and current == self.path,
+                        expected=info,
+                    )
                     self.stack.callback(self.win.api.CloseHandle, handle)
                 self.directory = handle
             else:
@@ -175,8 +202,12 @@ class _LogDirectory:
                     with open("/proc/self/mountinfo", encoding="ascii") as table:
                         for line in table:
                             value = line.split()[4]
-                            for escaped, plain in (("\\040", " "), ("\\011", "\t"),
-                                                   ("\\012", "\n"), ("\\134", "\\")):
+                            for escaped, plain in (
+                                ("\\040", " "),
+                                ("\\011", "\t"),
+                                ("\\012", "\n"),
+                                ("\\134", "\\"),
+                            ):
                                 value = value.replace(escaped, plain)
                             mounts.add(value)
                 self.mounts = mounts
@@ -196,8 +227,10 @@ class _LogDirectory:
                     fd = os.open(component, flags, dir_fd=parent)
                     self.stack.callback(os.close, fd)
                     after = os.fstat(fd)
-                    if ((before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
-                            or _mountpoint(current, after, os.fstat(parent), mounts)):
+                    if (before.st_dev, before.st_ino) != (
+                        after.st_dev,
+                        after.st_ino,
+                    ) or _mountpoint(current, after, os.fstat(parent), mounts):
                         raise OSError("log directory changed or is a mount point")
                     self.parent, parent = parent, fd
                 self.directory = parent
@@ -219,15 +252,21 @@ class _LogDirectory:
         path = os.path.join(self.path, name)
         before = None
         try:
-            before = os.lstat(path) if self.win else os.stat(
-                name, dir_fd=self.directory, follow_symlinks=False)
+            before = (
+                os.lstat(path)
+                if self.win
+                else os.stat(name, dir_fd=self.directory, follow_symlinks=False)
+            )
             _check_node(before, False)
         except FileNotFoundError:
             if not create:
                 raise
         if self.win:
             import msvcrt
-            handle = self.win.open(path, create=before is None, removing=self.removing, expected=before)
+
+            handle = self.win.open(
+                path, create=before is None, removing=self.removing, expected=before
+            )
             try:
                 fd = msvcrt.open_osfhandle(handle, os.O_RDWR | os.O_BINARY)
             except BaseException:
@@ -275,6 +314,7 @@ class _LogDirectory:
 
 class _DiagnosticLog(io.TextIOBase):
     """Drop raw output. Only explicit bootstrap events reach the bounded file."""
+
     _diskos_log = True
 
     def __init__(self, directory, files, slot, history=None):
@@ -293,6 +333,7 @@ class _DiagnosticLog(io.TextIOBase):
                 file = self.files[name]
                 file.seek(0)
                 history.append(file.read(LOG_LIMIT))
+
         def copy_chunk(name, data):
             file = self.files[name]
             file.seek(0)
@@ -346,10 +387,12 @@ def _open_log():
         _, files = directory.owned_files(create=True)
         # Preserve timestamp order from older installers. Ties use the fixed
         # newest-first slot order maintained by this implementation.
-        ordered = sorted(files, key=lambda name: (
-            -os.fstat(files[name].fileno()).st_mtime_ns, LOG_NAMES.index(name)))
+        ordered = sorted(
+            files,
+            key=lambda name: (-os.fstat(files[name].fileno()).st_mtime_ns, LOG_NAMES.index(name)),
+        )
         history = []
-        for name in ordered[:LOG_SLOTS - 1]:
+        for name in ordered[: LOG_SLOTS - 1]:
             files[name].seek(0)
             history.append(files[name].read(LOG_LIMIT))
         # Open the whole ring before writing; hold every identity until close.
@@ -379,6 +422,7 @@ def remove_logs():
     try:
         marker, files = directory.owned_files()
         import msvcrt
+
         for file in [*files.values(), marker]:
             directory.win.delete(msvcrt.get_osfhandle(file.fileno()))
             file.close()
@@ -390,6 +434,7 @@ def remove_logs():
 def _show_error(message):
     # Native dialog still works when Python/Tk imports or Tk startup fail.
     from ctypes import wintypes as w
+
     dialog = ctypes.WinDLL("user32", use_last_error=True).MessageBoxW
     dialog.argtypes = [w.HWND, w.LPCWSTR, w.LPCWSTR, w.UINT]
     dialog.restype = ctypes.c_int
@@ -398,28 +443,45 @@ def _show_error(message):
 
 def _run_installer(argv):
     from diskos_installer.__main__ import main
+
     return main(argv)
 
 
 def _run_child(argv):
     from diskos_installer.flash_child import main
+
     return main(argv)
 
 
 def _run_fetch_helper(argv):
     from diskos_installer.firmware_fetch import helper_main
+
     return helper_main(argv)
 
 
 def _failure_event(log, exc):
     # Exception messages, source lines, filenames and locals are private. Keep
     # only known exception kinds, installer error codes and bootstrap line IDs.
-    kinds = {"ImportError", "ModuleNotFoundError", "OSError", "PermissionError",
-             "RuntimeError", "ValueError", "TypeError", "SystemExit"}
+    kinds = {
+        "ImportError",
+        "ModuleNotFoundError",
+        "OSError",
+        "PermissionError",
+        "RuntimeError",
+        "ValueError",
+        "TypeError",
+        "SystemExit",
+    }
     kind = type(exc).__name__
     log.event("failure " + (kind if kind in kinds else "Exception"))
     code = getattr(exc, "code", None)
-    if isinstance(code, str) and len(code) == 4 and code[0] in "EF" and code[1:].isascii() and code[1:].isdigit():
+    if (
+        isinstance(code, str)
+        and len(code) == 4
+        and code[0] in "EF"
+        and code[1:].isascii()
+        and code[1:].isdigit()
+    ):
         log.event("error " + code)
     for frame, line in traceback.walk_tb(exc.__traceback__):
         # Only this fixed, known module's line numbers; no arbitrary names.
@@ -438,17 +500,21 @@ def main(argv=None):
             try:
                 if fetch:  # headless helper: own pipes, no log, no GUI, no recursion
                     if os.name == "nt":
-                        streams = [stack.enter_context(_child_stream(n, n == -10)) for n in (-10, -11, -12)]
+                        streams = [
+                            stack.enter_context(_child_stream(n, n == -10)) for n in (-10, -11, -12)
+                        ]
                         sys.stdin, sys.stdout, sys.stderr = streams
                     return _run_fetch_helper(argv)
                 if child:
-                    streams = [stack.enter_context(_child_stream(n, n == -10)) for n in (-10, -11, -12)]
+                    streams = [
+                        stack.enter_context(_child_stream(n, n == -10)) for n in (-10, -11, -12)
+                    ]
                     sys.stdin, sys.stdout, sys.stderr = streams
                     return _run_child(argv)
                 log, log_path = _open_log()
                 stack.enter_context(log)
                 sys.stdout = sys.stderr = log
-                sys.stdin = stack.enter_context(open(os.devnull, "r", encoding="utf-8"))
+                sys.stdin = stack.enter_context(open(os.devnull, encoding="utf-8"))
                 log.event("diskOS Installer GUI startup")
                 result = _run_installer(argv)
                 if result in (None, 0):
@@ -476,8 +542,10 @@ def main(argv=None):
                         pass  # Diagnostics must not prevent the startup dialog.
             if child or fetch:
                 return 1  # Missing pipes never fall back to a GUI or a null gate.
-            _show_error(f"Could not start diskOS Installer:\n{reason}\n\nDetails: {log_path}\n"
-                        "Use diskos-installer-cli.exe doctor for diagnostics.")
+            _show_error(
+                f"Could not start diskOS Installer:\n{reason}\n\nDetails: {log_path}\n"
+                "Use diskos-installer-cli.exe doctor for diagnostics."
+            )
             return 1
     finally:
         sys.stdin, sys.stdout, sys.stderr = saved

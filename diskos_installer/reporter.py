@@ -80,7 +80,9 @@ class CLIReporter(Reporter):
                     stop.wait(0.5)
                 hb.stop()
 
-            self._hb_thread = threading.Thread(target=_run, args=(self._hb, self._hb_stop), daemon=True)
+            self._hb_thread = threading.Thread(
+                target=_run, args=(self._hb, self._hb_stop), daemon=True
+            )
             self._hb_thread.start()
         else:
             if self._hb_stop:

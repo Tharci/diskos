@@ -341,7 +341,7 @@ cd diskos-installer
 ./install.sh          # builds a local .venv, installs pyusb + pycryptodome
 ./diskos-installer doctor
 ```
-Needs Python 3.8+. The GUI additionally needs Tk. Release bundles include the native flash and
+Needs Python 3.10+. The GUI additionally needs Tk. Release bundles include the native flash and
 squashfs tools; the macOS bundle includes a private libusb. On Linux, device detection needs the
 system libusb-1.0 package. `install.sh` checks for missing components.
 

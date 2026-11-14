@@ -1,19 +1,28 @@
 # SPDX-License-Identifier: MIT
 """Read-only inventory and raw diagnostic contracts, without Windows or USB."""
+
 import ctypes
 import json
-from pathlib import Path
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 from unittest import mock
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from diskos_installer import platform_probe, windows_usb as usb
+from diskos_installer import platform_probe
+from diskos_installer import windows_usb as usb
 
 
-def row(instance=r'USB\VID_A108&PID_EAEF\DISC', problem=0, service='WINUSB'):
-    return dict(instance_id=instance, problem_code=problem, service=service,
-                inf='winusb.inf', provider='Microsoft', location_paths=['PCIROOT(0)#USBROOT(0)#USB(1)'])
+def row(instance=r"USB\VID_A108&PID_EAEF\DISC", problem=0, service="WINUSB"):
+    return dict(
+        instance_id=instance,
+        problem_code=problem,
+        service=service,
+        inf="winusb.inf",
+        provider="Microsoft",
+        location_paths=["PCIROOT(0)#USBROOT(0)#USB(1)"],
+    )
 
 
 class WindowsUSBTests(unittest.TestCase):
@@ -25,118 +34,176 @@ class WindowsUSBTests(unittest.TestCase):
         return result
 
     def test_absent_phantom_and_wrong_ids(self):
-        for rows, state in (([], 'absent'), ([row()], 'phantom'),
-                            ([row(r'USB\VID_A108&PID_EAEF&MI_00\OTHER')], 'absent'),
-                            ([row(r'USB\VID_A108&PID_EAE0\OTHER')], 'absent')):
+        for rows, state in (
+            ([], "absent"),
+            ([row()], "phantom"),
+            ([row(r"USB\VID_A108&PID_EAEF&MI_00\OTHER")], "absent"),
+            ([row(r"USB\VID_A108&PID_EAE0\OTHER")], "absent"),
+        ):
             result = self.inventory([], rows)
-            self.assertEqual((result['state'], result['count']), (state, 0))
+            self.assertEqual((result["state"], result["count"]), (state, 0))
             with self.assertRaises(usb.PreflightError) as error:
                 usb.require_target(result)
-            self.assertEqual(error.exception.code, 'E110')
+            self.assertEqual(error.exception.code, "E110")
 
     def test_bound_driver_problem_and_ambiguity(self):
         target = row()
-        result = self.inventory([target], [row(r'USB\VID_A108&PID_EAEF\OLD')])
-        self.assertEqual(result['state'], 'winusb')
+        result = self.inventory([target], [row(r"USB\VID_A108&PID_EAEF\OLD")])
+        self.assertEqual(result["state"], "winusb")
         self.assertEqual(usb.require_target(result), target)
-        for problem, service in ((28, None), (0, 'usbser'), (10, 'WINUSB')):
+        for problem, service in ((28, None), (0, "usbser"), (10, "WINUSB")):
             result = self.inventory([row(problem=problem, service=service)])
             with self.assertRaises(usb.PreflightError) as error:
                 usb.require_target(result)
-            self.assertEqual(error.exception.code, 'E114')
+            self.assertEqual(error.exception.code, "E114")
             self.assertIn(str(problem), str(error.exception))
-            self.assertIn('WinUSB', error.exception.action)
-        result = self.inventory([target, row(r'USB\VID_A108&PID_EAEF\SECOND')])
-        self.assertEqual(result['state'], 'ambiguous')
+            self.assertIn("WinUSB", error.exception.action)
+        result = self.inventory([target, row(r"USB\VID_A108&PID_EAEF\SECOND")])
+        self.assertEqual(result["state"], "ambiguous")
         with self.assertRaises(usb.PreflightError) as error:
             usb.require_target(result)
-        self.assertEqual(error.exception.code, 'E111')
+        self.assertEqual(error.exception.code, "E111")
 
     def test_windows_probe_never_uses_pyusb(self):
-        with mock.patch.object(platform_probe, 'host', return_value=('windows', 'x86_64')), \
-                mock.patch.object(usb, 'inventory', return_value=self.inventory([row(problem=28, service=None)])), \
-                mock.patch.object(platform_probe, '_maskrom_count_pyusb', side_effect=AssertionError):
+        with (
+            mock.patch.object(platform_probe, "host", return_value=("windows", "x86_64")),
+            mock.patch.object(
+                usb, "inventory", return_value=self.inventory([row(problem=28, service=None)])
+            ),
+            mock.patch.object(platform_probe, "_maskrom_count_pyusb", side_effect=AssertionError),
+        ):
             self.assertEqual(platform_probe.maskrom_count(), 1)
-            self.assertIn('E114', platform_probe.maskrom_access()[1])
-        with mock.patch.object(platform_probe, 'host', return_value=('windows', 'x86_64')), \
-                mock.patch.object(usb, 'inventory', side_effect=OSError('enumeration failed')):
+            self.assertIn("E114", platform_probe.maskrom_access()[1])
+        with (
+            mock.patch.object(platform_probe, "host", return_value=("windows", "x86_64")),
+            mock.patch.object(usb, "inventory", side_effect=OSError("enumeration failed")),
+        ):
             self.assertEqual(platform_probe.maskrom_count(), -1)
-            self.assertEqual(platform_probe.maskrom_access()[0], 'unknown')
+            self.assertEqual(platform_probe.maskrom_access()[0], "unknown")
 
     def test_diagnostic_raw_short_and_errors(self):
-        good = dict(schema=1, status='raw', count=1, error=0, length=5, hex='0102030405')
+        good = dict(schema=1, status="raw", count=1, error=0, length=5, hex="0102030405")
         runner = mock.Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps(good)))
-        self.assertEqual(usb.diagnostic('usbboot.exe', runner), good)
-        self.assertEqual(runner.call_args.args[0], ['usbboot.exe', '--native-diagnostic'])
-        for update in ({'length': 8}, {'hex': 'zz'}, {'length': True}, {'schema': 2},
-                       {'status': 'claim', 'error': -6}, {'status': 'open', 'error': -3},
-                       {'count': 2}, {'error': -1}):
+        self.assertEqual(usb.diagnostic("usbboot.exe", runner), good)
+        self.assertEqual(runner.call_args.args[0], ["usbboot.exe", "--native-diagnostic"])
+        for update in (
+            {"length": 8},
+            {"hex": "zz"},
+            {"length": True},
+            {"schema": 2},
+            {"status": "claim", "error": -6},
+            {"status": "open", "error": -3},
+            {"count": 2},
+            {"error": -1},
+        ):
             runner.return_value = subprocess.CompletedProcess([], 0, json.dumps(good | update))
             with self.subTest(update=update), self.assertRaises(ValueError):
-                usb.diagnostic('usbboot.exe', runner)
+                usb.diagnostic("usbboot.exe", runner)
         runner.return_value = subprocess.CompletedProcess([], 1, json.dumps(good))
-        with self.assertRaises(ValueError): usb.diagnostic('usbboot.exe', runner)
-        runner.return_value = subprocess.CompletedProcess([], 0, 'not JSON')
-        with self.assertRaises(ValueError): usb.diagnostic('usbboot.exe', runner)
+        with self.assertRaises(ValueError):
+            usb.diagnostic("usbboot.exe", runner)
+        runner.return_value = subprocess.CompletedProcess([], 0, "not JSON")
+        with self.assertRaises(ValueError):
+            usb.diagnostic("usbboot.exe", runner)
 
     def test_setupapi_properties_and_handle_cleanup(self):
         api = usb.SetupAPI.__new__(usb.SetupAPI)
         api.setup, api.cfg = mock.Mock(), mock.Mock()
         api.setup.SetupDiGetClassDevsW.return_value = 99
         api.setup.SetupDiEnumDeviceInfo.return_value = False
-        with mock.patch.object(usb.C, 'get_last_error', return_value=259, create=True):
+        with mock.patch.object(usb.C, "get_last_error", return_value=259, create=True):
             self.assertEqual(api.devices(True), [])
         self.assertEqual(api.setup.SetupDiGetClassDevsW.call_args.args[-1], 6)
         api.setup.SetupDiDestroyDeviceInfoList.assert_called_once_with(99)
         api.setup.SetupDiGetDevicePropertyW.return_value = False
-        with mock.patch.object(usb.C, 'get_last_error', return_value=1168, create=True):
+        with mock.patch.object(usb.C, "get_last_error", return_value=1168, create=True):
             self.assertIsNone(api.property(99, usb.DevInfo(), 5, True))
-        with mock.patch.object(usb.C, 'get_last_error', return_value=5, create=True):
-            with self.assertRaises(OSError): api.property(99, usb.DevInfo(), 5, True)
-        self.assertEqual(ctypes.sizeof(usb.DevInfo), 32 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28)
+        with mock.patch.object(usb.C, "get_last_error", return_value=5, create=True):
+            with self.assertRaises(OSError):
+                api.property(99, usb.DevInfo(), 5, True)
+        self.assertEqual(
+            ctypes.sizeof(usb.DevInfo), 32 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
+        )
 
     def test_diagnostic_opened_identity_contract(self):
-        good = dict(schema=1, status='raw', count=1, error=0, length=5, hex='5832303030',
-                    instance_id=r'USB\VID_A108&PID_EAEF\6&21FC78A&0&1')
+        good = dict(
+            schema=1,
+            status="raw",
+            count=1,
+            error=0,
+            length=5,
+            hex="5832303030",
+            instance_id=r"USB\VID_A108&PID_EAEF\6&21FC78A&0&1",
+        )
+
         def check(data, required=True):
             runner = mock.Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps(data)))
-            return usb.diagnostic('usbboot', runner, require_identity=required)
+            return usb.diagnostic("usbboot", runner, require_identity=required)
+
         self.assertEqual(check(good), good)
-        legacy = {k: v for k, v in good.items() if k != 'instance_id'}
+        legacy = {k: v for k, v in good.items() if k != "instance_id"}
         self.assertEqual(check(legacy, False), legacy)  # Linux schema 1 remains usable.
-        with self.assertRaises(ValueError): check(legacy)
-        for value in (None, '', True, 1, [], {}, 'USB', 'USB\\VID_A108&PID_EAEF\\',
-                      r'USB\VID_A108&PID_EAEF&MI_00\DISC', r'USB\VID_A108&PID_EAE0\DISC',
-                      'USB\\VID_A108&PID_EAEF\\DISC\n', 'USB\\VID_A108&PID_EAEF\\D\u00dcSC',
-                      'USB\\VID_A108&PID_EAEF\\D\u0131SC',
-                      'USB\\VID_A108&PID_EAEF\\' + 'X' * 201):
+        with self.assertRaises(ValueError):
+            check(legacy)
+        for value in (
+            None,
+            "",
+            True,
+            1,
+            [],
+            {},
+            "USB",
+            "USB\\VID_A108&PID_EAEF\\",
+            r"USB\VID_A108&PID_EAEF&MI_00\DISC",
+            r"USB\VID_A108&PID_EAE0\DISC",
+            "USB\\VID_A108&PID_EAEF\\DISC\n",
+            "USB\\VID_A108&PID_EAEF\\D\u00dcSC",
+            "USB\\VID_A108&PID_EAEF\\D\u0131SC",
+            "USB\\VID_A108&PID_EAEF\\" + "X" * 201,
+        ):
             with self.subTest(value=value), self.assertRaises(ValueError):
-                check(good | {'instance_id': value})
-        for key in ('schema', 'count', 'error'):
+                check(good | {"instance_id": value})
+        for key in ("schema", "count", "error"):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 check(good | {key: bool(good[key])})
 
     def test_diagnostic_rejects_duplicate_identity_and_extra_output(self):
-        line = json.dumps(dict(schema=1, status='raw', count=1, error=0, length=0, hex='',
-                               instance_id=r'USB\VID_A108&PID_EAEF\DISC'))
-        for text in (line[:-1] + ', "instance_id": "USB\\\\VID_A108&PID_EAEF\\\\OTHER"}',
-                     line + '\n' + line, line + '\nnoise', ' ' * 16384 + line):
+        line = json.dumps(
+            dict(
+                schema=1,
+                status="raw",
+                count=1,
+                error=0,
+                length=0,
+                hex="",
+                instance_id=r"USB\VID_A108&PID_EAEF\DISC",
+            )
+        )
+        for text in (
+            line[:-1] + ', "instance_id": "USB\\\\VID_A108&PID_EAEF\\\\OTHER"}',
+            line + "\n" + line,
+            line + "\nnoise",
+            " " * 16384 + line,
+        ):
             runner = mock.Mock(return_value=subprocess.CompletedProcess([], 0, text))
             with self.subTest(text=text[:100]), self.assertRaises(ValueError):
-                usb.diagnostic('usbboot', runner, require_identity=True)
+                usb.diagnostic("usbboot", runner, require_identity=True)
+
 
 class NativeDiagnosticTests(unittest.TestCase):
-    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux mock compiler harness')
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux mock compiler harness")
     def test_windows_native_diagnostic_binds_identity_to_opened_path(self):
         import shutil
         import tempfile
-        if not shutil.which('gcc'):
-            self.skipTest('gcc required for Windows API mocks')
-        source = (Path(__file__).resolve().parents[1] / 'src/usbboot/usbboot.c').read_text()
+
+        if not shutil.which("gcc"):
+            self.skipTest("gcc required for Windows API mocks")
+        source = (Path(__file__).resolve().parents[1] / "src/usbboot/usbboot.c").read_text()
         # Compile the actual Windows implementation with API mocks, never USB.
-        implementation = source.split('#define DIAG_CAP 4096', 1)[1].split(
-            '#endif\n\n/* Standalone raw diagnostic', 1)[0]
-        prelude = r'''
+        implementation = source.split("#define DIAG_CAP 4096", 1)[1].split(
+            "#endif\n\n/* Standalone raw diagnostic", 1
+        )[0]
+        prelude = r"""
 #define _GNU_SOURCE
 #include <stdint.h>
 #include <stddef.h>
@@ -305,8 +372,8 @@ void *GetProcAddress(HMODULE module, const char *name) {
 #undef API
     abort();
 }
-'''
-        main = r'''
+"""
+        main = r"""
 int main(int argc, char **argv) {
     scenario = atoi(argv[1]); missing_symbol = argc > 2 ? argv[2] : NULL;
     int rc = windows_native_diagnostic();
@@ -314,73 +381,119 @@ int main(int argc, char **argv) {
     fprintf(stderr, "%d %d %d %d %d %d %d %d %d", opens, closes, initialized, frees, keys, destroyed, controls, loads, unloads);
     return rc;
 }
-'''
+"""
         with tempfile.TemporaryDirectory() as tmp:
-            c, exe = Path(tmp) / 'windows.c', Path(tmp) / 'windows'
-            c.write_text(prelude + implementation + main, encoding='ascii')
-            compiled = subprocess.run(['gcc', '-O2', '-std=c99', '-Wall', str(c), '-o', str(exe)],
-                                      capture_output=True, text=True)
+            c, exe = Path(tmp) / "windows.c", Path(tmp) / "windows"
+            c.write_text(prelude + implementation + main, encoding="ascii")
+            compiled = subprocess.run(
+                ["gcc", "-O2", "-std=c99", "-Wall", str(c), "-o", str(exe)],
+                capture_output=True,
+                text=True,
+            )
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            cases = [(0, 'raw', '1 1 1 1 1 3 1'), (1, 'init', '0 0 0 0 0 0 0'),
-                     (2, 'absent', '0 0 0 0 0 1 0'), (3, 'ambiguous', '0 0 0 0 0 1 0'),
-                     (4, 'open', '1 0 0 0 1 3 0'), (5, 'claim', '1 1 1 0 1 3 0'),
-                     (6, 'identity', '0 0 0 0 1 3 0'), (7, 'control', '1 1 1 1 1 3 1'),
-                     (8, 'raw', '1 1 1 1 1 3 1'), (9, 'raw', '1 1 1 1 1 3 1'),
-                     (10, 'identity', '0 0 0 0 1 2 0'), (11, 'identity', '0 0 0 0 1 2 0'),
-                     (12, 'raw', '1 1 1 1 1 3 1'), (13, 'raw', '1 1 1 1 1 3 1'),
-                     (14, 'raw', '1 1 1 1 1 4 1'), (15, 'identity', '0 0 0 0 1 3 0'),
-                     (16, 'control', '1 1 1 1 1 3 0'), (17, 'control', '1 1 1 1 1 3 1'),
-                     (18, 'raw', '1 1 1 1 1 2 1'),  # Both registry GUID values absent.
-                     (19, 'raw', '1 1 1 1 0 2 1'),  # Registry key absent.
-                     (20, 'raw', '1 1 1 1 1 2 1'),  # Invalid optional value type.
-                     (21, 'raw', '1 1 1 1 1 2 1'),  # Registry access denied.
-                     (22, 'identity', '0 0 0 0 1 2 0'),  # No interface in any class.
-                     (23, 'identity', '0 0 0 0 1 2 0'),  # Standard path disagrees.
-                     (24, 'identity', '0 0 0 0 1 2 0'),  # Standard metadata disagrees.
-                     (25, 'enumerate', '0 0 0 0 0 0 0'),
-                     (27, 'raw', '1 1 1 1 1 2 1')]  # Standard precedes registry extras.
+            cases = [
+                (0, "raw", "1 1 1 1 1 3 1"),
+                (1, "init", "0 0 0 0 0 0 0"),
+                (2, "absent", "0 0 0 0 0 1 0"),
+                (3, "ambiguous", "0 0 0 0 0 1 0"),
+                (4, "open", "1 0 0 0 1 3 0"),
+                (5, "claim", "1 1 1 0 1 3 0"),
+                (6, "identity", "0 0 0 0 1 3 0"),
+                (7, "control", "1 1 1 1 1 3 1"),
+                (8, "raw", "1 1 1 1 1 3 1"),
+                (9, "raw", "1 1 1 1 1 3 1"),
+                (10, "identity", "0 0 0 0 1 2 0"),
+                (11, "identity", "0 0 0 0 1 2 0"),
+                (12, "raw", "1 1 1 1 1 3 1"),
+                (13, "raw", "1 1 1 1 1 3 1"),
+                (14, "raw", "1 1 1 1 1 4 1"),
+                (15, "identity", "0 0 0 0 1 3 0"),
+                (16, "control", "1 1 1 1 1 3 0"),
+                (17, "control", "1 1 1 1 1 3 1"),
+                (18, "raw", "1 1 1 1 1 2 1"),  # Both registry GUID values absent.
+                (19, "raw", "1 1 1 1 0 2 1"),  # Registry key absent.
+                (20, "raw", "1 1 1 1 1 2 1"),  # Invalid optional value type.
+                (21, "raw", "1 1 1 1 1 2 1"),  # Registry access denied.
+                (22, "identity", "0 0 0 0 1 2 0"),  # No interface in any class.
+                (23, "identity", "0 0 0 0 1 2 0"),  # Standard path disagrees.
+                (24, "identity", "0 0 0 0 1 2 0"),  # Standard metadata disagrees.
+                (25, "enumerate", "0 0 0 0 0 0 0"),
+                (27, "raw", "1 1 1 1 1 2 1"),
+            ]  # Standard precedes registry extras.
             errors = {1: 126, 4: 5, 5: 6, 7: 121, 16: 87, 25: 5}
             for scenario, status, cleanup in cases:
                 with self.subTest(scenario=scenario):
                     proc = subprocess.run([str(exe), str(scenario)], capture_output=True, text=True)
                     self.assertEqual(len(proc.stdout.splitlines()), 1)
                     data = json.loads(proc.stdout)
-                    self.assertEqual(data['status'], status)
-                    self.assertEqual(proc.stderr, cleanup + (' 1 0' if scenario == 1 else ' 3 3'))
-                    self.assertEqual(data['error'], errors.get(scenario, 0 if status == 'raw' else 13))
-                    self.assertEqual(proc.returncode, 0 if status == 'raw' else 1)
-                    if status == 'raw':
-                        self.assertEqual(data['instance_id'], r'USB\VID_A108&PID_EAEF\6&21FC78A&0&' + ('2' if scenario == 9 else '1'))
-                        self.assertEqual(data['hex'], '5832303030616263' if scenario == 8 else '5832303030')
-                        self.assertEqual(data['length'], 8 if scenario == 8 else 5)
+                    self.assertEqual(data["status"], status)
+                    self.assertEqual(proc.stderr, cleanup + (" 1 0" if scenario == 1 else " 3 3"))
+                    self.assertEqual(
+                        data["error"], errors.get(scenario, 0 if status == "raw" else 13)
+                    )
+                    self.assertEqual(proc.returncode, 0 if status == "raw" else 1)
+                    if status == "raw":
+                        self.assertEqual(
+                            data["instance_id"],
+                            r"USB\VID_A108&PID_EAEF\6&21FC78A&0&" + ("2" if scenario == 9 else "1"),
+                        )
+                        self.assertEqual(
+                            data["hex"], "5832303030616263" if scenario == 8 else "5832303030"
+                        )
+                        self.assertEqual(data["length"], 8 if scenario == 8 else 5)
                     elif scenario not in (5, 7, 16, 17):
-                        self.assertIsNone(data['instance_id'])
+                        self.assertIsNone(data["instance_id"])
             # Fail every DLL load and every symbol resolution. Cleanup overwrites
             # GetLastError, so the reported loader error must already be saved.
-            symbols = ('SetupDiGetClassDevsW', 'SetupDiEnumDeviceInfo', 'SetupDiGetDeviceInstanceIdW',
-                       'SetupDiOpenDevRegKey', 'SetupDiEnumDeviceInterfaces', 'SetupDiGetDeviceInterfaceDetailW',
-                       'SetupDiDestroyDeviceInfoList', 'RegQueryValueExW', 'RegCloseKey',
-                       'WinUsb_Initialize', 'WinUsb_Free', 'WinUsb_SetPipePolicy', 'WinUsb_ControlTransfer')
+            symbols = (
+                "SetupDiGetClassDevsW",
+                "SetupDiEnumDeviceInfo",
+                "SetupDiGetDeviceInstanceIdW",
+                "SetupDiOpenDevRegKey",
+                "SetupDiEnumDeviceInterfaces",
+                "SetupDiGetDeviceInterfaceDetailW",
+                "SetupDiDestroyDeviceInfoList",
+                "RegQueryValueExW",
+                "RegCloseKey",
+                "WinUsb_Initialize",
+                "WinUsb_Free",
+                "WinUsb_SetPipePolicy",
+                "WinUsb_ControlTransfer",
+            )
             failures = [(30 + i, None, i + 1, i, 126 + i) for i in range(3)]
             failures += [(33, symbol, 3, 3, 127) for symbol in symbols]
             for scenario, symbol, loads, unloads, error in failures:
                 with self.subTest(scenario=scenario, symbol=symbol):
-                    proc = subprocess.run([str(exe), str(scenario)] + ([symbol] if symbol else []),
-                                          capture_output=True, text=True)
+                    proc = subprocess.run(
+                        [str(exe), str(scenario)] + ([symbol] if symbol else []),
+                        capture_output=True,
+                        text=True,
+                    )
                     self.assertEqual(proc.returncode, 1, proc.stderr)
                     data = json.loads(proc.stdout)
-                    self.assertEqual(data, dict(schema=1, status='init', count=0, error=error,
-                                                length=-1, hex='', instance_id=None))
-                    self.assertEqual(proc.stderr, f'0 0 0 0 0 0 0 {loads} {unloads}')
+                    self.assertEqual(
+                        data,
+                        dict(
+                            schema=1,
+                            status="init",
+                            count=0,
+                            error=error,
+                            length=-1,
+                            hex="",
+                            instance_id=None,
+                        ),
+                    )
+                    self.assertEqual(proc.stderr, f"0 0 0 0 0 0 0 {loads} {unloads}")
 
-    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux mock compiler harness')
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux mock compiler harness")
     def test_native_diagnostic_no_device_io(self):
         import shutil
         import tempfile
-        if not shutil.which('gcc') or not Path('/usr/include/libusb-1.0/libusb.h').is_file():
-            self.skipTest('gcc and libusb headers required for native mocks')
-        source = Path(__file__).resolve().parents[1] / 'src/usbboot/usbboot.c'
-        harness = r'''
+
+        if not shutil.which("gcc") or not Path("/usr/include/libusb-1.0/libusb.h").is_file():
+            self.skipTest("gcc and libusb headers required for native mocks")
+        source = Path(__file__).resolve().parents[1] / "src/usbboot/usbboot.c"
+        harness = r"""
 #define main usbboot_original_main
 #include "SOURCE"
 #undef main
@@ -411,23 +524,43 @@ int main(int argc, char **argv) {
     int rc=native_diagnostic();
     fprintf(stderr, "%d %d %d", opens, closes, releases); return rc;
 }
-'''.replace('SOURCE', str(source))
+""".replace("SOURCE", str(source))
         with tempfile.TemporaryDirectory() as tmp:
-            c, exe = Path(tmp) / 'mock.c', Path(tmp) / 'mock'
-            c.write_text(harness, encoding='ascii')
-            subprocess.run(['gcc', '-O2', '-std=c99', '-ffunction-sections', '-fdata-sections',
-                            '-I/usr/include/libusb-1.0', str(c), '-Wl,--gc-sections', '-o', str(exe)],
-                           check=True, capture_output=True)
-            for args, status, cleanup in [((0, 0, 0, 8), 'absent', '0 0 0'),
-                    ((2, 0, 0, 8), 'ambiguous', '0 0 0'), ((1, -3, 0, 8), 'open', '1 0 0'),
-                    ((1, 0, -6, 8), 'claim', '1 1 0'), ((1, 0, 0, -7), 'control', '1 1 1'),
-                    ((1, 0, 0, 5), 'raw', '1 1 1'), ((1, 0, 0, 8), 'raw', '1 1 1')]:
+            c, exe = Path(tmp) / "mock.c", Path(tmp) / "mock"
+            c.write_text(harness, encoding="ascii")
+            subprocess.run(
+                [
+                    "gcc",
+                    "-O2",
+                    "-std=c99",
+                    "-ffunction-sections",
+                    "-fdata-sections",
+                    "-I/usr/include/libusb-1.0",
+                    str(c),
+                    "-Wl,--gc-sections",
+                    "-o",
+                    str(exe),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            for args, status, cleanup in [
+                ((0, 0, 0, 8), "absent", "0 0 0"),
+                ((2, 0, 0, 8), "ambiguous", "0 0 0"),
+                ((1, -3, 0, 8), "open", "1 0 0"),
+                ((1, 0, -6, 8), "claim", "1 1 0"),
+                ((1, 0, 0, -7), "control", "1 1 1"),
+                ((1, 0, 0, 5), "raw", "1 1 1"),
+                ((1, 0, 0, 8), "raw", "1 1 1"),
+            ]:
                 with self.subTest(args=args):
-                    proc = subprocess.run([str(exe), *map(str, args)], capture_output=True, text=True)
+                    proc = subprocess.run(
+                        [str(exe), *map(str, args)], capture_output=True, text=True
+                    )
                     data = json.loads(proc.stdout)
-                    self.assertEqual(data['status'], status)
+                    self.assertEqual(data["status"], status)
                     self.assertEqual(proc.stderr, cleanup)
-                    self.assertEqual(proc.returncode, 0 if status == 'raw' else 1)
-                    if status == 'raw':
-                        self.assertEqual(data['length'], args[-1])
-                        self.assertEqual(data['hex'], bytes(range(args[-1])).hex())
+                    self.assertEqual(proc.returncode, 0 if status == "raw" else 1)
+                    if status == "raw":
+                        self.assertEqual(data["length"], args[-1])
+                        self.assertEqual(data["hex"], bytes(range(args[-1])).hex())

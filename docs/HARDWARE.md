@@ -22,7 +22,7 @@ how diskOS uses those interfaces and what a replacement audio engine would requi
 | VPU / video decode | **None** - no `vpu`/`video`/`mem2mem` dev nodes | `/dev` |
 | Hardware JPEG | **None** as a dev node (stock `jpg_to_png.c` is software) | `/dev`, RE |
 
-diskOS uses LVGL's software renderer. The UI Makefile does not enable `-mmsa`;
+diskOS uses LVGL's software renderer. The UI build (`ui/CMakeLists.txt` and `ui/cmake/`) does not enable `-mmsa`;
 MSA is available for CPU-side optimization. Display scaling is handled separately
 by the LCD controller described below.
 
@@ -222,7 +222,7 @@ concurrent access can corrupt the card.
 
 | Capability | HW supports | Stock uses | diskOS opportunity |
 |---|---|---|---|
-| MSA SIMD | Yes (128-bit) | Stock compiler flags unspecified | CPU-side optimization; UI Makefile has no `-mmsa` flag |
+| MSA SIMD | Yes (128-bit) | Stock compiler flags unspecified | CPU-side optimization; the UI build has no `-mmsa` flag |
 | LCDC overlay planes | 4 (fb0-3) | fb0 only | HW-composited static art/backdrops; rotation remains software |
 | I2S rate | 768k/64b/8ch | <=384k/DSD256 (DAC-limited) | none beyond DAC; already maxes the DAC |
 | DSD native + DoP | Yes | Yes | parity - reuse driver ioctls |

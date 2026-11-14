@@ -271,33 +271,3 @@ contributors) - deliberately separate from the MIT tooling so UI forks stay open
 Its embedded third-party notices - LVGL (MIT), SQLite (public domain), JSMN (MIT), md5 (public domain), and
 Montserrat / Source Han Sans / Font Awesome / IBM Plex Mono / Doto and the theme fonts (Inter, DSEG7 Classic, JetBrains Mono, Space Grotesk, IBM Plex Sans, Nunito, Courier Prime, Rubik Glitch, Archivo) (OFL-1.1) - ship in this directory and in
 `../ui/licenses/`.
-
-## Website
-
-The HTML, CSS, JavaScript, and diskOS-owned screenshot images in `../site/` are
-MIT licensed under [`../LICENSE`](../LICENSE), Copyright (c) 2026 diskOS contributors.
-This grant covers only rights held by diskOS contributors; third-party artwork and
-trademarks remain with their respective owners. The UI source remains GPL-3.0-or-later.
-
-### Website fonts
-
-Font files are redistributed unchanged from the website source. The following
-texts ship beside them in `../site/fonts/`; their upstream copyrights are retained.
-
-| Font file | Licence | Text in `../site/fonts/` |
-|---|---|---|
-| `archivo-100-900.woff2` | OFL-1.1 | `LICENSE-archivo.txt` |
-| `archivoblack-400.woff2` | OFL-1.1 | `LICENSE-archivoblack.txt` |
-| `barlowcond-300.woff2` | OFL-1.1 | `LICENSE-barlowcond.txt` |
-| `doto-700.woff2` | OFL-1.1 | `LICENSE-doto.txt` |
-| `hanken-300-700.woff2` | OFL-1.1 | `LICENSE-hanken.txt` |
-| `jetbrains-500-700.woff2` | OFL-1.1 | `LICENSE-jetbrains.txt` |
-| `michroma-400.woff2` | OFL-1.1 | `LICENSE-michroma.txt` |
-| `nunito-800.woff2` | OFL-1.1 | `LICENSE-nunito.txt` |
-| `sharetech-400.woff2` | OFL-1.1 | `LICENSE-sharetech.txt` |
-| `specialelite-400.woff2` | Apache-2.0 | `LICENSE-specialelite.txt` |
-
-Special Elite's embedded copyright notice reads: Copyright (c) 2010 by Brian J.
-Bonislawsky DBA Astigmatic (AOETI). All rights reserved. Available under the Apache
-2.0 licence. The font retains that notice in its name table; the full Apache-2.0
-text is shipped alongside it. These font licences do not change the website's MIT grant.
